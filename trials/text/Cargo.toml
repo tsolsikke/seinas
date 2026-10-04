@@ -1,0 +1,10 @@
+# 文字を描く手段の試し。本体のワークスペースとは別にしてある(依存も、Cargo.lockも別)。
+[workspace]
+resolver = "2"
+members = ["common", "try-baseline", "try-cosmic", "try-swash", "try-fontdue"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "MIT"
+publish = false

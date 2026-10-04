@@ -1,0 +1,10 @@
+[package]
+name = "try-cosmic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+text-trial-common = { path = "../common" }
+cosmic-text = { version = "=0.19.0", default-features = false, features = ["std", "swash"] }

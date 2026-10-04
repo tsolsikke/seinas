@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
+# trials/ の下は、採るかどうかを決める前の試し。本体のワークスペースと依存の一覧には入れない。
+exclude = ["trials"]
 members = [
     "crates/seinas-render",
     "crates/seinas-frontend",

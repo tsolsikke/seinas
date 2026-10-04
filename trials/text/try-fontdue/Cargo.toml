@@ -1,0 +1,10 @@
+[package]
+name = "try-fontdue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+text-trial-common = { path = "../common" }
+fontdue = "=0.9.4"
