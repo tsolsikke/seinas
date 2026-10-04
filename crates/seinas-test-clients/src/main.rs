@@ -16,10 +16,14 @@
 //! - `bad-global`: wl_registryで、無いグローバルを束ねようとする(プロトコルのエラーが返る)。
 //! - `shrink`: ウィンドウを1つ描いた後、共有メモリーのプールを縮めて、もう一度commitする。
 //!   `--step` を付けると、縮める前に、標準入力から1行届くまで待つ。くわしくは `shrink.rs`。
+//! - `window`: 行儀よくウィンドウを1つ出し、届いたconfigureの中身を書き続ける。止められるまで動く。
+//!   くわしくは `window.rs`。
 //!
 //! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
 
 mod shrink;
+mod window;
+mod wire;
 
 use std::{
     io::{ErrorKind, Read, Write},
@@ -149,13 +153,13 @@ fn run(kind: &str) -> Result<bool, String> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(kind) = args.first() else {
-        eprintln!("usage: bad-client <unknown-opcode|unknown-object|short-message|bad-global|shrink> [--step]");
+        eprintln!("usage: bad-client <unknown-opcode|unknown-object|short-message|bad-global|shrink|window> [--step]");
         return ExitCode::from(2);
     };
-    let result = if kind == "shrink" {
-        shrink::run(args.iter().any(|arg| arg == "--step"))
-    } else {
-        run(kind)
+    let result = match kind.as_str() {
+        "shrink" => shrink::run(args.iter().any(|arg| arg == "--step")),
+        "window" => window::run(),
+        _ => run(kind),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

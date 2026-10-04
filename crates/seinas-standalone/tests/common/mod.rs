@@ -7,8 +7,10 @@
 
 use std::{
     fs,
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    sync::mpsc,
     time::{Duration, Instant},
 };
 
@@ -43,6 +45,32 @@ impl Drop for Running {
     fn drop(&mut self) {
         let _ = self.0.kill();
         let _ = self.0.wait();
+    }
+}
+
+/// 試験用のクライアント(`bad-client`)と、その標準出力。
+pub struct TestClient {
+    pub process: Running,
+    lines: mpsc::Receiver<String>,
+}
+
+impl TestClient {
+    /// 標準出力の次の1行。上限まで待っても届かなければ、何を待っていたかを添えて失敗する。
+    pub fn next_line(&self, what: &str) -> String {
+        self.lines
+            .recv_timeout(TIMEOUT)
+            .unwrap_or_else(|_| panic!("timed out while waiting for {what}"))
+    }
+
+    /// 次に届く「window: configure …」の行の、状態の並びの部分(`[activated]` など)。ほかの行は読み飛ばす。
+    pub fn next_configure_states(&self, what: &str) -> String {
+        loop {
+            let line = self.next_line(what);
+            if let Some(rest) = line.strip_prefix("window: configure ") {
+                let (_, states) = rest.split_once(' ').expect("the size and the states");
+                return states.to_owned();
+            }
+        }
     }
 }
 
@@ -233,6 +261,31 @@ impl Compositor {
                 .spawn()
                 .expect("start zeyes-min"),
         )
+    }
+
+    /// 試験用のクライアント(`bad-client`)を、引数 `args` でつなぐ。標準入力と標準出力は、こちらで持つ。
+    pub fn connect_test_client(&self, args: &[&str]) -> TestClient {
+        let mut process = Running(
+            Command::new(workspace_bin("seinas-test-clients", "bad-client"))
+                .args(args)
+                .env("WAYLAND_DISPLAY", &self.socket)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .expect("start the test client"),
+        );
+        // 標準出力は、別のスレッドで1行ずつ読む(待つ時間に上限を置くため)。
+        let (sender, lines) = mpsc::channel();
+        let stdout = process.0.stdout.take().expect("the client's output");
+        std::thread::spawn(move || {
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                if sender.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        TestClient { process, lines }
     }
 
     /// スレッドの数。

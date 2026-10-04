@@ -15,6 +15,9 @@ use std::{sync::Arc, time::Duration};
 
 pub use smithay;
 
+mod stack;
+pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, CASCADE_STEP};
+
 use smithay::{
     backend::renderer::{
         element::{
@@ -26,12 +29,13 @@ use smithay::{
     },
     input::{pointer::PointerHandle, Seat, SeatHandler, SeatState},
     output::Output,
+    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     reexports::wayland_server::{
         backend::{ClientData, ClientId, DisconnectReason},
         protocol::wl_surface::WlSurface,
         Client, Display, DisplayHandle, Resource,
     },
-    utils::{Logical, Point, Rectangle, Size},
+    utils::{Logical, Point, Size},
     wayland::{
         compositor::{
             with_surface_tree_downward, CompositorClientState, CompositorState, SurfaceAttributes,
@@ -67,41 +71,8 @@ pub struct Frontend<D: SeatHandler> {
     pub output: Output,
     /// クライアントのtoplevelに伝える大きさ(画面の大きさ)。
     pub size: Size<i32, Logical>,
-    /// ウィンドウの並び。先頭がいちばん手前。
-    pub windows: Vec<Window>,
-}
-
-/// 1つのウィンドウ(toplevel)と、その置き場所。
-pub struct Window {
-    pub toplevel: ToplevelSurface,
-    /// 置き場所の番号。0が左上で、1つ増えるごとに右下へずれる。
-    pub slot: usize,
-    /// 画面の中での、左上の位置。
-    pub location: Point<i32, Logical>,
-}
-
-/// 新しいウィンドウを、前のものからずらす量(画素)。右へも下へも、この量だけずらす。
-pub const CASCADE_STEP: i32 = 32;
-
-/// 置き場所の数。ウィンドウの左上が、画面の短い辺の半分を超えない範囲に収まるだけ用意する。
-pub fn slot_count(screen: Size<i32, Logical>) -> usize {
-    ((screen.w.min(screen.h) / 2 / CASCADE_STEP).max(1)) as usize
-}
-
-/// 新しいウィンドウの置き場所の番号を決める。
-///
-/// 空いている中で、いちばん小さい番号を選ぶ。全部ふさがっていれば、先頭の番号から順に、もう一度使う
-/// (同じ位置に重なる)。`occupied` は、いまあるウィンドウの番号。
-pub fn next_slot(occupied: &[usize], slots: usize) -> usize {
-    (0..slots)
-        .find(|slot| !occupied.contains(slot))
-        .unwrap_or(occupied.len() % slots)
-}
-
-/// 置き場所の番号から、左上の位置を求める。
-pub fn slot_location(slot: usize) -> Point<i32, Logical> {
-    let offset = slot as i32 * CASCADE_STEP;
-    (offset, offset).into()
+    /// ウィンドウの並び。先頭がいちばん手前で、それだけが「選ばれている(activated)」。
+    pub windows: Stack<ToplevelSurface>,
 }
 
 /// コンポジタの状態の型が、受け口を使うために実装するもの。
@@ -130,23 +101,51 @@ impl<D: SeatHandler> Frontend<D> {
     }
 
     /// 新しいウィンドウを、いちばん手前に加える。置き場所は、前のものからずらして決める。
+    ///
+    /// 新しいウィンドウが「選ばれている」ものになり、前のものからは外れる。新しいウィンドウへの
+    /// 最初のconfigureは、呼ぶ側が送る。
     pub fn add_window(&mut self, toplevel: ToplevelSurface) {
-        let occupied: Vec<usize> = self.windows.iter().map(|window| window.slot).collect();
-        let slot = next_slot(&occupied, slot_count(self.size));
-        self.windows.insert(
-            0,
-            Window {
-                toplevel,
-                slot,
-                location: slot_location(slot),
-            },
-        );
+        self.windows.add(toplevel, self.size);
+        self.update_activation();
     }
 
     /// 去ったウィンドウを、並びから外す。その下にあったものが見えるようになる。
+    ///
+    /// 去ったのがいちばん手前なら、その下にあったものが「選ばれている」ものになる。
     pub fn remove_window(&mut self, toplevel: &ToplevelSurface) {
         self.windows
-            .retain(|window| window.toplevel.wl_surface() != toplevel.wl_surface());
+            .remove(|window| window.wl_surface() == toplevel.wl_surface());
+        self.update_activation();
+    }
+
+    /// 画面の上の点 `point` にある、いちばん手前のウィンドウを、いちばん手前に出す。
+    ///
+    /// ポインターのボタンが押されたときに呼ぶ。順が変わったら(描き直しが要るなら)trueを返す。
+    /// すでにいちばん手前のとき、どのウィンドウの上でもないときは、何もしない。
+    pub fn raise_window_at(&mut self, point: Point<f64, Logical>) -> bool {
+        let raised = self.windows.raise_at(point, window_size);
+        if raised {
+            self.update_activation();
+        }
+        raised
+    }
+
+    /// いちばん手前のウィンドウにだけ、activatedの状態を付ける。変わったウィンドウには、configureで知らせる。
+    fn update_activation(&self) {
+        for (window, active) in self.windows.iter_with_activation() {
+            let toplevel = &window.item;
+            toplevel.with_pending_state(|state| {
+                if active {
+                    state.states.set(xdg_toplevel::State::Activated);
+                } else {
+                    state.states.unset(xdg_toplevel::State::Activated);
+                }
+            });
+            // まだ最初のconfigureを送っていないウィンドウには、最初のconfigureと一緒に伝わる。
+            if toplevel.is_initial_configure_sent() {
+                toplevel.send_pending_configure();
+            }
+        }
     }
 
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウ。その画面と、左上の位置を返す。
@@ -156,14 +155,9 @@ impl<D: SeatHandler> Frontend<D> {
         &self,
         point: Point<f64, Logical>,
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.windows.iter().find_map(|window| {
-            let surface = window.toplevel.wl_surface();
-            // まだ絵を出していないウィンドウは、大きさが無いので当たらない。
-            let size = with_renderer_surface_state(surface, |state| state.surface_size())??;
-            let area = Rectangle::new(window.location, size).to_f64();
-            area.contains(point)
-                .then(|| (surface.clone(), window.location.to_f64()))
-        })
+        let index = self.windows.index_at(point, window_size)?;
+        let window = self.windows.iter().nth(index)?;
+        Some((window.item.wl_surface().clone(), window.location.to_f64()))
     }
 
     /// クライアントのウィンドウを、描画の要素として並べる(手前から順)。
@@ -176,7 +170,7 @@ impl<D: SeatHandler> Frontend<D> {
             .flat_map(|window| {
                 render_elements_from_surface_tree(
                     renderer,
-                    window.toplevel.wl_surface(),
+                    window.item.wl_surface(),
                     // 拡大率は1なので、画面の上の位置と画素の位置は同じ。
                     (window.location.x, window.location.y),
                     1.0,
@@ -190,9 +184,9 @@ impl<D: SeatHandler> Frontend<D> {
     /// クライアントへframeコールバックを返す(「次の絵を描いてよい」の合図)。
     pub fn send_frame_callbacks(&self, elapsed: Duration) {
         let time = elapsed.as_millis() as u32;
-        for window in &self.windows {
+        for window in self.windows.iter() {
             with_surface_tree_downward(
-                window.toplevel.wl_surface(),
+                window.item.wl_surface(),
                 (),
                 |_, _, &()| TraversalAction::DoChildren(()),
                 |_, states, &()| {
@@ -212,6 +206,11 @@ impl<D: SeatHandler> Frontend<D> {
     }
 }
 
+/// ウィンドウの大きさ。まだ絵を出していなければNone。
+fn window_size(toplevel: &ToplevelSurface) -> Option<Size<i32, Logical>> {
+    with_renderer_surface_state(toplevel.wl_surface(), |state| state.surface_size())?
+}
+
 /// 切られたクライアントの後片付けを、いますぐ行わせる。
 ///
 /// 描いている最中に切られたクライアント(共有メモリーを縮めていた場合など)は、そのままだと、ほかの
@@ -223,7 +222,7 @@ pub fn reap_dead_clients<D: FrontendHost + 'static>(display: &mut Display<D>, st
         .frontend()
         .windows
         .iter()
-        .find_map(|window| window.toplevel.wl_surface().client());
+        .find_map(|window| window.item.wl_surface().client());
     if let Some(client) = client {
         // 切られたクライアントを選んだ場合は失敗が返るが、後片付けは行われる。
         let _ = display.backend().dispatch_single_client(state, client.id());
@@ -304,8 +303,10 @@ macro_rules! delegate_frontend {
                 surface.with_pending_state(|state| {
                     state.size = Some(size);
                 });
+                // 並びに加えると、このウィンドウが「選ばれている」ものになる。その状態も、最初の
+                // configureで一緒に伝える。
+                frontend.add_window(surface.clone());
                 surface.send_configure();
-                frontend.add_window(surface);
                 $crate::log_new_toplevel();
             }
             fn toplevel_destroyed(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
@@ -390,7 +391,7 @@ macro_rules! delegate_frontend {
                     pointer,
                     output,
                     size: (config.width, config.height).into(),
-                    windows: Vec::new(),
+                    windows: $crate::Stack::default(),
                 }
             }
         }
@@ -437,45 +438,4 @@ pub fn new_output(width: i32, height: i32) -> Output {
 /// [`delegate_frontend!`] が使う。
 pub fn log_new_toplevel() {
     info!("new toplevel");
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_new_window_takes_the_lowest_free_slot() {
-        assert_eq!(next_slot(&[], 7), 0);
-        assert_eq!(next_slot(&[0], 7), 1);
-        assert_eq!(next_slot(&[1, 0], 7), 2);
-        // 途中が空けば、そこを使う。
-        assert_eq!(next_slot(&[2, 0], 7), 1);
-        assert_eq!(next_slot(&[2, 1], 7), 0);
-    }
-
-    #[test]
-    fn slots_wrap_around_when_all_are_taken() {
-        assert_eq!(next_slot(&[0, 1, 2], 3), 0);
-        assert_eq!(next_slot(&[0, 1, 2, 0], 3), 1);
-        assert_eq!(next_slot(&[0, 1, 2, 0, 1], 3), 2);
-        assert_eq!(next_slot(&[0], 1), 0);
-    }
-
-    #[test]
-    fn slots_step_down_and_right_and_stay_in_the_upper_left_half() {
-        assert_eq!(slot_location(0), Point::from((0, 0)));
-        assert_eq!(slot_location(1), Point::from((32, 32)));
-        assert_eq!(slot_location(3), Point::from((96, 96)));
-
-        assert_eq!(slot_count((800, 600).into()), 9);
-        assert_eq!(slot_count((640, 480).into()), 7);
-        assert_eq!(slot_count((1024, 768).into()), 12);
-        // どんなに小さい画面でも、1つはある。
-        assert_eq!(slot_count((40, 30).into()), 1);
-        // いちばん遠い置き場所でも、左上は、画面の短い辺の半分より手前にある。
-        for (w, h) in [(800, 600), (640, 480), (1024, 768), (600, 800)] {
-            let last = slot_location(slot_count((w, h).into()) - 1);
-            assert!(last.x < w.min(h) / 2 && last.y < w.min(h) / 2);
-        }
-    }
 }

@@ -278,6 +278,11 @@ impl PointerHandler for Seinas {
             let location = Point::<f64, Logical>::from(event.position);
             let time = self.start.elapsed().as_millis() as u32;
             let serial = SERIAL_COUNTER.next_serial();
+            // ボタンを押した所にウィンドウがあれば、それをいちばん手前に出す。押した知らせは、この後で
+            // そのウィンドウへ、いつもどおり渡す。
+            if matches!(event.kind, Press { .. }) && self.frontend.raise_window_at(location) {
+                self.needs_redraw = true;
+            }
             // ポインターの下にある、いちばん手前のウィンドウへ渡す。
             let focus = self.frontend.window_under(location);
             let Some(pointer) = self.frontend.pointer.clone() else {

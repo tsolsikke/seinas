@@ -13,7 +13,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-frontend` | Waylandの受け口(Smithay)。クライアントの要求を受け、描く要素を並べる |
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
-| `crates/seinas-test-clients` | 試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたりする |
+| `crates/seinas-test-clients` | 試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いた知らせを書き出したりする |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
@@ -76,7 +76,7 @@ tools/build-musl.sh
 
 - 大きさは800x600に固定で、サイズ変更には応じません。
 - クライアントへ渡す入力は、ポインターだけです。
-- クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。動かすことはできません。
+- クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。クリックで手前に出せますが、動かすことはできません。
 
 ## ライセンス
 

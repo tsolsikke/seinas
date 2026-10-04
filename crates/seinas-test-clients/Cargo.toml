@@ -1,6 +1,6 @@
 [package]
 name = "seinas-test-clients"
-description = "Seinasの試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたりする。"
+description = "Seinasの試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いた知らせを書き出したりする。"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
