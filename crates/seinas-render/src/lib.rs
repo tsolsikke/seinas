@@ -146,6 +146,7 @@ impl Painter {
     /// 背景を塗り、その上に `elements` を合成する。
     ///
     /// `elements` は手前から順に並べる(先頭がいちばん手前)。毎回、全面を描き直す。
+    /// 描けない要素があっても、失敗にはしない。その数は [`FrameView::failed_elements`] で分かる。
     /// 返す [`FrameView`] は、次に `paint` を呼ぶまでの間だけ読める。
     pub fn paint<E>(&mut self, elements: &[E]) -> Result<FrameView<'_>, RenderError>
     where
@@ -154,6 +155,7 @@ impl Painter {
         let size = Size::<i32, Physical>::from((self.width, self.height));
         let whole = Rectangle::from_size(size);
         let scale = Scale::from(1.0);
+        let mut failed_elements = 0;
         {
             let mut target = self.renderer.bind(&mut self.canvas)?;
             let mut frame = self.renderer.render(&mut target, size, Transform::Normal)?;
@@ -166,15 +168,22 @@ impl Painter {
                 };
                 // 描き直す範囲は、要素の左上を原点にして渡す。
                 visible.loc -= geometry.loc;
-                element.draw(&mut frame, element.src(), geometry, &[visible], &[])?;
+                // 1つの要素が描けなくても、ほかの要素は描く。たとえば、クライアントが共有メモリーを
+                // 縮めていた場合、そのクライアントの要素だけが失敗する。
+                if element
+                    .draw(&mut frame, element.src(), geometry, &[visible], &[])
+                    .is_err()
+                {
+                    failed_elements += 1;
+                }
             }
             // pixmanの描画は同期で終わるので、返ってくる同期点を待つ必要は無い。
             let _ = frame.finish()?;
         }
-        Ok(self.view())
+        Ok(self.view(failed_elements))
     }
 
-    fn view(&self) -> FrameView<'_> {
+    fn view(&self, failed_elements: usize) -> FrameView<'_> {
         let stride = self.canvas.stride();
         // SAFETY: `data()` は、このPainterが持つ生きた画像の先頭を指す。画像は `stride × 高さ` バイトの
         // 続いた領域で、pixmanが確保して画像と同じ間だけ保つ。返すスライスは `&self` を借りているので、
@@ -190,6 +199,7 @@ impl Painter {
             height: self.height as usize,
             stride,
             format: PixelFormat::Xrgb8888,
+            failed_elements,
             data,
         }
     }
@@ -202,6 +212,7 @@ pub struct FrameView<'a> {
     height: usize,
     stride: usize,
     format: PixelFormat,
+    failed_elements: usize,
     data: &'a [u8],
 }
 
@@ -224,6 +235,13 @@ impl<'a> FrameView<'a> {
     /// 画素の形式。
     pub fn format(&self) -> PixelFormat {
         self.format
+    }
+
+    /// 描けなかった要素の数。0でなければ、その要素のあたりの絵は当てにならない。
+    ///
+    /// 描けなかった要素があっても、ほかの要素は描かれている。呼ぶ側は、絵をそのまま出してよい。
+    pub fn failed_elements(&self) -> usize {
+        self.failed_elements
     }
 
     /// 1行ぶんの、意味のあるバイト(`幅 × 4`)。
@@ -330,6 +348,121 @@ mod tests {
         assert_eq!(rgb(pixel(&view, 3, 3)), [0x00, 0x00, 0xff]);
         assert_eq!(rgb(pixel(&view, 4, 4)), rgb(BACKGROUND_PIXEL));
         assert_eq!(rgb(pixel(&view, 15, 15)), rgb(BACKGROUND_PIXEL));
+    }
+
+    /// 描こうとすると必ず失敗する要素。
+    struct Broken(SolidRect);
+
+    impl smithay::backend::renderer::element::Element for Broken {
+        fn id(&self) -> &smithay::backend::renderer::element::Id {
+            self.0.id()
+        }
+        fn current_commit(&self) -> smithay::backend::renderer::utils::CommitCounter {
+            self.0.current_commit()
+        }
+        fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+            self.0.src()
+        }
+        fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+            self.0.geometry(scale)
+        }
+    }
+
+    impl RenderElement<PixmanRenderer> for Broken {
+        fn draw(
+            &self,
+            _frame: &mut <PixmanRenderer as smithay::backend::renderer::RendererSuper>::Frame<
+                '_,
+                '_,
+            >,
+            _src: Rectangle<f64, smithay::utils::Buffer>,
+            _dst: Rectangle<i32, Physical>,
+            _damage: &[Rectangle<i32, Physical>],
+            _opaque_regions: &[Rectangle<i32, Physical>],
+        ) -> Result<(), PixmanError> {
+            Err(PixmanError::Unsupported)
+        }
+    }
+
+    /// 2種類の要素を、1つの並びに入れるための型。
+    enum Either {
+        Solid(SolidRect),
+        Broken(Broken),
+    }
+
+    impl smithay::backend::renderer::element::Element for Either {
+        fn id(&self) -> &smithay::backend::renderer::element::Id {
+            match self {
+                Either::Solid(e) => e.id(),
+                Either::Broken(e) => e.id(),
+            }
+        }
+        fn current_commit(&self) -> smithay::backend::renderer::utils::CommitCounter {
+            match self {
+                Either::Solid(e) => e.current_commit(),
+                Either::Broken(e) => e.current_commit(),
+            }
+        }
+        fn src(&self) -> Rectangle<f64, smithay::utils::Buffer> {
+            match self {
+                Either::Solid(e) => e.src(),
+                Either::Broken(e) => e.src(),
+            }
+        }
+        fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+            match self {
+                Either::Solid(e) => e.geometry(scale),
+                Either::Broken(e) => e.geometry(scale),
+            }
+        }
+    }
+
+    impl RenderElement<PixmanRenderer> for Either {
+        fn draw(
+            &self,
+            frame: &mut <PixmanRenderer as smithay::backend::renderer::RendererSuper>::Frame<
+                '_,
+                '_,
+            >,
+            src: Rectangle<f64, smithay::utils::Buffer>,
+            dst: Rectangle<i32, Physical>,
+            damage: &[Rectangle<i32, Physical>],
+            opaque_regions: &[Rectangle<i32, Physical>],
+        ) -> Result<(), PixmanError> {
+            match self {
+                Either::Solid(e) => RenderElement::<PixmanRenderer>::draw(
+                    e,
+                    frame,
+                    src,
+                    dst,
+                    damage,
+                    opaque_regions,
+                ),
+                Either::Broken(e) => e.draw(frame, src, dst, damage, opaque_regions),
+            }
+        }
+    }
+
+    #[test]
+    fn an_element_that_fails_does_not_stop_the_others() {
+        let mut painter = Painter::new(32, 32).unwrap();
+        // 手前に描けない要素、奥に緑の要素。
+        let elements = [
+            Either::Broken(Broken(solid(0, 0, 8, 8, [1.0, 0.0, 0.0, 1.0]))),
+            Either::Solid(solid(4, 4, 16, 16, [0.0, 1.0, 0.0, 1.0])),
+        ];
+        let view = painter.paint(&elements).unwrap();
+        assert_eq!(view.failed_elements(), 1);
+        // 奥の要素と背景は、いつもどおり描かれている。
+        assert_eq!(rgb(pixel(&view, 10, 10)), [0x00, 0xff, 0x00]);
+        assert_eq!(rgb(pixel(&view, 0, 0)), rgb(BACKGROUND_PIXEL));
+        assert_eq!(rgb(pixel(&view, 30, 30)), rgb(BACKGROUND_PIXEL));
+
+        // 描けない要素が無ければ、0になる。
+        let view = painter
+            .paint(&[solid(0, 0, 8, 8, [1.0, 1.0, 1.0, 1.0])])
+            .unwrap();
+        assert_eq!(view.failed_elements(), 0);
     }
 
     #[test]

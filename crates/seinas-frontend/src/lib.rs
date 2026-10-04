@@ -28,7 +28,7 @@ use smithay::{
     reexports::wayland_server::{
         backend::{ClientData, ClientId, DisconnectReason},
         protocol::wl_surface::WlSurface,
-        Client, DisplayHandle,
+        Client, Display, DisplayHandle, Resource,
     },
     utils::{Logical, Size},
     wayland::{
@@ -144,6 +144,25 @@ impl<D: SeatHandler> Frontend<D> {
                 |_, _, &()| true,
             );
         }
+    }
+}
+
+/// 切られたクライアントの後片付けを、いますぐ行わせる。
+///
+/// 描いている最中に切られたクライアント(共有メモリーを縮めていた場合など)は、そのままだと、ほかの
+/// クライアントから次の要求が届くまで、ソケットもウィンドウも残り続ける。描けない要素があったときに、
+/// これを呼んで片付ける。イベントループの処理の外(クライアントの要求を処理していないとき)で呼ぶこと。
+pub fn reap_dead_clients<D: FrontendHost + 'static>(display: &mut Display<D>, state: &mut D) {
+    // 後片付けは、どれか1つのクライアントの要求を処理させると、あわせて行われる。
+    let client = state
+        .frontend()
+        .xdg_shell_state
+        .toplevel_surfaces()
+        .iter()
+        .find_map(|toplevel| toplevel.wl_surface().client());
+    if let Some(client) = client {
+        // 切られたクライアントを選んだ場合は失敗が返るが、後片付けは行われる。
+        let _ = display.backend().dispatch_single_client(state, client.id());
     }
 }
 

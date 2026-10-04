@@ -27,19 +27,21 @@
 mod screen;
 
 use std::{
+    cell::RefCell,
     error::Error,
     path::PathBuf,
     process::ExitCode,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
-use seinas_frontend::{BuildFrontend, Config, Frontend, FrontendHost};
+use seinas_frontend::{reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
     wayland_server::{Display, ListeningSocket},
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use screen::Screen;
 
@@ -107,6 +109,8 @@ struct Standalone {
     screen: Screen,
     start: Instant,
     needs_redraw: bool,
+    /// 描けない要素があった。切られたクライアントの後片付けが要る。
+    reap_needed: bool,
     last_draw: Option<Instant>,
 }
 
@@ -137,6 +141,12 @@ impl Standalone {
     fn draw(&mut self) -> Result<(), Box<dyn Error>> {
         let elements = self.frontend.render_elements(self.painter.renderer());
         let view = self.painter.paint(&elements)?;
+        if view.failed_elements() > 0 {
+            // たとえば、クライアントが共有メモリーを縮めていた場合。Smithayがそのクライアントを切るので、
+            // ここでは絵をそのまま出して、動き続ける。
+            warn!("{} element(s) could not be drawn", view.failed_elements());
+            self.reap_needed = true;
+        }
         self.screen.show(&view)?;
         drop(elements);
         self.needs_redraw = false;
@@ -173,9 +183,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     info!("screen: {width}x{height} ({})", screen.describe());
 
     let mut event_loop: EventLoop<Standalone> = EventLoop::try_new()?;
-    let mut display: Display<Standalone> = Display::new()?;
+    // displayは、クライアントの要求を処理する源と、下のループの両方から使う。
+    let display: Rc<RefCell<Display<Standalone>>> = Rc::new(RefCell::new(Display::new()?));
     let frontend = Standalone::build_frontend(
-        &display.handle(),
+        &display.borrow().handle(),
         Config {
             width,
             height,
@@ -196,13 +207,18 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         },
     )?;
 
-    // 源その2: クライアントの要求の処理。displayは閉包が持つ。
-    let display_fd = display.backend().poll_fd().try_clone_to_owned()?;
+    // 源その2: クライアントの要求の処理。
+    let display_fd = display
+        .borrow_mut()
+        .backend()
+        .poll_fd()
+        .try_clone_to_owned()?;
+    let dispatcher = display.clone();
     event_loop.handle().insert_source(
         Generic::new(display_fd, Interest::READ, Mode::Level),
         move |_, _, state: &mut Standalone| {
             // クライアントとのやり取りの失敗で、コンポジタ全体を止めない。
-            if let Err(e) = display.dispatch_clients(state) {
+            if let Err(e) = dispatcher.borrow_mut().dispatch_clients(state) {
                 error!("failed to dispatch the clients: {e}");
             }
             Ok(PostAction::Continue)
@@ -216,12 +232,16 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         start: Instant::now(),
         // クライアントがいなくても、最初に1枚(背景)を出す。
         needs_redraw: true,
+        reap_needed: false,
         last_draw: None,
     };
 
     loop {
         if state.needs_redraw && state.until_next_frame().is_zero() {
             state.draw()?;
+        }
+        if std::mem::take(&mut state.reap_needed) {
+            reap_dead_clients(&mut display.borrow_mut(), &mut state);
         }
         if let Err(e) = state.frontend.display_handle.flush_clients() {
             error!("failed to flush the clients: {e}");

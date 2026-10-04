@@ -18,18 +18,20 @@
 mod parent;
 
 use std::{
+    cell::RefCell,
     error::Error,
+    rc::Rc,
     time::{Duration, Instant},
 };
 
-use seinas_frontend::{BuildFrontend, Config, Frontend, FrontendHost};
+use seinas_frontend::{reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
     wayland_server::{Display, ListeningSocket},
 };
 use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use wayland_client::{globals::registry_queue_init, Connection, QueueHandle};
 
 use parent::Parent;
@@ -50,6 +52,8 @@ pub struct Seinas {
     parent: Parent,
     start: Instant,
     needs_redraw: bool,
+    /// 描けない要素があった。切られたクライアントの後片付けが要る。
+    reap_needed: bool,
     exit: bool,
 }
 
@@ -61,11 +65,21 @@ impl Seinas {
             return;
         }
         let elements = self.frontend.render_elements(self.painter.renderer());
+        let mut reap_needed = false;
         let result = self
             .painter
             .paint(&elements)
             .map_err(Box::<dyn Error>::from)
-            .and_then(|view| self.parent.present(&view, qh));
+            .and_then(|view| {
+                if view.failed_elements() > 0 {
+                    // たとえば、クライアントが共有メモリーを縮めていた場合。Smithayがそのクライアントを
+                    // 切るので、ここでは絵をそのまま出して、動き続ける。
+                    warn!("{} element(s) could not be drawn", view.failed_elements());
+                    reap_needed = true;
+                }
+                self.parent.present(&view, qh)
+            });
+        self.reap_needed |= reap_needed;
         drop(elements);
         if let Err(e) = result {
             error!("drawing failed: {e}");
@@ -105,9 +119,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     WaylandSource::new(conn.clone(), event_queue).insert(event_loop.handle())?;
     let parent = Parent::new(&globals, &qh, WIDTH, HEIGHT)?;
 
-    let mut display: Display<Seinas> = Display::new()?;
+    // displayは、クライアントの要求を処理する源と、下のループの両方から使う。
+    let display: Rc<RefCell<Display<Seinas>>> = Rc::new(RefCell::new(Display::new()?));
     let frontend = Seinas::build_frontend(
-        &display.handle(),
+        &display.borrow().handle(),
         Config {
             width: WIDTH,
             height: HEIGHT,
@@ -129,16 +144,21 @@ fn main() -> Result<(), Box<dyn Error>> {
         },
     )?;
 
-    // 源その3: 子の要求の処理。displayは閉包が持つ。
-    let display_fd = display.backend().poll_fd().try_clone_to_owned()?;
+    // 源その3: 子の要求の処理。
+    let display_fd = display
+        .borrow_mut()
+        .backend()
+        .poll_fd()
+        .try_clone_to_owned()?;
+    let dispatcher = display.clone();
     event_loop.handle().insert_source(
         Generic::new(display_fd, Interest::READ, Mode::Level),
         move |_, _, state: &mut Seinas| {
             // クライアントとのやり取りの失敗で、コンポジタ全体を止めない。
-            if let Err(e) = display.dispatch_clients(state) {
+            if let Err(e) = dispatcher.borrow_mut().dispatch_clients(state) {
                 error!("failed to dispatch the clients: {e}");
             }
-            if let Err(e) = display.flush_clients() {
+            if let Err(e) = dispatcher.borrow_mut().flush_clients() {
                 error!("failed to flush the clients: {e}");
             }
             Ok(PostAction::Continue)
@@ -151,6 +171,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         parent,
         start: Instant::now(),
         needs_redraw: false,
+        reap_needed: false,
         exit: false,
     };
 
@@ -159,6 +180,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         // 子がcommitしたのに親のframeコールバックを待っていないとき(最初の1回など)は、ここで描く。
         if state.needs_redraw {
             state.draw(&qh);
+        }
+        if std::mem::take(&mut state.reap_needed) {
+            reap_dead_clients(&mut display.borrow_mut(), &mut state);
         }
         if let Err(e) = state.frontend.display_handle.flush_clients() {
             error!("failed to flush the clients: {e}");
