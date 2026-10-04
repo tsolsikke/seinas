@@ -139,8 +139,8 @@ impl ClientData for ClientState {
     fn initialized(&self, _client_id: ClientId) {
         info!("a client connected");
     }
-    fn disconnected(&self, _client_id: ClientId, _reason: DisconnectReason) {
-        info!("a client disconnected");
+    fn disconnected(&self, _client_id: ClientId, reason: DisconnectReason) {
+        info!("a client disconnected: {reason:?}");
     }
 }
 

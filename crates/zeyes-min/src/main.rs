@@ -3,7 +3,7 @@
 //! xeyesのように、目玉が最後に見たポインターの位置へ動く。ポインターが入った・出た・ボタンを押したことは、
 //! 標準エラーへ書く。つなぐ先は `WAYLAND_DISPLAY`(Seinasの中で動かすなら `seinas-0`)。
 
-use std::time::Duration;
+use std::{error::Error, process::ExitCode, time::Duration};
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
@@ -335,25 +335,37 @@ fn mix(a: u32, b: u32, t: f64) -> u32 {
     channel(16) | channel(8) | channel(0)
 }
 
-fn main() {
-    let conn = Connection::connect_to_env().expect("connect (WAYLAND_DISPLAY)");
-    let (globals, event_queue) = registry_queue_init::<Zeyes>(&conn).expect("registry");
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            // 接続が切れたときなどは、panicせずに1行だけ出して終わる。
+            eprintln!("zeyes: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let conn = Connection::connect_to_env()
+        .map_err(|e| format!("cannot connect to the compositor (WAYLAND_DISPLAY): {e}"))?;
+    let (globals, event_queue) = registry_queue_init::<Zeyes>(&conn)?;
     let qh = event_queue.handle();
-    let mut event_loop: EventLoop<Zeyes> = EventLoop::try_new().expect("event loop");
+    let mut event_loop: EventLoop<Zeyes> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
-        .expect("source");
+        .map_err(|e| format!("cannot watch the connection: {e}"))?;
 
-    let compositor = CompositorState::bind(&globals, &qh).expect("wl_compositor");
-    let xdg_shell = XdgShell::bind(&globals, &qh).expect("xdg_wm_base");
-    let shm = Shm::bind(&globals, &qh).expect("wl_shm");
+    let compositor = CompositorState::bind(&globals, &qh)?;
+    let xdg_shell = XdgShell::bind(&globals, &qh)?;
+    let shm = Shm::bind(&globals, &qh)?;
     let surface = compositor.create_surface(&qh);
     let window = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &qh);
     window.set_title("zeyes-min");
     window.set_app_id("zeyes-min");
     window.set_min_size(Some((WIDTH as u32, HEIGHT as u32)));
     window.commit();
-    let pool = SlotPool::new((WIDTH * HEIGHT * 4 * 2) as usize, &shm).expect("pool");
+    let pool = SlotPool::new((WIDTH * HEIGHT * 4 * 2) as usize, &shm)?;
 
     let mut state = Zeyes {
         registry_state: RegistryState::new(&globals),
@@ -373,8 +385,9 @@ fn main() {
     while !state.exit {
         event_loop
             .dispatch(Duration::from_millis(16), &mut state)
-            .expect("dispatch");
+            .map_err(|e| format!("the connection to the compositor was lost: {e}"))?;
     }
+    Ok(())
 }
 
 delegate_registry!(Zeyes);

@@ -121,8 +121,13 @@ fn main() -> Result<(), Box<dyn Error>> {
     event_loop.handle().insert_source(
         Generic::new(display_fd, Interest::READ, Mode::Level),
         move |_, _, state: &mut Seinas| {
-            display.dispatch_clients(state)?;
-            display.flush_clients()?;
+            // クライアントとのやり取りの失敗で、コンポジタ全体を止めない。
+            if let Err(e) = display.dispatch_clients(state) {
+                error!("failed to dispatch the clients: {e}");
+            }
+            if let Err(e) = display.flush_clients() {
+                error!("failed to flush the clients: {e}");
+            }
             Ok(PostAction::Continue)
         },
     )?;
