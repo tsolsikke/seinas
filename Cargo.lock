@@ -457,6 +457,7 @@ name = "seinas"
 version = "0.1.0"
 dependencies = [
  "calloop",
+ "libc",
  "seinas-render",
  "smithay",
  "smithay-client-toolkit",

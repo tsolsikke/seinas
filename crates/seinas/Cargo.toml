@@ -15,3 +15,12 @@ calloop = { workspace = true }
 wayland-client = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+libc = { workspace = true }
+
+# Smithayの共有メモリー(wl_shm)が、いつスレッドを作り、いつSIGBUSの受け口を置き換えるかを確かめる。
+# スレッドの数を数えるので、テストハーネス(スレッドを作る)は使わない。
+[[test]]
+name = "shm_lifecycle"
+harness = false
