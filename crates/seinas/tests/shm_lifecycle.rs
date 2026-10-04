@@ -19,6 +19,7 @@ use std::{
     },
     process::Command,
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use smithay::{
@@ -155,7 +156,19 @@ fn thread_names() -> Vec<String> {
 }
 
 fn has_drop_thread() -> bool {
-    thread_names().iter().any(|name| name == DROP_THREAD)
+    // スレッドの名前は、できたスレッドが自分で付ける。できた直後は、まだ元の名前のままの
+    // ことがあるので、スレッドが増えているときは、名前が付くまで少し待つ。
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let names = thread_names();
+        if names.iter().any(|name| name == DROP_THREAD) {
+            return true;
+        }
+        if names.len() == 1 || Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 /// いまのSIGBUSの受け口(関数の番地と旗)。
