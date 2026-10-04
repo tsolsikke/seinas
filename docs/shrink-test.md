@@ -19,10 +19,10 @@ Waylandのクライアントは、画面の絵を共有メモリー(wl_shmのプ
 
 ## 試験用のクライアント
 
-`crates/seinas-test-clients` の `bad-client` に、`shrink` という種類があります。Waylandのライブラリは使わず、ソケットへ直接書きます。
+`crates/seinas-test-clients` の `test-client` に、`shrink` という種類があります。Waylandのライブラリは使わず、ソケットへ直接書きます。
 
 ```bash
-WAYLAND_DISPLAY=<ソケットの名前か絶対パス> bad-client shrink [--step]
+WAYLAND_DISPLAY=<ソケットの名前か絶対パス> test-client shrink [--step]
 ```
 
 - 400x300の、紫(赤と青が最大)のウィンドウを1つ出します。
@@ -80,7 +80,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 `crates/seinas-standalone/tests/shrink.rs` が、上の流れを偽の画面で確かめます。`cargo test` で動き、CIでも動きます。
 
 1. seinas-standaloneを偽の画面で起動し、zeyes-minをつなぐ。
-2. `bad-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、画素で確かめる。
+2. `test-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、画素で確かめる。
 3. 1行送って、縮めさせる。
 4. 標準出力の残りの3行と、終了コードが0であることを確かめる。
 5. 紫のウィンドウ(後からつなぐので、zeyes-minの手前に、右下へずれて出る)が消え、zeyes-minのウィンドウの全体が見えていることを、画素で確かめる。seinas-standaloneとzeyes-minが動いていることを確かめる。

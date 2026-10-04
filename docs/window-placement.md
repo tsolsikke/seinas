@@ -77,7 +77,7 @@ zeyes-minは従わず、いつも320x240で描きます。
 ## 試験
 
 - 置き場所の番号の決め方と折り返し、押した所のウィンドウの選び方、手前に出したときの順と置き場所、`activated` が手前の1つだけに付くことは、`crates/seinas-frontend` の単体試験(`src/stack.rs`)で確かめています。
-- `activated` の知らせが実際に届くことは、`crates/seinas-standalone/tests/activation.rs` が確かめます。試験用のクライアント(`bad-client window`)が、届いたconfigureの中身を書き出し、それを読みます。
+- `activated` の知らせが実際に届くことは、`crates/seinas-standalone/tests/activation.rs` が確かめます。試験用のクライアント(`test-client window`)が、届いたconfigureの中身を書き出し、それを読みます。
 - 実際の重なり方と位置は、`crates/seinas-standalone/tests/stacking.rs` が、色の違う2つのzeyes-minを偽の画面につないで、画素で確かめます。
   zeyes-minの目のまわりの色は、引数 `--skin RRGGBB` か、環境変数 `ZEYES_SKIN` で変えられます(既定は緑)。
 

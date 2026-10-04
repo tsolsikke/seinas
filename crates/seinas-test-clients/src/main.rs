@@ -1,12 +1,12 @@
-//! 試験用: わざと行儀の悪いことをするWaylandクライアント。
+//! 試験用のWaylandクライアント。わざと行儀の悪いことをする種類と、行儀のよい種類がある。
 //!
-//! コンポジタが、そのクライアントだけを切り、自分は動き続けることを確かめるために使う。
+//! 行儀の悪い種類は、コンポジタが、そのクライアントだけを切り、自分は動き続けることを確かめるために使う。
 //! ライブラリを通すと不正な要求は作れないので、ソケットへ直接バイトを書く。
 //!
 //! 使い方(Seinasを動かした状態で。`WAYLAND_DISPLAY` は、ソケットの名前か絶対パス):
 //!
 //! ```text
-//! WAYLAND_DISPLAY=seinas-0 bad-client <種類> [--step]
+//! WAYLAND_DISPLAY=seinas-0 test-client <種類> [--step]
 //! ```
 //!
 //! 種類:
@@ -136,11 +136,11 @@ fn run(kind: &str) -> Result<bool, String> {
         }
     };
     match find_protocol_error(&received) {
-        Some(error) => println!("bad-client: {kind}: protocol error: {error}"),
-        None => println!("bad-client: {kind}: no protocol error was sent"),
+        Some(error) => println!("test-client: {kind}: protocol error: {error}"),
+        None => println!("test-client: {kind}: no protocol error was sent"),
     }
     println!(
-        "bad-client: {kind}: {}",
+        "test-client: {kind}: {}",
         if closed {
             "the compositor closed the connection"
         } else {
@@ -153,7 +153,7 @@ fn run(kind: &str) -> Result<bool, String> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(kind) = args.first() else {
-        eprintln!("usage: bad-client <unknown-opcode|unknown-object|short-message|bad-global|shrink|window> [--step]");
+        eprintln!("usage: test-client <unknown-opcode|unknown-object|short-message|bad-global|shrink|window> [--step]");
         return ExitCode::from(2);
     };
     let result = match kind.as_str() {
@@ -165,7 +165,7 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(message) => {
-            eprintln!("bad-client: {message}");
+            eprintln!("test-client: {message}");
             ExitCode::from(2)
         }
     }

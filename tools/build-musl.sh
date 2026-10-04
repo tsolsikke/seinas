@@ -5,7 +5,7 @@
 #     tools/build-musl.sh
 #
 # できるもの:
-#     target/x86_64-unknown-linux-musl/release/seinas、seinas-standalone、seinas-fbdev、zeyes-min、bad-client
+#     target/x86_64-unknown-linux-musl/release/seinas、seinas-standalone、seinas-fbdev、zeyes-min、test-client
 #     target/dist/seinas-musl/(実行ファイルと、LICENSE、第三者のライセンス文をまとめたもの)
 #
 # CPUの指定(target-cpu=nativeなど)は付けない。Rustの既定のx86-64(SSE2まで)で作る。

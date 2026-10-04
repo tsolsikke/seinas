@@ -48,7 +48,7 @@ impl Drop for Running {
     }
 }
 
-/// 試験用のクライアント(`bad-client`)と、その標準出力。
+/// 試験用のクライアント(`test-client`)と、その標準出力。
 pub struct TestClient {
     pub process: Running,
     lines: mpsc::Receiver<String>,
@@ -263,10 +263,10 @@ impl Compositor {
         )
     }
 
-    /// 試験用のクライアント(`bad-client`)を、引数 `args` でつなぐ。標準入力と標準出力は、こちらで持つ。
+    /// 試験用のクライアント(`test-client`)を、引数 `args` でつなぐ。標準入力と標準出力は、こちらで持つ。
     pub fn connect_test_client(&self, args: &[&str]) -> TestClient {
         let mut process = Running(
-            Command::new(workspace_bin("seinas-test-clients", "bad-client"))
+            Command::new(workspace_bin("seinas-test-clients", "test-client"))
                 .args(args)
                 .env("WAYLAND_DISPLAY", &self.socket)
                 .stdin(Stdio::piped())
