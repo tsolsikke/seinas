@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/seinas-render", "crates/seinas", "crates/zeyes-min"]
+members = ["crates/seinas-render", "crates/seinas", "crates/seinas-fbdev", "crates/zeyes-min"]
 
 [workspace.package]
 version = "0.1.0"

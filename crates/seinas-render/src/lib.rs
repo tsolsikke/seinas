@@ -15,7 +15,7 @@ use std::fmt;
 
 use smithay::{
     backend::renderer::{
-        element::RenderElement,
+        element::{solid::SolidColorRenderElement, Id, Kind, RenderElement},
         pixman::{PixmanError, PixmanRenderer},
         Bind, Color32F, Frame, Renderer,
     },
@@ -24,6 +24,20 @@ use smithay::{
 
 /// 何も無い所の色。
 pub const BACKGROUND: Color32F = Color32F::new(0.10, 0.12, 0.16, 1.0);
+
+/// 単色の長方形の要素。クライアントの画面を持たない構成でも、これだけで絵を作れる。
+pub type SolidRect = SolidColorRenderElement;
+
+/// 左上が(`x`, `y`)、大きさが `width` × `height` の、単色の長方形を作る。色は赤、緑、青、不透明度(0.0〜1.0)。
+pub fn solid_rect(x: i32, y: i32, width: i32, height: i32, color: [f32; 4]) -> SolidRect {
+    SolidColorRenderElement::new(
+        Id::new(),
+        Rectangle::new((x, y).into(), (width, height).into()),
+        0usize,
+        Color32F::from(color),
+        Kind::Unspecified,
+    )
+}
 
 /// 描画結果の画素の形式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -255,19 +269,11 @@ impl<'a> FrameView<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use smithay::backend::renderer::element::{solid::SolidColorRenderElement, Id, Kind};
-
     /// [`BACKGROUND`] を8ビットに直した値(B, G, R, X)。pixmanは端数を切り捨てる。
     const BACKGROUND_PIXEL: [u8; 4] = [0x28, 0x1e, 0x19, 0xff];
 
-    fn solid(x: i32, y: i32, w: i32, h: i32, color: [f32; 4]) -> SolidColorRenderElement {
-        SolidColorRenderElement::new(
-            Id::new(),
-            Rectangle::new((x, y).into(), (w, h).into()),
-            0usize,
-            Color32F::from(color),
-            Kind::Unspecified,
-        )
+    fn solid(x: i32, y: i32, w: i32, h: i32, color: [f32; 4]) -> SolidRect {
+        solid_rect(x, y, w, h, color)
     }
 
     fn pixel(view: &FrameView<'_>, x: usize, y: usize) -> [u8; 4] {

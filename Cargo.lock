@@ -467,6 +467,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "seinas-fbdev"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "seinas-render",
+]
+
+[[package]]
 name = "seinas-render"
 version = "0.1.0"
 dependencies = [

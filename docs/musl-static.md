@@ -2,6 +2,7 @@
 
 seinasとzeyes-minを、`x86_64-unknown-linux-musl` 向けに静的にリンクして作る手順と、できた実行ファイルの記録です。
 ZeikOS側で、像の上限やスタックの大きさを決めるときの材料にします。
+同じ手順でseinas-fbdevも作ります。そちらの記録は `docs/fbdev.md` にあります。
 
 ## 作り方
 

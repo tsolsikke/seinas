@@ -1,0 +1,13 @@
+[package]
+name = "seinas-fbdev"
+description = "Seinasの裏側の1つ。共通の描画の結果を、Linuxのfbdev(/dev/fb0)の形で画面へ出す。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Waylandの受け口は使わない。依存は、共通の描画と、OSの呼び出しのためのlibcだけにする。
+seinas-render = { path = "../seinas-render" }
+libc = { workspace = true }

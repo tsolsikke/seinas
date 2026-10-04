@@ -26,6 +26,11 @@ jobs:
         run: cargo test --workspace --locked
       - name: 共通の描画だけのテスト(受け口を含めずにビルドする)
         run: cargo test -p seinas-render --locked
+      - name: fbdevの裏側に、Waylandの受け口が入っていないこと
+        run: |
+          cargo build --locked -p seinas-fbdev
+          tools/check-no-wayland.sh seinas-fbdev target/debug/seinas-fbdev
+          target/debug/seinas-fbdev --dry-run
       - name: 依存の一覧とライセンス文が最新か
         run: python3 tools/third-party.py --check
 
@@ -41,6 +46,6 @@ jobs:
       - name: 静的ビルド(Cのライブラリもソースから作る)
         run: tools/build-musl.sh
       - name: ELFの記録
-        run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min
+        run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min target/x86_64-unknown-linux-musl/release/seinas-fbdev
       - name: musl向けのテスト
         run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$PWD/target/musl-libs/lib" cargo test --workspace --locked --target x86_64-unknown-linux-musl

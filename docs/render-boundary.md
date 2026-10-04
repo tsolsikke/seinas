@@ -9,7 +9,7 @@ Seinasは、次の3つの部分に分かれています。
 | 裏側 | `crates/seinas/src/parent.rs` | できた絵を、表示先へ出す |
 
 この文書は、共通の描画と裏側のあいだの決まりをまとめたものです。
-今の裏側は、親のWaylandにウィンドウを開く「入れ子」の1つだけです。後で作るfbdevの裏側も、同じ決まりに従います。
+裏側は2つあります。親のWaylandにウィンドウを開く「入れ子」(`crates/seinas/src/parent.rs`)と、fbdevの画面へ出すもの(`crates/seinas-fbdev`、`docs/fbdev.md`)です。どちらも同じ決まりに従います。
 
 ## 描画結果の形式
 
