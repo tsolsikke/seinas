@@ -28,3 +28,19 @@ jobs:
         run: cargo test -p seinas-render --locked
       - name: 依存の一覧とライセンス文が最新か
         run: python3 tools/third-party.py --check
+
+  musl:
+    name: muslでの静的ビルド
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: ビルドの道具を入れる
+        run: sudo apt-get update && sudo apt-get install -y musl-tools meson ninja-build bison
+      - name: Rustを入れる(rust-toolchain.tomlの版)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: 静的ビルド(Cのライブラリもソースから作る)
+        run: tools/build-musl.sh
+      - name: ELFの記録
+        run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min
+      - name: musl向けのテスト
+        run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$PWD/target/musl-libs/lib" cargo test --workspace --locked --target x86_64-unknown-linux-musl

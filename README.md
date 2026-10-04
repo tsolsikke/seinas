@@ -12,6 +12,8 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
+| `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
+| `tools/` | 静的ビルドや、依存の一覧を作るための道具 |
 | `THIRD-PARTY/` | 第三者のライセンス文と著作権表示、依存の一覧 |
 
 ## ビルドに要るもの
@@ -50,6 +52,17 @@ WAYLAND_DISPLAY=seinas-0 cargo run --locked -p zeyes-min
 ```
 
 Seinasのウィンドウを閉じると、Seinasは終わります。
+
+## muslでの静的ビルド
+
+ZeikOS向けに、共有ライブラリを使わない実行ファイルを作れます。
+
+```bash
+tools/build-musl.sh
+```
+
+実行ファイルは `target/x86_64-unknown-linux-musl/release/` に、ライセンス文と一緒にまとめたものは `target/dist/seinas-musl/` にできます。
+手順の中身と、できた実行ファイルの記録は `docs/musl-static.md` にあります。
 
 ## 今の制限
 
