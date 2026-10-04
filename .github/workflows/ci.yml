@@ -13,7 +13,7 @@ jobs:
     name: ホストでの検査
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Cのライブラリを入れる
         run: sudo apt-get update && sudo apt-get install -y libpixman-1-dev libxkbcommon-dev
       - name: Rustを入れる(rust-toolchain.tomlの版)
@@ -38,7 +38,7 @@ jobs:
     name: muslでの静的ビルド
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: ビルドの道具を入れる
         run: sudo apt-get update && sudo apt-get install -y musl-tools meson ninja-build bison
       - name: Rustを入れる(rust-toolchain.tomlの版)
