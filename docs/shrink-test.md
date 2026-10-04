@@ -83,7 +83,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 2. `bad-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、画素で確かめる。
 3. 1行送って、縮めさせる。
 4. 標準出力の残りの3行と、終了コードが0であることを確かめる。
-5. 紫のウィンドウが消え、zeyes-minのウィンドウが残っていることを、画素で確かめる。seinas-standaloneとzeyes-minが動いていることを確かめる。
+5. 紫のウィンドウ(後からつなぐので、zeyes-minの手前に、右下へずれて出る)が消え、zeyes-minのウィンドウの全体が見えていることを、画素で確かめる。seinas-standaloneとzeyes-minが動いていることを確かめる。
 6. zeyes-minを止めて、新しいzeyes-minをつなぎ、描かれることを確かめる。
 
 順序は、クライアントの出力と画面の画素を待って進めるので、時間のゆらぎでは落ちません。待つ時間の上限は、段階ごとに60秒です。

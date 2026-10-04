@@ -2,6 +2,9 @@
 //!
 //! xeyesのように、目玉が最後に見たポインターの位置へ動く。ポインターが入った・出た・ボタンを押したことは、
 //! 標準エラーへ書く。つなぐ先は `WAYLAND_DISPLAY`(Seinasの中で動かすなら `seinas-0`)。
+//!
+//! 目のまわり(肌)の色は、引数 `--skin RRGGBB` か、環境変数 `ZEYES_SKIN` で変えられる(16進の6けた。
+//! 引数が優先)。既定は緑(`6ab05c`)。ウィンドウを見分けたいときに使う。
 
 use std::{error::Error, process::ExitCode, time::Duration};
 
@@ -47,6 +50,8 @@ struct Zeyes {
     buffer: Option<Buffer>,
     pointer: Option<wl_pointer::WlPointer>,
     look_at: (f64, f64),
+    /// 目のまわり(肌)の色。
+    skin: u32,
     configured: bool,
     /// frameコールバックを待っている間はtrue。待っている間は描かない。
     frame_pending: bool,
@@ -229,7 +234,7 @@ impl Zeyes {
                 canvas
             }
         };
-        paint_eyes(canvas, self.look_at);
+        paint_eyes(canvas, self.look_at, self.skin);
 
         let surface = self.window.wl_surface();
         surface.damage_buffer(0, 0, WIDTH, HEIGHT);
@@ -241,8 +246,8 @@ impl Zeyes {
     }
 }
 
-/// 目のまわり(肌)の色。
-const BACKGROUND: u32 = 0x6a_b0_5c;
+/// 目のまわり(肌)の、既定の色。
+const DEFAULT_SKIN: u32 = 0x6a_b0_5c;
 const OUTLINE: u32 = 0x10_10_10;
 const SCLERA: u32 = 0xff_ff_ff;
 const IRIS: u32 = 0x4a_2e_1c;
@@ -265,10 +270,10 @@ const REACH: (f64, f64) = (
 );
 
 /// xeyesのように、2つの縦長の目を描く。目玉は見ている方向へ動く。
-fn paint_eyes(canvas: &mut [u8], look_at: (f64, f64)) {
+fn paint_eyes(canvas: &mut [u8], look_at: (f64, f64), skin: u32) {
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
-            let color = shade(x as f64 + 0.5, y as f64 + 0.5, look_at);
+            let color = shade_with(x as f64 + 0.5, y as f64 + 0.5, look_at, skin);
             let at = ((y * WIDTH + x) * 4) as usize;
             canvas[at..at + 4].copy_from_slice(&(0xff00_0000 | color).to_le_bytes());
         }
@@ -290,8 +295,8 @@ fn eyeball(center: (f64, f64), look_at: (f64, f64)) -> (f64, f64) {
 }
 
 /// 点(x, y)の色(0xRRGGBB)。形の端は、境目からの距離で色を混ぜてなめらかにする。
-fn shade(x: f64, y: f64, look_at: (f64, f64)) -> u32 {
-    let mut color = BACKGROUND;
+fn shade_with(x: f64, y: f64, look_at: (f64, f64), skin: u32) -> u32 {
+    let mut color = skin;
     for (cx, cy) in CENTERS {
         // 目: 縁、白目の順に重ねる。
         let eye = ellipse_distance((x - cx, y - cy), EYE);
@@ -346,7 +351,34 @@ fn main() -> ExitCode {
     }
 }
 
+/// 色の指定(16進の6けた。先頭の `#` は、あってもよい)を読む。
+fn parse_color(text: &str) -> Option<u32> {
+    let digits = text.strip_prefix('#').unwrap_or(text);
+    (digits.len() == 6).then(|| u32::from_str_radix(digits, 16).ok())?
+}
+
+/// 目のまわりの色を、引数 `--skin`、環境変数 `ZEYES_SKIN`、既定の順に決める。
+fn skin_color(args: &[String], env: Option<String>) -> Result<u32, String> {
+    let mut chosen = env;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--skin" => chosen = Some(args.next().ok_or("--skin needs a value")?.clone()),
+            other => return Err(format!("unknown argument: {other}")),
+        }
+    }
+    match chosen {
+        Some(text) => {
+            parse_color(&text).ok_or_else(|| format!("invalid skin color: {text} (use RRGGBB)"))
+        }
+        None => Ok(DEFAULT_SKIN),
+    }
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let skin = skin_color(&args, std::env::var("ZEYES_SKIN").ok())?;
+
     let conn = Connection::connect_to_env()
         .map_err(|e| format!("cannot connect to the compositor (WAYLAND_DISPLAY): {e}"))?;
     let (globals, event_queue) = registry_queue_init::<Zeyes>(&conn)?;
@@ -377,6 +409,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         buffer: None,
         pointer: None,
         look_at: (WIDTH as f64 / 2.0, HEIGHT as f64 / 2.0),
+        skin,
         configured: false,
         frame_pending: false,
         dirty: false,
@@ -404,6 +437,42 @@ mod tests {
     use super::*;
 
     const CENTER: (f64, f64) = (WIDTH as f64 / 2.0, HEIGHT as f64 / 2.0);
+    const BACKGROUND: u32 = DEFAULT_SKIN;
+
+    fn shade(x: f64, y: f64, look_at: (f64, f64)) -> u32 {
+        shade_with(x, y, look_at, DEFAULT_SKIN)
+    }
+
+    #[test]
+    fn the_skin_color_comes_from_the_argument_then_the_environment() {
+        let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(skin_color(&[], None), Ok(DEFAULT_SKIN));
+        assert_eq!(skin_color(&[], Some("4060d0".into())), Ok(0x4060d0));
+        assert_eq!(
+            skin_color(&args(&["--skin", "#ff8800"]), None),
+            Ok(0xff8800)
+        );
+        // 引数が、環境変数より優先される。
+        assert_eq!(
+            skin_color(&args(&["--skin", "102030"]), Some("4060d0".into())),
+            Ok(0x102030)
+        );
+        assert!(skin_color(&args(&["--skin"]), None).is_err());
+        assert!(skin_color(&args(&["--skin", "blue"]), None).is_err());
+        assert!(skin_color(&args(&["--bogus"]), None).is_err());
+        assert!(skin_color(&[], Some("12345".into())).is_err());
+    }
+
+    #[test]
+    fn the_skin_color_is_used_around_the_eyes_only() {
+        let (cx, cy) = CENTERS[0];
+        let far_down = (cx, cy + 500.0);
+        assert_eq!(shade_with(0.5, 0.5, far_down, 0x4060d0), 0x4060d0);
+        assert_eq!(
+            shade_with(cx, cy - EYE.1 + EYE_OUTLINE + 3.0, far_down, 0x4060d0),
+            SCLERA
+        );
+    }
 
     #[test]
     fn the_eyes_are_tall_and_where_expected() {
@@ -457,7 +526,7 @@ mod tests {
     #[test]
     fn painting_fills_the_whole_canvas() {
         let mut canvas = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
-        paint_eyes(&mut canvas, CENTER);
+        paint_eyes(&mut canvas, CENTER, DEFAULT_SKIN);
         assert_eq!(canvas[..4], [0x5c, 0xb0, 0x6a, 0xff]);
         assert!(canvas.chunks_exact(4).all(|pixel| pixel[3] == 0xff));
     }

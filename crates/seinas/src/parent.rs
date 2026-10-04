@@ -278,10 +278,8 @@ impl PointerHandler for Seinas {
             let location = Point::<f64, Logical>::from(event.position);
             let time = self.start.elapsed().as_millis() as u32;
             let serial = SERIAL_COUNTER.next_serial();
-            let focus = self
-                .frontend
-                .pointer_focus()
-                .map(|surface| (surface, Point::from((0.0, 0.0))));
+            // ポインターの下にある、いちばん手前のウィンドウへ渡す。
+            let focus = self.frontend.window_under(location);
             let Some(pointer) = self.frontend.pointer.clone() else {
                 continue;
             };

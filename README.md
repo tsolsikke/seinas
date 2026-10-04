@@ -17,6 +17,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
+| `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |
 | `docs/fbdev.md` | fbdevの裏側の構成、動かし方、確かめ方 |
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
@@ -75,7 +76,7 @@ tools/build-musl.sh
 
 - 大きさは800x600に固定で、サイズ変更には応じません。
 - クライアントへ渡す入力は、ポインターだけです。
-- クライアントのウィンドウは、左上にそのまま重ねて描きます。
+- クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。動かすことはできません。
 
 ## ライセンス
 

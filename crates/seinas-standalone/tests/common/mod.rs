@@ -85,18 +85,28 @@ impl Shot {
     }
 }
 
-/// zeyes-minのウィンドウ(320x240、左上)が、決まった印のとおりに描かれているか。
+/// zeyes-minのウィンドウの大きさ。
+pub const ZEYES_WIDTH: usize = 320;
+pub const ZEYES_HEIGHT: usize = 240;
+
+/// 左上が(`x0`, `y0`)にあるzeyes-minのウィンドウが、全体が見える形で描かれているか。
 ///
-/// ポインターが無いとき、目玉は窓の中央を見る。左の目玉は(114, 120)、右の目玉は(206, 120)に来る。
+/// 目のまわりの色は `skin`。ポインターが無いとき、目玉は窓の中央を見る。左の目玉は窓の中の
+/// (114, 120)、右の目玉は(206, 120)に来る。
+pub fn shows_zeyes_at(shot: &Shot, x0: usize, y0: usize, skin: [u8; 3]) -> bool {
+    let at = |x: usize, y: usize| shot.pixel(x0 + x, y0 + y);
+    at(2, 2) == skin
+        && at(317, 237) == skin
+        && at(85, 60) == SCLERA
+        && at(235, 60) == SCLERA
+        && at(85, 19) == OUTLINE
+        && at(114, 120) == PUPIL
+        && at(206, 120) == PUPIL
+}
+
+/// 既定の色のzeyes-minが、左上に、全体が見える形で描かれているか。
 pub fn shows_zeyes(shot: &Shot) -> bool {
-    shot.pixel(2, 2) == SKIN
-        && shot.pixel(317, 237) == SKIN
-        && shot.pixel(85, 60) == SCLERA
-        && shot.pixel(235, 60) == SCLERA
-        && shot.pixel(85, 19) == OUTLINE
-        && shot.pixel(114, 120) == PUPIL
-        && shot.pixel(206, 120) == PUPIL
-        && shot.pixel(WIDTH - 1, HEIGHT - 1) == BACKGROUND
+    shows_zeyes_at(shot, 0, 0, SKIN) && shot.pixel(WIDTH - 1, HEIGHT - 1) == BACKGROUND
 }
 
 pub fn shows_only_background(shot: &Shot) -> bool {
@@ -113,7 +123,8 @@ pub fn shows_only_background(shot: &Shot) -> bool {
 
 /// ワークスペースの、ほかのパッケージの実行ファイルの場所。このテストと同じ置き場にある。
 ///
-/// Cargoは、ほかのパッケージの実行ファイルをテストのためには作らない。無ければ、ここで作る。
+/// Cargoは、ほかのパッケージの実行ファイルをテストのためには作らない。古いものが残っていることも
+/// あるので、毎回ここでCargoを呼んで、いまのソースのものにする(変わっていなければ、すぐ終わる)。
 pub fn workspace_bin(package: &str, name: &str) -> PathBuf {
     let test_exe = std::env::current_exe().expect("the path of this test");
     // <置き場>/deps/<このテスト>
@@ -121,28 +132,26 @@ pub fn workspace_bin(package: &str, name: &str) -> PathBuf {
         .parent()
         .and_then(Path::parent)
         .expect("the profile directory");
-    let bin = profile_dir.join(name);
-    if !bin.exists() {
-        let mut build = Command::new(env!("CARGO"));
-        build.args(["build", "--locked", "-p", package]);
-        if profile_dir
-            .file_name()
-            .is_some_and(|name| name == "release")
-        {
-            build.arg("--release");
-        }
-        // 置き場が target/<ターゲット名>/<debugなど> の形なら、同じターゲット向けに作る。
-        let target = profile_dir
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .filter(|name| name.contains("-linux-"));
-        if let Some(target) = target {
-            build.args(["--target", target]);
-        }
-        let status = build.status().expect("run cargo");
-        assert!(status.success(), "building {package} failed");
+    let mut build = Command::new(env!("CARGO"));
+    build.args(["build", "--quiet", "--locked", "-p", package]);
+    if profile_dir
+        .file_name()
+        .is_some_and(|name| name == "release")
+    {
+        build.arg("--release");
     }
+    // 置き場が target/<ターゲット名>/<debugなど> の形なら、同じターゲット向けに作る。
+    let target = profile_dir
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        .filter(|name| name.contains("-linux-"));
+    if let Some(target) = target {
+        build.args(["--target", target]);
+    }
+    let status = build.status().expect("run cargo");
+    assert!(status.success(), "building {package} failed");
+    let bin = profile_dir.join(name);
     assert!(bin.exists(), "{} was not built", bin.display());
     bin
 }
@@ -205,9 +214,21 @@ impl Compositor {
 
     /// zeyes-minをつなぐ。
     pub fn connect_zeyes(&self) -> Running {
+        self.connect_zeyes_with(&[])
+    }
+
+    /// 目のまわりの色を `skin`(16進の6けた)にしたzeyes-minをつなぐ。
+    pub fn connect_zeyes_with_skin(&self, skin: &str) -> Running {
+        self.connect_zeyes_with(&["--skin", skin])
+    }
+
+    fn connect_zeyes_with(&self, args: &[&str]) -> Running {
         Running(
             Command::new(workspace_bin("zeyes-min", "zeyes-min"))
+                .args(args)
                 .env("WAYLAND_DISPLAY", &self.socket)
+                // 外から入った色の指定に左右されないようにする。
+                .env_remove("ZEYES_SKIN")
                 .stderr(Stdio::null())
                 .spawn()
                 .expect("start zeyes-min"),
