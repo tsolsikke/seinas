@@ -1,0 +1,17 @@
+[package]
+name = "seinas"
+description = "ZeikOS向けのWaylandコンポジタ。今は親のWaylandの中で動く入れ子の形。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+seinas-render = { path = "../seinas-render" }
+smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
+smithay-client-toolkit = { workspace = true }
+calloop = { workspace = true }
+wayland-client = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

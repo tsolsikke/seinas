@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: ホストでの検査
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cのライブラリを入れる
+        run: sudo apt-get update && sudo apt-get install -y libpixman-1-dev libxkbcommon-dev
+      - name: Rustを入れる(rust-toolchain.tomlの版)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: 整形
+        run: cargo fmt --all -- --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: テスト
+        run: cargo test --workspace --locked
+      - name: 共通の描画だけのテスト(受け口を含めずにビルドする)
+        run: cargo test -p seinas-render --locked
+      - name: 依存の一覧とライセンス文が最新か
+        run: python3 tools/third-party.py --check

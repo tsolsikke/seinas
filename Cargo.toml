@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = ["crates/seinas-render", "crates/seinas", "crates/zeyes-min"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/tsolsikke/seinas"
+publish = false
+
+# 版はここでまとめて決め、Cargo.lock で固定する。
+[workspace.dependencies]
+smithay = { version = "=0.7.0", default-features = false }
+smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop"] }
+calloop = "0.14"
+pixman = "0.2"
+wayland-client = "0.31"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
+libc = "0.2"

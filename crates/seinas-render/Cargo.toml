@@ -1,0 +1,22 @@
+[package]
+name = "seinas-render"
+description = "Seinasの共通の描画(pixmanでの合成)。Waylandの受け口には依存しない。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# wayland_frontend は入れない。ここに入れると、受け口を持たない構成が作れなくなる。
+smithay = { workspace = true, features = ["renderer_pixman"] }
+pixman = { workspace = true }
+
+[dev-dependencies]
+libc = { workspace = true }
+
+# 共通の描画だけで動かしたときの、スレッドとシグナルの様子を確かめる。
+# スレッドの数を数えるので、テストハーネス(スレッドを作る)は使わない。
+[[test]]
+name = "render_only"
+harness = false

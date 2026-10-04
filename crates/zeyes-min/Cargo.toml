@@ -1,0 +1,12 @@
+[package]
+name = "zeyes-min"
+description = "wl_shmで2つの目を描く、小さなWaylandクライアント。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+smithay-client-toolkit = { workspace = true }
+wayland-client = { workspace = true }
