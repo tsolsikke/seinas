@@ -282,7 +282,9 @@ impl PointerHandler for Seinas {
                 .frontend
                 .pointer_focus()
                 .map(|surface| (surface, Point::from((0.0, 0.0))));
-            let pointer = self.frontend.pointer.clone();
+            let Some(pointer) = self.frontend.pointer.clone() else {
+                continue;
+            };
             let motion = MotionEvent {
                 location,
                 serial,

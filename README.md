@@ -8,11 +8,14 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 
 | 場所 | 中身 |
 | --- | --- |
-| `crates/seinas` | コンポジタの本体。Waylandの受け口(Smithay)と、親のWaylandへ出す裏側(SCTK)を持つ |
+| `crates/seinas` | 入れ子の構成のコンポジタ。Waylandの受け口と、親のWaylandへ出す裏側(SCTK)を組み合わせる |
+| `crates/seinas-standalone` | 親のWaylandを使わない構成のコンポジタ。Waylandの受け口と、fbdevの裏側を組み合わせる |
+| `crates/seinas-frontend` | Waylandの受け口(Smithay)。クライアントの要求を受け、描く要素を並べる |
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
+| `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
 | `docs/fbdev.md` | fbdevの裏側の構成、動かし方、確かめ方 |
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
 | `tools/` | 静的ビルドや、依存の一覧を作るための道具 |

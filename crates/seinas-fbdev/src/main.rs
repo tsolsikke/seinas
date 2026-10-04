@@ -26,12 +26,7 @@ use std::{
     time::Duration,
 };
 
-use seinas_fbdev::{
-    device::Fbdev,
-    layout::{Bitfield, Layout, ScreenInfo},
-    picture::test_picture,
-    present::WriteThrough,
-};
+use seinas_fbdev::{device::Fbdev, fake::FakeScreen, picture::test_picture, present::WriteThrough};
 use seinas_render::Painter;
 
 const DEFAULT_DEVICE: &str = "/dev/fb0";
@@ -92,48 +87,22 @@ fn parse_size(text: &str) -> Option<(u32, u32)> {
 
 /// 装置を開かずに、メモリー上の偽の画面へ描く。
 fn dry_run(size: (u32, u32), dump: Option<&Path>) -> Result<(), Box<dyn Error>> {
-    let info = ScreenInfo {
-        width: size.0,
-        height: size.1,
-        x_offset: 0,
-        y_offset: 0,
-        bits_per_pixel: 32,
-        line_length: size.0.saturating_mul(4),
-        red: Bitfield {
-            offset: 16,
-            length: 8,
-        },
-        green: Bitfield {
-            offset: 8,
-            length: 8,
-        },
-        blue: Bitfield {
-            offset: 0,
-            length: 8,
-        },
-        transp: Bitfield::default(),
-    };
-    let layout = Layout::new(&info)?;
-    let mut screen = vec![0u8; layout.required_len()];
+    let mut screen = FakeScreen::new(size.0, size.1)?;
+    let layout = *screen.layout();
     let mut painter = Painter::new(layout.width() as i32, layout.height() as i32)?;
     let view = painter.paint(&test_picture(painter.width(), painter.height()))?;
-    layout.blit(&view, &mut screen)?;
+    screen.show(&view)?;
     println!(
         "seinas-fbdev: dry run: painted {}x{} ({} bytes), checksum {:016x}",
         layout.width(),
         layout.height(),
-        screen.len(),
-        checksum(&screen)
+        screen.pixels().len(),
+        checksum(screen.pixels())
     );
     if let Some(path) = dump {
-        // 偽の画面は B, G, R, X の順なので、PPMの R, G, B の順に並べ替えて書く。
-        let mut image = format!("P6 {} {} 255\n", layout.width(), layout.height()).into_bytes();
-        image.extend(
-            screen
-                .chunks_exact(4)
-                .flat_map(|pixel| [pixel[2], pixel[1], pixel[0]]),
-        );
-        std::fs::write(path, image).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        screen
+            .write_ppm(path)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
     }
     Ok(())
 }

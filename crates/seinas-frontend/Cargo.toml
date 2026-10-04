@@ -1,0 +1,13 @@
+[package]
+name = "seinas-frontend"
+description = "SeinasのWaylandの受け口(Smithay)。クライアントの要求を受け、描く要素を並べる。裏側には依存しない。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# 裏側(入れ子のためのSCTKやwayland-client、fbdev)は、ここには入れない。
+smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
+tracing = { workspace = true }

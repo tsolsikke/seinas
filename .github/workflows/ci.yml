@@ -22,8 +22,12 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: ビルド(テストが使う実行ファイルを先に作る)
+        run: cargo build --workspace --locked
       - name: テスト
         run: cargo test --workspace --locked
+      - name: 受け口とfbdevの構成に、入れ子の裏側が入っていないこと
+        run: tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source
       - name: 共通の描画だけのテスト(受け口を含めずにビルドする)
         run: cargo test -p seinas-render --locked
       - name: fbdevの裏側に、Waylandの受け口が入っていないこと
@@ -46,6 +50,6 @@ jobs:
       - name: 静的ビルド(Cのライブラリもソースから作る)
         run: tools/build-musl.sh
       - name: ELFの記録
-        run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min target/x86_64-unknown-linux-musl/release/seinas-fbdev
+        run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
       - name: musl向けのテスト
         run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$PWD/target/musl-libs/lib" cargo test --workspace --locked --target x86_64-unknown-linux-musl

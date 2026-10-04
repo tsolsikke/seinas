@@ -7,8 +7,10 @@
 //! - `device`: 装置を開き、画面の情報を読み、画面の領域を対応づける。
 //! - `present`: 書いた絵を画面へ反映する処理。OSごとに差し替えられる。
 //! - `picture`: 確かめやすい、決まった絵。
+//! - `fake`: 装置を開かずに描くための、メモリーの上の偽の画面。
 
 pub mod device;
+pub mod fake;
 pub mod layout;
 pub mod picture;
 pub mod present;

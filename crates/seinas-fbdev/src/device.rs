@@ -200,7 +200,7 @@ impl Fbdev {
     pub fn show(
         &mut self,
         view: &FrameView<'_>,
-        presenter: &mut impl Presenter,
+        presenter: &mut (impl Presenter + ?Sized),
     ) -> Result<(), FbError> {
         let layout = self.layout;
         layout.blit(view, self.pixels())?;
@@ -208,7 +208,7 @@ impl Fbdev {
     }
 
     /// 画面の領域へ書いたものを、`presenter` で画面へ反映する。
-    pub fn present(&mut self, presenter: &mut impl Presenter) -> Result<(), FbError> {
+    pub fn present(&mut self, presenter: &mut (impl Presenter + ?Sized)) -> Result<(), FbError> {
         presenter
             .present(self.file.as_fd())
             .map_err(FbError::Present)

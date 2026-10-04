@@ -1,0 +1,17 @@
+[package]
+name = "seinas-standalone"
+description = "親のWaylandを使わない構成のSeinas。Waylandの受け口で受けたクライアントの画面を、fbdevの画面へ出す。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# 入れ子の裏側(SCTK、wayland-client)は入れない。tools/check-deps.sh が確かめている。
+seinas-render = { path = "../seinas-render" }
+seinas-frontend = { path = "../seinas-frontend" }
+seinas-fbdev = { path = "../seinas-fbdev" }
+smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

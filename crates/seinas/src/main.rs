@@ -3,7 +3,7 @@
 //! 今は、親のWayland(WSLgなど)の中にウィンドウを1つ開き、その中で子のクライアントを合成して見せる
 //! 「入れ子」の形で動く。
 //!
-//! - `frontend`: Waylandの受け口(Smithay)。子のクライアントの要求を受ける。
+//! - `seinas-frontend`: Waylandの受け口(Smithay)。子のクライアントの要求を受ける。
 //! - `seinas-render`: 共通の描画。受け口が並べた要素を、1枚の絵に合成する。
 //! - `parent`: 裏側(SCTK)。合成した絵を、親のWaylandへ出す。
 //!
@@ -15,15 +15,14 @@
 //!
 //! 制限: 大きさは800x600に固定で、親からのサイズ変更には応じない。入力はポインターだけを渡す。
 
-mod frontend;
 mod parent;
 
 use std::{
     error::Error,
-    sync::Arc,
     time::{Duration, Instant},
 };
 
+use seinas_frontend::{BuildFrontend, Config, Frontend, FrontendHost};
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
@@ -33,7 +32,6 @@ use smithay_client_toolkit::reexports::calloop_wayland_source::WaylandSource;
 use tracing::{error, info};
 use wayland_client::{globals::registry_queue_init, Connection, QueueHandle};
 
-use frontend::{ClientState, Frontend};
 use parent::Parent;
 
 /// 画面の大きさ(固定)。
@@ -45,7 +43,7 @@ const CHILD_SOCKET: &str = "seinas-0";
 /// コンポジタの状態。SmithayのハンドラもSCTKのハンドラも、この1つの型に実装する。
 pub struct Seinas {
     /// Waylandの受け口(子のクライアントに見せる側)。
-    frontend: Frontend,
+    frontend: Frontend<Seinas>,
     /// 共通の描画。
     painter: Painter,
     /// 親のWaylandへの提出(親に対してはクライアント)。
@@ -79,6 +77,20 @@ impl Seinas {
     }
 }
 
+impl FrontendHost for Seinas {
+    fn frontend(&self) -> &Frontend<Self> {
+        &self.frontend
+    }
+    fn frontend_mut(&mut self) -> &mut Frontend<Self> {
+        &mut self.frontend
+    }
+    fn redraw_needed(&mut self) {
+        self.needs_redraw = true;
+    }
+}
+
+seinas_frontend::delegate_frontend!(Seinas);
+
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
@@ -94,7 +106,14 @@ fn main() -> Result<(), Box<dyn Error>> {
     let parent = Parent::new(&globals, &qh, WIDTH, HEIGHT)?;
 
     let mut display: Display<Seinas> = Display::new()?;
-    let frontend = Frontend::new(&display.handle(), WIDTH, HEIGHT);
+    let frontend = Seinas::build_frontend(
+        &display.handle(),
+        Config {
+            width: WIDTH,
+            height: HEIGHT,
+            pointer: true,
+        },
+    );
     let painter = Painter::new(WIDTH, HEIGHT)?;
 
     // 源その2: 子の接続の受け付け。
@@ -104,13 +123,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         Generic::new(listener, Interest::READ, Mode::Level),
         |_, listener, state: &mut Seinas| {
             while let Some(stream) = listener.accept()? {
-                if let Err(e) = state
-                    .frontend
-                    .display_handle
-                    .insert_client(stream, Arc::new(ClientState::default()))
-                {
-                    error!("failed to accept a client: {e}");
-                }
+                state.frontend.accept(stream);
             }
             Ok(PostAction::Continue)
         },

@@ -9,6 +9,7 @@ publish.workspace = true
 
 [dependencies]
 seinas-render = { path = "../seinas-render" }
+seinas-frontend = { path = "../seinas-frontend" }
 smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
 smithay-client-toolkit = { workspace = true }
 calloop = { workspace = true }

@@ -458,6 +458,7 @@ version = "0.1.0"
 dependencies = [
  "calloop",
  "libc",
+ "seinas-frontend",
  "seinas-render",
  "smithay",
  "smithay-client-toolkit",
@@ -475,12 +476,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "seinas-frontend"
+version = "0.1.0"
+dependencies = [
+ "smithay",
+ "tracing",
+]
+
+[[package]]
 name = "seinas-render"
 version = "0.1.0"
 dependencies = [
  "libc",
  "pixman",
  "smithay",
+]
+
+[[package]]
+name = "seinas-standalone"
+version = "0.1.0"
+dependencies = [
+ "seinas-fbdev",
+ "seinas-frontend",
+ "seinas-render",
+ "smithay",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
