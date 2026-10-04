@@ -6,6 +6,7 @@ members = [
     "crates/seinas",
     "crates/seinas-fbdev",
     "crates/seinas-standalone",
+    "crates/seinas-test-clients",
     "crates/zeyes-min",
 ]
 

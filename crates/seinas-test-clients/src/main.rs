@@ -1,12 +1,12 @@
-//! 試験用: わざと不正な要求を送るWaylandクライアント。
+//! 試験用: わざと行儀の悪いことをするWaylandクライアント。
 //!
-//! コンポジタが、不正な要求を送ったクライアントだけを切り、自分は動き続けることを確かめるために使う。
+//! コンポジタが、そのクライアントだけを切り、自分は動き続けることを確かめるために使う。
 //! ライブラリを通すと不正な要求は作れないので、ソケットへ直接バイトを書く。
 //!
-//! 使い方(Seinasを動かした状態で):
+//! 使い方(Seinasを動かした状態で。`WAYLAND_DISPLAY` は、ソケットの名前か絶対パス):
 //!
 //! ```text
-//! WAYLAND_DISPLAY=seinas-0 cargo run -p seinas --example bad_client -- <種類>
+//! WAYLAND_DISPLAY=seinas-0 bad-client <種類> [--step]
 //! ```
 //!
 //! 種類:
@@ -14,8 +14,12 @@
 //! - `unknown-object`: 作っていないオブジェクトへ要求を送る。
 //! - `short-message`: 長さがヘッダーより短い、壊れたメッセージを送る。
 //! - `bad-global`: wl_registryで、無いグローバルを束ねようとする(プロトコルのエラーが返る)。
+//! - `shrink`: ウィンドウを1つ描いた後、共有メモリーのプールを縮めて、もう一度commitする。
+//!   `--step` を付けると、縮める前に、標準入力から1行届くまで待つ。くわしくは `shrink.rs`。
 //!
-//! コンポジタに切られたら終了コード0、2秒待っても切られなければ1で終わる。
+//! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
+
+mod shrink;
 
 use std::{
     io::{ErrorKind, Read, Write},
@@ -128,11 +132,11 @@ fn run(kind: &str) -> Result<bool, String> {
         }
     };
     match find_protocol_error(&received) {
-        Some(error) => println!("bad_client: {kind}: protocol error: {error}"),
-        None => println!("bad_client: {kind}: no protocol error was sent"),
+        Some(error) => println!("bad-client: {kind}: protocol error: {error}"),
+        None => println!("bad-client: {kind}: no protocol error was sent"),
     }
     println!(
-        "bad_client: {kind}: {}",
+        "bad-client: {kind}: {}",
         if closed {
             "the compositor closed the connection"
         } else {
@@ -143,15 +147,21 @@ fn run(kind: &str) -> Result<bool, String> {
 }
 
 fn main() -> ExitCode {
-    let Some(kind) = std::env::args().nth(1) else {
-        eprintln!("usage: bad_client <unknown-opcode|unknown-object|short-message|bad-global>");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let Some(kind) = args.first() else {
+        eprintln!("usage: bad-client <unknown-opcode|unknown-object|short-message|bad-global|shrink> [--step]");
         return ExitCode::from(2);
     };
-    match run(&kind) {
+    let result = if kind == "shrink" {
+        shrink::run(args.iter().any(|arg| arg == "--step"))
+    } else {
+        run(kind)
+    };
+    match result {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::FAILURE,
         Err(message) => {
-            eprintln!("bad_client: {message}");
+            eprintln!("bad-client: {message}");
             ExitCode::from(2)
         }
     }

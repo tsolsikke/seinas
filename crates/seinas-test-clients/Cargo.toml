@@ -1,0 +1,16 @@
+[package]
+name = "seinas-test-clients"
+description = "Seinasの試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたりする。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "bad-client"
+path = "src/main.rs"
+
+[dependencies]
+# Waylandのライブラリは使わない(不正な要求を作るため、ソケットへ直接書く)。libcは、memfdとfdの受け渡しに使う。
+libc = { workspace = true }
