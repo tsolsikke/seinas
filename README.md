@@ -10,7 +10,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | --- | --- |
 | `crates/seinas` | コンポジタの本体。Waylandの受け口(Smithay)と、親のWaylandへ出す裏側(SCTK)を持つ |
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
-| `crates/zeyes-min` | 動作確認用の小さなクライアント。2つの目を描き、黒目がポインターを追う |
+| `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `THIRD-PARTY/` | 第三者のライセンス文と著作権表示、依存の一覧 |
 

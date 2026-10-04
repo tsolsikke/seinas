@@ -1,6 +1,6 @@
 //! zeyes-min: wl_shmで2つの目を描く、小さなWaylandクライアント(zeyesの前段。文字は使わない)。
 //!
-//! 黒目は、最後に見たポインターの位置へ寄る。ポインターが入った・出た・ボタンを押したことは、
+//! xeyesのように、目玉が最後に見たポインターの位置へ動く。ポインターが入った・出た・ボタンを押したことは、
 //! 標準エラーへ書く。つなぐ先は `WAYLAND_DISPLAY`(Seinasの中で動かすなら `seinas-0`)。
 
 use std::time::Duration;
@@ -48,6 +48,10 @@ struct Zeyes {
     pointer: Option<wl_pointer::WlPointer>,
     look_at: (f64, f64),
     configured: bool,
+    /// frameコールバックを待っている間はtrue。待っている間は描かない。
+    frame_pending: bool,
+    /// 描き直しが要るときはtrue。
+    dirty: bool,
     exit: bool,
 }
 
@@ -75,7 +79,11 @@ impl CompositorHandler for Zeyes {
         _: &wl_surface::WlSurface,
         _: u32,
     ) {
-        self.draw(conn, qh);
+        // 前の絵が表示に使われた合図。描き直しが要るときだけ、次の絵を描く。
+        self.frame_pending = false;
+        if self.dirty {
+            self.draw(conn, qh);
+        }
     }
     fn surface_enter(
         &mut self,
@@ -185,7 +193,11 @@ impl PointerHandler for Zeyes {
                 Axis { .. } => {}
             }
         }
-        if moved && self.configured {
+        if moved {
+            self.dirty = true;
+        }
+        // frameコールバックを待っている間は、届いてからまとめて1回だけ描く。
+        if self.dirty && self.configured && !self.frame_pending {
             self.draw(conn, qh);
         }
     }
@@ -224,51 +236,104 @@ impl Zeyes {
         surface.frame(qh, FrameCallbackData(surface.clone()));
         buffer.attach_to(surface).expect("attach");
         self.window.commit();
+        self.frame_pending = true;
+        self.dirty = false;
     }
 }
 
-/// 2つの目を描く。白目は楕円、黒目は見ている方向へ寄る。
+/// 目のまわり(肌)の色。
+const BACKGROUND: u32 = 0x6a_b0_5c;
+const OUTLINE: u32 = 0x10_10_10;
+const SCLERA: u32 = 0xff_ff_ff;
+const IRIS: u32 = 0x4a_2e_1c;
+const PUPIL: u32 = 0x14_0e_0a;
+const GLINT: u32 = 0xff_ff_ff;
+
+/// 目の中心(2つ)。
+const CENTERS: [(f64, f64); 2] = [(85.0, 120.0), (235.0, 120.0)];
+/// 目(縦長の楕円)の半径と、縁の太さ。
+const EYE: (f64, f64) = (62.0, 106.0);
+const EYE_OUTLINE: f64 = 10.0;
+/// 目玉(虹彩)、瞳、光の点の半径。
+const IRIS_RADIUS: f64 = 21.0;
+const PUPIL_RADIUS: f64 = 10.0;
+const GLINT_RADIUS: f64 = 3.5;
+/// 目玉の中心が動ける範囲(楕円)の半径。目玉が縁に重ならないように、白目より内側に取る。
+const REACH: (f64, f64) = (
+    EYE.0 - EYE_OUTLINE - IRIS_RADIUS - 2.0,
+    EYE.1 - EYE_OUTLINE - IRIS_RADIUS - 2.0,
+);
+
+/// xeyesのように、2つの縦長の目を描く。目玉は見ている方向へ動く。
 fn paint_eyes(canvas: &mut [u8], look_at: (f64, f64)) {
-    let (w, h) = (WIDTH as f64, HEIGHT as f64);
-    let eyes = [(w * 0.3, h * 0.5), (w * 0.7, h * 0.5)];
-    let (rx, ry) = (w * 0.16, h * 0.36);
     for y in 0..HEIGHT {
         for x in 0..WIDTH {
-            let (fx, fy) = (x as f64 + 0.5, y as f64 + 0.5);
-            let mut color: u32 = 0xff_f4_e9_d8; // 背景
-            for &(cx, cy) in &eyes {
-                let dx = (fx - cx) / rx;
-                let dy = (fy - cy) / ry;
-                if dx * dx + dy * dy <= 1.0 {
-                    color = 0xff_ff_ff_ff; // 白目
-                                           // 黒目: 目の中心からlook_atの方向へ、半径の55%まで寄せる。
-                    let (vx, vy) = (look_at.0 - cx, look_at.1 - cy);
-                    let len = (vx * vx + vy * vy).sqrt().max(1.0);
-                    let reach = ((len / 60.0).min(1.0)) * 0.55;
-                    let (px, py) = (cx + vx / len * reach * rx, cy + vy / len * reach * ry);
-                    let pr = rx.min(ry) * 0.33;
-                    if (fx - px) * (fx - px) + (fy - py) * (fy - py) <= pr * pr {
-                        color = 0xff_10_10_10;
-                    }
-                }
-                if dx * dx + dy * dy > 1.0 && dx * dx + dy * dy <= 1.12 {
-                    color = 0xff_20_20_20; // 縁
-                }
-            }
+            let color = shade(x as f64 + 0.5, y as f64 + 0.5, look_at);
             let at = ((y * WIDTH + x) * 4) as usize;
-            canvas[at..at + 4].copy_from_slice(&color.to_le_bytes());
+            canvas[at..at + 4].copy_from_slice(&(0xff00_0000 | color).to_le_bytes());
         }
     }
 }
 
-delegate_registry!(Zeyes);
-impl ProvidesRegistryState for Zeyes {
-    fn registry(&mut self) -> &mut RegistryState {
-        &mut self.registry_state
+/// 中心が `center` の目の、目玉の中心。
+///
+/// 見ている点が動ける範囲の中なら、その真上に来る。外なら、中心からその点へ向かう線の上で、
+/// 範囲の端まで行く。
+fn eyeball(center: (f64, f64), look_at: (f64, f64)) -> (f64, f64) {
+    let (dx, dy) = (look_at.0 - center.0, look_at.1 - center.1);
+    let k = ((dx / REACH.0).powi(2) + (dy / REACH.1).powi(2)).sqrt();
+    if k <= 1.0 {
+        look_at
+    } else {
+        (center.0 + dx / k, center.1 + dy / k)
     }
-    registry_handlers![OutputState, SeatState,];
 }
-smithay_client_toolkit::delegate_dispatch2!(Zeyes);
+
+/// 点(x, y)の色(0xRRGGBB)。形の端は、境目からの距離で色を混ぜてなめらかにする。
+fn shade(x: f64, y: f64, look_at: (f64, f64)) -> u32 {
+    let mut color = BACKGROUND;
+    for (cx, cy) in CENTERS {
+        // 目: 縁、白目の順に重ねる。
+        let eye = ellipse_distance((x - cx, y - cy), EYE);
+        color = mix(color, OUTLINE, coverage(eye));
+        color = mix(color, SCLERA, coverage(eye + EYE_OUTLINE));
+
+        // 目玉: 虹彩、瞳、光の点の順に重ねる。
+        let (ex, ey) = eyeball((cx, cy), look_at);
+        let from_eyeball = ((x - ex).powi(2) + (y - ey).powi(2)).sqrt();
+        color = mix(color, IRIS, coverage(from_eyeball - IRIS_RADIUS));
+        color = mix(color, PUPIL, coverage(from_eyeball - PUPIL_RADIUS));
+        let (gx, gy) = (ex + 6.0, ey - 6.0);
+        let from_glint = ((x - gx).powi(2) + (y - gy).powi(2)).sqrt();
+        color = mix(color, GLINT, coverage(from_glint - GLINT_RADIUS));
+    }
+    color
+}
+
+/// 形の境目からの距離(内側が負)を、塗る割合(0.0〜1.0)に直す。境目の1画素ぶんだけ中間になる。
+fn coverage(distance: f64) -> f64 {
+    (0.5 - distance).clamp(0.0, 1.0)
+}
+
+/// 中心から見た点pの、楕円の境目からのおよその距離(内側が負)。
+fn ellipse_distance(p: (f64, f64), radius: (f64, f64)) -> f64 {
+    let k = ((p.0 / radius.0).powi(2) + (p.1 / radius.1).powi(2)).sqrt();
+    if k == 0.0 {
+        return -radius.0.min(radius.1);
+    }
+    // 中心からpへ向かう線が楕円と交わる点までの長さを使って、距離に直す。
+    let len = (p.0 * p.0 + p.1 * p.1).sqrt();
+    len - len / k
+}
+
+/// 色aに色bを、割合tで混ぜる。
+fn mix(a: u32, b: u32, t: f64) -> u32 {
+    let channel = |shift: u32| {
+        let (ca, cb) = (((a >> shift) & 0xff) as f64, ((b >> shift) & 0xff) as f64);
+        ((ca + (cb - ca) * t).round() as u32) << shift
+    };
+    channel(16) | channel(8) | channel(0)
+}
 
 fn main() {
     let conn = Connection::connect_to_env().expect("connect (WAYLAND_DISPLAY)");
@@ -301,11 +366,86 @@ fn main() {
         pointer: None,
         look_at: (WIDTH as f64 / 2.0, HEIGHT as f64 / 2.0),
         configured: false,
+        frame_pending: false,
+        dirty: false,
         exit: false,
     };
     while !state.exit {
         event_loop
             .dispatch(Duration::from_millis(16), &mut state)
             .expect("dispatch");
+    }
+}
+
+delegate_registry!(Zeyes);
+impl ProvidesRegistryState for Zeyes {
+    fn registry(&mut self) -> &mut RegistryState {
+        &mut self.registry_state
+    }
+    registry_handlers![OutputState, SeatState,];
+}
+smithay_client_toolkit::delegate_dispatch2!(Zeyes);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CENTER: (f64, f64) = (WIDTH as f64 / 2.0, HEIGHT as f64 / 2.0);
+
+    #[test]
+    fn the_eyes_are_tall_and_where_expected() {
+        let (cx, cy) = CENTERS[0];
+        assert!(EYE.1 > EYE.0, "the eyes must be taller than wide");
+        let far_down = (cx, cy + 500.0);
+        // 隅と、2つの目の間は背景。
+        assert_eq!(shade(0.5, 0.5, far_down), BACKGROUND);
+        assert_eq!(shade(WIDTH as f64 / 2.0, cy, far_down), BACKGROUND);
+        // 上の端は縁の色、その内側は白目。
+        assert_eq!(shade(cx, cy - EYE.1 + EYE_OUTLINE / 2.0, far_down), OUTLINE);
+        assert_eq!(shade(cx, cy - EYE.1 + EYE_OUTLINE + 3.0, far_down), SCLERA);
+        assert_eq!(shade(cx - EYE.0 + EYE_OUTLINE / 2.0, cy, far_down), OUTLINE);
+    }
+
+    #[test]
+    fn the_eyeball_sits_under_a_pointer_inside_the_eye() {
+        let (cx, cy) = CENTERS[0];
+        let look_at = (cx + 10.0, cy - 40.0);
+        assert_eq!(eyeball((cx, cy), look_at), look_at);
+        assert_eq!(shade(look_at.0, look_at.1, look_at), PUPIL);
+        assert_eq!(
+            shade(look_at.0 - PUPIL_RADIUS - 4.0, look_at.1, look_at),
+            IRIS
+        );
+    }
+
+    #[test]
+    fn the_eyeball_stays_inside_the_white_of_the_eye() {
+        let (cx, cy) = CENTERS[0];
+        for look_at in [
+            (-1000.0, -1000.0),
+            (1000.0, 1000.0),
+            (cx, -1000.0),
+            (1000.0, cy),
+        ] {
+            let (ex, ey) = eyeball((cx, cy), look_at);
+            let k = (((ex - cx) / REACH.0).powi(2) + ((ey - cy) / REACH.1).powi(2)).sqrt();
+            assert!(
+                k <= 1.0 + 1e-9,
+                "the eyeball left its range for {look_at:?}"
+            );
+        }
+        // 真上の遠くを見ると、目玉は真上の端まで行く。縁には重ならない。
+        let (ex, ey) = eyeball((cx, cy), (cx, -1000.0));
+        assert_eq!(ex, cx);
+        assert!((ey - (cy - REACH.1)).abs() < 1e-9);
+        assert_eq!(shade(cx, ey - IRIS_RADIUS - 1.5, (cx, -1000.0)), SCLERA);
+    }
+
+    #[test]
+    fn painting_fills_the_whole_canvas() {
+        let mut canvas = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
+        paint_eyes(&mut canvas, CENTER);
+        assert_eq!(canvas[..4], [0x5c, 0xb0, 0x6a, 0xff]);
+        assert!(canvas.chunks_exact(4).all(|pixel| pixel[3] == 0xff));
     }
 }
