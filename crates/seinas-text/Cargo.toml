@@ -1,0 +1,14 @@
+[package]
+name = "seinas-text"
+description = "Seinasが自分で描く文字(題名など)。フォントをファイルから読み、1行の文字を画素にする。Waylandにも、描画の裏側にも依存しない。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# fontconfig(システムのフォントの探索)は入れない。フォントは、ファイルから明示的に読む。
+cosmic-text = { workspace = true }
+# 控えのフォントの決め方(cosmic-textのFallback)を実装するのに、文字の種類の型が要る。cosmic-textと同じ版を使う。
+unicode-script = "0.5"

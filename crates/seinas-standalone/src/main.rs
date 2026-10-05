@@ -6,8 +6,8 @@
 //! 使い方:
 //!
 //! ```text
-//! seinas-standalone [--device PATH] [--socket PATH]
-//! seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH]
+//! seinas-standalone [--device PATH] [--socket PATH] [--fonts DIR]
+//! seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--fonts DIR]
 //! ```
 //!
 //! - `--device PATH`: 画面の装置。無ければ環境変数 `SEINAS_FBDEV`、それも無ければ `/dev/fb0`。
@@ -15,6 +15,9 @@
 //! - `--dump FILE`: 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く。
 //! - `--socket PATH`: クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、
 //!   それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0`。
+//! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
+//!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
+//!   (題名の文字が出ないだけ)。
 //!
 //! 描く時機: クライアントがcommitして描き直しが要るときにだけ描き、描いた後にframeコールバックを
 //! 返す。fbdevには垂直同期の知らせが無いので、描く回数は1秒に60回までに抑える。何も起きていない間は、
@@ -36,7 +39,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use seinas_frontend::{reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
+use seinas_frontend::{font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
@@ -54,14 +57,15 @@ const DEFAULT_SOCKET_NAME: &str = "seinas-0";
 /// 描く間隔の下限。1秒に60回まで。
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
-const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH]";
+const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--fonts DIR]
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--fonts DIR]";
 
 struct Options {
     device: PathBuf,
     fake: Option<(u32, u32)>,
     dump: Option<PathBuf>,
     socket: Option<PathBuf>,
+    fonts: Option<PathBuf>,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -72,6 +76,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         fake: None,
         dump: None,
         socket: std::env::var_os(SOCKET_ENV).map(PathBuf::from),
+        fonts: None,
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -86,6 +91,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             }
             "--dump" => options.dump = Some(PathBuf::from(value("--dump")?)),
             "--socket" => options.socket = Some(PathBuf::from(value("--socket")?)),
+            "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -192,6 +198,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             width,
             height,
             pointer: false,
+            font_dir: font_dir(options.fonts),
         },
     );
     let painter = Painter::new(width, height)?;

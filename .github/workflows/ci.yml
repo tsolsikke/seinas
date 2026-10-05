@@ -22,6 +22,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: フォントを取得する(題名を描くテストが使う)
+        run: tools/fetch-fonts.sh
       - name: ビルド(テストが使う実行ファイルを先に作る)
         run: cargo build --workspace --locked
       - name: テスト
@@ -35,6 +37,10 @@ jobs:
           cargo build --locked -p seinas-fbdev
           tools/check-no-wayland.sh seinas-fbdev target/debug/seinas-fbdev
           target/debug/seinas-fbdev --dry-run
+      - name: 文字を描かない構成に、文字を描くクレートが入っていないこと
+        run: |
+          tools/check-deps.sh seinas-fbdev seinas-text cosmic-text swash fontdb
+          tools/check-deps.sh seinas-render seinas-text cosmic-text swash fontdb
       - name: 依存の一覧とライセンス文が最新か
         run: python3 tools/third-party.py --check
 
@@ -51,5 +57,7 @@ jobs:
         run: tools/build-musl.sh
       - name: ELFの記録
         run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
+      - name: フォントを取得する(題名を描くテストが使う)
+        run: tools/fetch-fonts.sh
       - name: musl向けのテスト
         run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$PWD/target/musl-libs/lib" cargo test --workspace --locked --target x86_64-unknown-linux-musl

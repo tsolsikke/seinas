@@ -10,4 +10,5 @@ publish.workspace = true
 [dependencies]
 # 裏側(入れ子のためのSCTKやwayland-client、fbdev)は、ここには入れない。
 smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
+seinas-text = { path = "../seinas-text" }
 tracing = { workspace = true }

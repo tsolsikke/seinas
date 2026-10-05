@@ -9,6 +9,7 @@ Waylandの受け口で受けたクライアントの画面を、共通の描画�
 | --- | --- | --- |
 | `seinas-frontend` | Waylandの受け口(Smithay) | 使う |
 | `seinas-render` | 共通の描画 | 使う |
+| `seinas-text` | 文字を描く(ウィンドウの題名)。受け口が使う | 使う |
 | `seinas-fbdev`(ライブラリ) | fbdevの裏側と、偽の画面 | 使う |
 | `seinas`(入れ子の裏側。SCTK、wayland-client) | 親のWaylandへ出す | 使わない |
 
@@ -44,6 +45,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--fake WIDTHxHEIGHT` | 装置を開かず、その大きさの偽の画面へ描く |
 | `--dump FILE` | 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く(`--fake` のときだけ) |
 | `--socket PATH` | クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0` |
+| `--fonts DIR` | フォントの置き場(ウィンドウの題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(題名の文字が出ないだけ) |
 
 - ソケットの場所を指定したときは、`XDG_RUNTIME_DIR` は要りません。
 - ソケットの隣に、同じ名前に `.lock` を付けた鍵のファイルを作ります。
@@ -57,6 +59,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | wl_compositor、wl_subcompositor | 画面(サーフェス) |
 | wl_shm | 共有メモリーのバッファ |
 | xdg_wm_base | ウィンドウ |
+| zxdg_decoration_manager_v1 | 飾り(題名の帯)を描く側の知らせ。いつも、サーバーの側で描くと答える |
 | wl_output | 画面の大きさ。表示モードは1つで、幅と高さは画面と同じ |
 
 wl_seatは公開しません(入力は扱いません)。
@@ -80,7 +83,7 @@ fbdevには、垂直同期の知らせがありません。そこで、次のよ
 ## 今の制限
 
 - 入力は扱いません。
-- クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`window-placement.md`)。動かすことはできません。
+- クライアントのウィンドウは、上に題名の帯を付け、決まった位置に少しずつずらして重ねます(`window-placement.md`)。動かすことはできません。
 - 止めるには、シグナルで終わらせます。終わるときの後片付け(画面を元に戻す、ソケットと鍵のファイルを消す)はしていません。次に起動したときは、残った鍵のファイルを取り直して、そのまま動きます。
 - 実際の装置(`/dev/fb0`)では、まだ動かしていません。
 
@@ -89,12 +92,15 @@ fbdevには、垂直同期の知らせがありません。そこで、次のよ
 `crates/seinas-standalone/tests/with_client.rs` が、次を確かめます。親のWaylandも画面の装置も要らないので、CIで動きます。
 
 1. 偽の画面(640x480)で起動すると、背景が1枚出て、ソケットで待ち受ける。
-2. zeyes-minをつなぐと、そのウィンドウが画面の左上に描かれる。ポインターは無いままです。
+2. zeyes-minをつなぐと、そのウィンドウが画面の左上に描かれる(題名の帯の下に、中身が来る)。ポインターは無いままです。
 3. zeyes-minを強制終了すると、ウィンドウが消えて背景に戻り、後始末のスレッドが1本できる。
 4. もう一度つなぐと、同じように描かれる。スレッドは増えない。
 
 描かれたかどうかは、決まった位置の画素の色で見ます(目のまわりの緑、白目、目の縁、瞳、ウィンドウの外の背景)。
 待つ時間の上限は、段階ごとに60秒です。条件がそろい次第、すぐ先へ進みます。
+
+題名の帯は、`crates/seinas-standalone/tests/title.rs` が、同じやり方で確かめます(中身は `window-placement.md` の「試験」)。
+試験は、`tools/fetch-fonts.sh` が置いたフォントを使います。
 
 ## 使うシステムコール
 
@@ -181,33 +187,33 @@ M3では、クライアントも別のプロセスとして動きます。musl�
 
 ## muslでの静的ビルドの記録
 
-`tools/build-musl.sh` は、seinas-standaloneも静的PIEとして作ります。`tools/elf-report.sh` の出力です(2026-10-04)。
+`tools/build-musl.sh` は、seinas-standaloneも静的PIEとして作ります。`tools/elf-report.sh` の出力です(2026-10-05。文字を描く部分を組み込んだ後)。
 
 ```
 == seinas-standalone
-file size: 3930256 bytes
+file size: 7227488 bytes
   Type:                              DYN (Position-Independent Executable file)
   Machine:                           Advanced Micro Devices X86-64
 PT_INTERP: 0, DT_NEEDED: 0
 PT_TLS: FileSiz 0x000098, MemSiz 0x0002f8, Align 0x10
 Program Headers:
   Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
-  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x021080 0x021080 R   0x1000
-  LOAD           0x022000 0x0000000000022000 0x0000000000022000 0x21c356 0x21c356 R E 0x1000
-  LOAD           0x23f000 0x000000000023f000 0x000000000023f000 0x083eb4 0x083eb4 R   0x1000
-  LOAD           0x2c2f20 0x00000000002c3f20 0x00000000002c3f20 0x01a3c0 0x01c1c8 RW  0x1000
-  DYNAMIC        0x2da5f8 0x00000000002db5f8 0x00000000002db5f8 0x000180 0x000180 RW  0x8
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x050d50 0x050d50 R   0x1000
+  LOAD           0x051000 0x0000000000051000 0x0000000000051000 0x3e00c6 0x3e00c6 R E 0x1000
+  LOAD           0x432000 0x0000000000432000 0x0000000000432000 0x0f4174 0x0f4174 R   0x1000
+  LOAD           0x5268a0 0x00000000005278a0 0x00000000005278a0 0x042b20 0x044960 RW  0x1000
+  DYNAMIC        0x564548 0x0000000000565548 0x0000000000565548 0x000180 0x000180 RW  0x8
   NOTE           0x000270 0x0000000000000270 0x0000000000000270 0x000024 0x000024 R   0x4
-  TLS            0x2c2f20 0x00000000002c3f20 0x00000000002c3f20 0x000098 0x0002f8 R   0x10
-  GNU_EH_FRAME   0x27b1f0 0x000000000027b1f0 0x000000000027b1f0 0x0082f4 0x0082f4 R   0x4
+  TLS            0x5268a0 0x00000000005278a0 0x00000000005278a0 0x000098 0x0002f8 R   0x10
+  GNU_EH_FRAME   0x4b3f68 0x00000000004b3f68 0x00000000004b3f68 0x00cf54 0x00cf54 R   0x4
   GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x10
-  GNU_RELRO      0x2c2f20 0x00000000002c3f20 0x00000000002c3f20 0x0190e0 0x0190e0 R   0x1
+  GNU_RELRO      0x5268a0 0x00000000005278a0 0x00000000005278a0 0x041760 0x041760 R   0x1
 ```
 
 - `ET_DYN` の静的PIEで、`PT_INTERP` も `DT_NEEDED` もありません。
-- `PT_TLS` は、スレッドごとに0x2f8バイト(760バイト、16バイト境界)です。
-- メモリーに置いたときの像の大きさは0x2e00e8(約2.88 MiB)です。
-- 再配置は `R_X86_64_RELATIVE` だけで、5607個です。
-- 実行ファイルの大きさは3,930,256バイト、stripすると3,005,104バイトです(glibc版は2,520,160バイト)。
+- `PT_TLS` は、スレッドごとに0x2f8バイト(760バイト、16バイト境界)です。文字を描く部分を組み込んでも、変わっていません。
+- メモリーに置いたときの像の大きさは0x56c200(約5.42 MiB)です。
+- 再配置は `R_X86_64_RELATIVE` だけで、13765個です。
+- 実行ファイルの大きさは7,227,488バイト、stripすると5,675,920バイトです。文字を描く部分を組み込む前は、3,952,864バイト(stripして3,017,424バイト)でした。増えたぶんの中身は `text-rendering.md` にあります。
 - YMM・ZMMを使う命令と `xgetbv` は、0個です。
 - 偽の画面800x600で、zeyes-minを1つつないだときの最大RSSは6,148 kB、主スレッドのスタックで触れた量は20 kBでした。

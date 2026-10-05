@@ -21,7 +21,7 @@ const FORMAT_XRGB8888: u32 = 1;
 /// 1つの返事を待つ時間の上限。
 pub const TIMEOUT: Duration = Duration::from_secs(30);
 
-// こちらが決める、オブジェクトの番号。
+// こちらが決める、オブジェクトの番号。新しい番号は、小さいほうから順に使う決まりになっている。
 const REGISTRY: u32 = 2;
 const SYNC: u32 = 3;
 const COMPOSITOR: u32 = 4;
@@ -32,9 +32,28 @@ pub const XDG_SURFACE: u32 = 8;
 pub const TOPLEVEL: u32 = 9;
 const POOL: u32 = 10;
 pub const BUFFER: u32 = 11;
-const FIRST_FRAME: u32 = 12;
-/// ここから先の番号は、使う側が自由に使ってよい。
-pub const NEXT_FREE: u32 = 13;
+/// ここから先の番号は、[`Wire::new_id`] が順に配る。
+const FIRST_FREE: u32 = 12;
+
+/// ウィンドウを作るときの指定。
+#[derive(Default)]
+pub struct WindowSetup {
+    /// 題名(xdg_toplevel.set_title)。Noneなら付けない。
+    pub title: Option<String>,
+    /// app_id(xdg_toplevel.set_app_id)。Noneなら付けない。
+    pub app_id: Option<String>,
+    /// 飾りの描き方を、xdg-decoration(zxdg_decoration_manager_v1)で尋ねるか。
+    pub decoration: bool,
+}
+
+/// 次のイベントを少しだけ待った結果。
+pub enum Polled {
+    Event(Event),
+    /// コンポジタが切った。
+    Closed,
+    /// 待つ間に、何も届かなかった。
+    Nothing,
+}
 
 /// コンポジタから届いた1つのイベント。
 pub struct Event {
@@ -57,9 +76,19 @@ pub struct Wire {
     incoming: Vec<u8>,
     /// xdg_toplevel.configure が届くたびに、中身を標準出力に書くか。
     pub print_configures: bool,
+    /// 次に配る、オブジェクトの番号。
+    next_id: u32,
+    /// 飾りの描き方を尋ねるオブジェクト(zxdg_toplevel_decoration_v1)の番号。作っていなければNone。
+    decoration: Option<u32>,
 }
 
 impl Wire {
+    /// まだ使っていない、オブジェクトの番号を1つ取る。
+    pub fn new_id(&mut self) -> u32 {
+        self.next_id += 1;
+        self.next_id - 1
+    }
+
     pub fn send(&mut self, bytes: &[u8]) -> Result<(), String> {
         self.stream
             .write_all(bytes)
@@ -104,6 +133,20 @@ impl Wire {
     pub fn next_event(&mut self) -> Result<Option<Event>, String> {
         let deadline = Instant::now() + TIMEOUT;
         loop {
+            match self.poll_event()? {
+                Polled::Event(event) => return Ok(Some(event)),
+                Polled::Closed => return Ok(None),
+                Polled::Nothing if Instant::now() >= deadline => {
+                    return Err("timed out while waiting for the compositor".to_owned());
+                }
+                Polled::Nothing => {}
+            }
+        }
+    }
+
+    /// 次のイベントを、少しの間(接続の読み込みの待ち時間)だけ待つ。
+    pub fn poll_event(&mut self) -> Result<Polled, String> {
+        loop {
             if self.incoming.len() >= 8 {
                 let object = u32::from_le_bytes(self.incoming[0..4].try_into().unwrap());
                 let word = u32::from_le_bytes(self.incoming[4..8].try_into().unwrap());
@@ -114,7 +157,7 @@ impl Wire {
                 if self.incoming.len() >= size {
                     let body = self.incoming[8..size].to_vec();
                     self.incoming.drain(..size);
-                    return Ok(Some(Event {
+                    return Ok(Polled::Event(Event {
                         object,
                         opcode: word & 0xffff,
                         body,
@@ -123,18 +166,26 @@ impl Wire {
             }
             let mut buffer = [0u8; 4096];
             match self.stream.read(&mut buffer) {
-                Ok(0) => return Ok(None),
+                Ok(0) => return Ok(Polled::Closed),
                 Ok(n) => self.incoming.extend(&buffer[..n]),
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
-                    if Instant::now() >= deadline {
-                        return Err("timed out while waiting for the compositor".to_owned());
-                    }
+                    return Ok(Polled::Nothing);
                 }
                 Err(e) if e.kind() == ErrorKind::Interrupted => {}
                 // 切られた後の読み込みは、接続のエラーになることがある。
-                Err(_) => return Ok(None),
+                Err(_) => return Ok(Polled::Closed),
             }
         }
+    }
+
+    /// 題名を付ける(xdg_toplevel.set_title)。commitすると、コンポジタに伝わる。
+    pub fn set_title(&mut self, title: &str) -> Result<(), String> {
+        self.send(&message(TOPLEVEL, 2, &string(title)))
+    }
+
+    /// 画面(サーフェス)をcommitする。
+    pub fn commit(&mut self) -> Result<(), String> {
+        self.send(&message(SURFACE, 6, &[]))
     }
 
     /// `wanted` が真を返すイベントが届くまで読む。途中のping、configureには返事をする。
@@ -172,6 +223,19 @@ impl Wire {
             (TOPLEVEL, 0) => {
                 if self.print_configures {
                     println!("window: configure {}", describe_configure(event));
+                    let _ = std::io::stdout().flush();
+                }
+                Ok(())
+            }
+            // zxdg_toplevel_decoration_v1.configure(飾りを、どちらの側で描くか)
+            (object, 0) if Some(object) == self.decoration => {
+                if self.print_configures {
+                    let mode = match event.u32_at(0) {
+                        Some(1) => "client-side".to_owned(),
+                        Some(2) => "server-side".to_owned(),
+                        other => format!("{other:?}"),
+                    };
+                    println!("window: decoration {mode}");
                     let _ = std::io::stdout().flush();
                 }
                 Ok(())
@@ -245,6 +309,8 @@ pub fn connect() -> Result<Wire, String> {
         stream,
         incoming: Vec::new(),
         print_configures: false,
+        next_id: FIRST_FREE,
+        decoration: None,
     })
 }
 
@@ -275,6 +341,19 @@ pub fn open_window(
     width: i32,
     height: i32,
     pixel: [u8; 4],
+) -> Result<File, String> {
+    open_window_with(wire, width, height, pixel, &WindowSetup::default())
+}
+
+/// [`open_window`] と同じだが、題名などを `setup` で指定する。
+///
+/// 飾りの描き方を尋ねるときは、どちらの側で描くとも頼まず、コンポジタの答えを聞くだけにする。
+pub fn open_window_with(
+    wire: &mut Wire,
+    width: i32,
+    height: i32,
+    pixel: [u8; 4],
+    setup: &WindowSetup,
 ) -> Result<File, String> {
     // グローバルの一覧を受け取る。syncの返事(wl_callback.done)が、一覧の終わりの合図。
     wire.send(&message(WL_DISPLAY, 1, &REGISTRY.to_le_bytes()))?;
@@ -319,7 +398,13 @@ pub fn open_window(
         &[XDG_SURFACE.to_le_bytes(), SURFACE.to_le_bytes()].concat(),
     ))?;
     wire.send(&message(XDG_SURFACE, 1, &TOPLEVEL.to_le_bytes()))?;
-    wire.send(&message(SURFACE, 6, &[]))?;
+    if let Some(title) = &setup.title {
+        wire.set_title(title)?;
+    }
+    if let Some(app_id) = &setup.app_id {
+        wire.send(&message(TOPLEVEL, 3, &string(app_id)))?;
+    }
+    wire.commit()?;
     wire.wait_for("the first configure", |e| {
         (e.object, e.opcode) == (XDG_SURFACE, 0)
     })?;
@@ -343,8 +428,22 @@ pub fn open_window(
     create_buffer.extend(FORMAT_XRGB8888.to_le_bytes());
     wire.send(&message(POOL, 0, &create_buffer))?;
 
+    if setup.decoration {
+        // 番号を順に使うため、バッファを作った後に作る。バッファを画面に付ける前なので、決まりには合っている。
+        let (manager, decoration) = (wire.new_id(), wire.new_id());
+        wire.send(&bind("zxdg_decoration_manager_v1", manager)?)?;
+        // zxdg_decoration_manager_v1.get_toplevel_decoration(新しい番号、toplevel)
+        wire.send(&message(
+            manager,
+            1,
+            &[decoration.to_le_bytes(), TOPLEVEL.to_le_bytes()].concat(),
+        ))?;
+        wire.decoration = Some(decoration);
+    }
+
     // バッファを出し、frameコールバックが届くまで待つ(コンポジタが描いた合図)。
-    commit_buffer(wire, width, height, FIRST_FRAME)?;
-    wire.wait_for("the first frame", |e| e.object == FIRST_FRAME)?;
+    let first_frame = wire.new_id();
+    commit_buffer(wire, width, height, first_frame)?;
+    wire.wait_for("the first frame", |e| e.object == first_frame)?;
     Ok(pool)
 }

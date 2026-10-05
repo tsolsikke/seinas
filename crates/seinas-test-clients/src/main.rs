@@ -6,7 +6,7 @@
 //! 使い方(Seinasを動かした状態で。`WAYLAND_DISPLAY` は、ソケットの名前か絶対パス):
 //!
 //! ```text
-//! WAYLAND_DISPLAY=seinas-0 test-client <種類> [--step]
+//! WAYLAND_DISPLAY=seinas-0 test-client <種類> [引数]
 //! ```
 //!
 //! 種類:
@@ -17,7 +17,7 @@
 //! - `shrink`: ウィンドウを1つ描いた後、共有メモリーのプールを縮めて、もう一度commitする。
 //!   `--step` を付けると、縮める前に、標準入力から1行届くまで待つ。くわしくは `shrink.rs`。
 //! - `window`: 行儀よくウィンドウを1つ出し、届いたconfigureの中身を書き続ける。止められるまで動く。
-//!   くわしくは `window.rs`。
+//!   `--title TEXT` と `--app-id TEXT` で、題名とapp_idを付けられる。`--decoration` で、飾りの描き方を尋ねる。くわしくは `window.rs`。
 //!
 //! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
 
@@ -153,12 +153,14 @@ fn run(kind: &str) -> Result<bool, String> {
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(kind) = args.first() else {
-        eprintln!("usage: test-client <unknown-opcode|unknown-object|short-message|bad-global|shrink|window> [--step]");
+        eprintln!("usage: test-client <unknown-opcode|unknown-object|short-message|bad-global>");
+        eprintln!("       test-client shrink [--step]");
+        eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration]");
         return ExitCode::from(2);
     };
     let result = match kind.as_str() {
         "shrink" => shrink::run(args.iter().any(|arg| arg == "--step")),
-        "window" => window::run(),
+        "window" => window::run(&args[1..]),
         _ => run(kind),
     };
     match result {

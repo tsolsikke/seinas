@@ -12,6 +12,9 @@
 //! 環境変数:
 //! - `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR`: 親のソケット。
 //! - 子に見せるソケットは `seinas-0`(`XDG_RUNTIME_DIR` の下)。子は `WAYLAND_DISPLAY=seinas-0` でつなぐ。
+//! - `SEINAS_FONTS`: フォントの置き場(題名を描くのに使う)。引数 `--fonts DIR` でも指定できる。どちらも
+//!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
+//!   (題名の文字が出ないだけ)。
 //!
 //! 制限: 大きさは800x600に固定で、親からのサイズ変更には応じない。入力はポインターだけを渡す。
 
@@ -20,11 +23,12 @@ mod parent;
 use std::{
     cell::RefCell,
     error::Error,
+    path::PathBuf,
     rc::Rc,
     time::{Duration, Instant},
 };
 
-use seinas_frontend::{reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
+use seinas_frontend::{font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
@@ -105,10 +109,28 @@ impl FrontendHost for Seinas {
 
 seinas_frontend::delegate_frontend!(Seinas);
 
+/// 引数を読む。受け付けるのは `--fonts DIR`(フォントの置き場)だけ。
+fn parse_fonts(mut args: impl Iterator<Item = String>) -> Result<Option<PathBuf>, String> {
+    let mut fonts = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--fonts" => fonts = Some(PathBuf::from(args.next().ok_or("--fonts needs a value")?)),
+            other => {
+                return Err(format!(
+                    "unknown argument: {other} (usage: seinas [--fonts DIR])"
+                ))
+            }
+        }
+    }
+    Ok(fonts)
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .init();
+
+    let fonts = parse_fonts(std::env::args().skip(1))?;
 
     let mut event_loop: EventLoop<Seinas> = EventLoop::try_new()?;
 
@@ -127,6 +149,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             width: WIDTH,
             height: HEIGHT,
             pointer: true,
+            font_dir: font_dir(fonts),
         },
     );
     let painter = Painter::new(WIDTH, HEIGHT)?;

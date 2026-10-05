@@ -17,15 +17,12 @@ use std::{
     time::Instant,
 };
 
-use crate::wire::{commit_buffer, connect, open_window, protocol_error, NEXT_FREE, TIMEOUT};
+use crate::wire::{commit_buffer, connect, open_window, protocol_error, TIMEOUT};
 
 /// ウィンドウの大きさと色。色は紫(赤と青が最大)で、ほかのウィンドウと見分けやすくしてある。
 const WIDTH: i32 = 400;
 const HEIGHT: i32 = 300;
 const PIXEL: [u8; 4] = [0xff, 0x00, 0xff, 0xff]; // B, G, R, X
-/// 縮めた後のcommitで頼む、frameコールバックの番号。
-const SECOND_FRAME: u32 = NEXT_FREE;
-
 fn say(text: &str) {
     println!("shrink: {text}");
     let _ = std::io::stdout().flush();
@@ -52,7 +49,8 @@ pub fn run(step: bool) -> Result<bool, String> {
     say("shrunk");
 
     // もう一度commitして、コンポジタにバッファを読ませる。
-    commit_buffer(&mut wire, WIDTH, HEIGHT, SECOND_FRAME)?;
+    let second_frame = wire.new_id();
+    commit_buffer(&mut wire, WIDTH, HEIGHT, second_frame)?;
 
     // コンポジタが切るまで読む。プロトコルのエラーが届けば、中身を書く。
     let deadline = Instant::now() + TIMEOUT;
@@ -63,7 +61,7 @@ pub fn run(step: bool) -> Result<bool, String> {
             Ok(Some(event)) => {
                 if let Some(text) = protocol_error(&event) {
                     error = Some(text);
-                } else if event.object == SECOND_FRAME {
+                } else if event.object == second_frame {
                     say("the second frame was drawn (the compositor did not notice)");
                 }
                 // 切られた後は送れないので、返事の失敗は気にしない。

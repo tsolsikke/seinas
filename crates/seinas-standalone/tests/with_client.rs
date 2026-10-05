@@ -25,7 +25,9 @@ fn a_client_window_is_drawn_on_the_fake_screen_again_after_reconnecting() {
     // ウィンドウの外は、seinasの背景のまま。
     let shot = seinas.shot();
     assert_eq!(shot.pixel(330, 120), BACKGROUND);
-    assert_eq!(shot.pixel(160, 250), BACKGROUND);
+    // 高さは、題名の帯の24と、中身の240。
+    assert_eq!(shot.pixel(160, 263), common::SKIN);
+    assert_eq!(shot.pixel(160, 264), BACKGROUND);
 
     // 強制終了すると、ウィンドウが消えて背景に戻る。後始末のスレッドが1本できる。
     drop(first);

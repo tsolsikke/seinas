@@ -11,16 +11,25 @@
 //!
 //! 受け口を持たない構成(共通の描画だけ)では、このクレートごと使わない。
 
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 pub use smithay;
 
+mod decoration;
 mod stack;
+pub use decoration::{
+    content_location, content_size_for, load_fonts, outer_size, paint_title_bar, title_text,
+    TitleBar, ACTIVE_BAR, ACTIVE_TITLE, INACTIVE_BAR, INACTIVE_TITLE, TITLE_BAR_HEIGHT,
+    TITLE_PADDING, TITLE_SIZE,
+};
 pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, CASCADE_STEP};
 
+use seinas_text::TextPainter;
 use smithay::{
     backend::renderer::{
         element::{
+            memory::MemoryRenderBufferRenderElement,
+            render_elements,
             surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
             Kind,
         },
@@ -29,32 +38,60 @@ use smithay::{
     },
     input::{pointer::PointerHandle, Seat, SeatHandler, SeatState},
     output::Output,
-    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
+    reexports::wayland_protocols::xdg::{
+        decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
+        shell::server::xdg_toplevel,
+    },
     reexports::wayland_server::{
-        backend::{ClientData, ClientId, DisconnectReason},
+        backend::{ClientData, ClientId, DisconnectReason, ObjectId},
         protocol::wl_surface::WlSurface,
         Client, Display, DisplayHandle, Resource,
     },
     utils::{Logical, Point, Size},
     wayland::{
         compositor::{
-            with_surface_tree_downward, CompositorClientState, CompositorState, SurfaceAttributes,
-            TraversalAction,
+            with_states, with_surface_tree_downward, CompositorClientState, CompositorState,
+            SurfaceAttributes, TraversalAction,
         },
-        shell::xdg::{ToplevelSurface, XdgShellState},
+        shell::xdg::{
+            decoration::XdgDecorationState, ToplevelSurface, XdgShellState, XdgToplevelSurfaceData,
+        },
         shm::ShmState,
     },
 };
 use tracing::{error, info};
 
+/// フォントの置き場を指定する環境変数。
+pub const FONTS_ENV: &str = "SEINAS_FONTS";
+/// フォントの置き場の指定が無いときの場所。`tools/fetch-fonts.sh` が置く、開発用の場所(作業中の
+/// ディレクトリから見た位置)。
+pub const DEFAULT_FONT_DIR: &str = "target/fonts";
+
+/// フォントの置き場。引数での指定 `chosen` があればそれ、無ければ環境変数 [`FONTS_ENV`]、それも
+/// 無ければ [`DEFAULT_FONT_DIR`]。
+pub fn font_dir(chosen: Option<PathBuf>) -> PathBuf {
+    chosen
+        .or_else(|| std::env::var_os(FONTS_ENV).map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_FONT_DIR))
+}
+
 /// 受け口の作り方の指定。
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Config {
-    /// 画面の幅と高さ(画素)。wl_outputで公開し、toplevelにも伝える。
+    /// 画面の幅と高さ(画素)。wl_outputで公開する。
     pub width: i32,
     pub height: i32,
     /// 席(wl_seat)とポインターを公開するか。入力を扱わない構成ではfalseにする。
     pub pointer: bool,
+    /// フォントの置き場。題名を描くのに使う。読めなくても動く(題名の文字が出ないだけ)。
+    pub font_dir: PathBuf,
+}
+
+render_elements! {
+    /// 画面に描く要素。クライアントの画面と、Seinasが描く題名の帯。
+    pub WindowElement<=PixmanRenderer>;
+    Surface=WaylandSurfaceRenderElement<PixmanRenderer>,
+    TitleBar=MemoryRenderBufferRenderElement<PixmanRenderer>,
 }
 
 /// 受け口の状態。`D` は、コンポジタの状態の型。
@@ -62,6 +99,7 @@ pub struct Frontend<D: SeatHandler> {
     pub display_handle: DisplayHandle,
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    pub xdg_decoration_state: XdgDecorationState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<D>,
     /// 席は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
@@ -69,10 +107,15 @@ pub struct Frontend<D: SeatHandler> {
     pub pointer: Option<PointerHandle<D>>,
     /// 画面(wl_output)。
     pub output: Output,
-    /// クライアントのtoplevelに伝える大きさ(画面の大きさ)。
+    /// 画面の大きさ。
     pub size: Size<i32, Logical>,
     /// ウィンドウの並び。先頭がいちばん手前で、それだけが「選ばれている(activated)」。
+    /// 置き場所は、題名の帯を含めた外形の左上。
     pub windows: Stack<ToplevelSurface>,
+    /// 題名を描くもの。
+    pub text: TextPainter,
+    /// 作った題名の帯の絵。ウィンドウ(の画面)ごとに覚えておく。
+    pub title_bars: HashMap<ObjectId, TitleBar>,
 }
 
 /// コンポジタの状態の型が、受け口を使うために実装するもの。
@@ -115,6 +158,7 @@ impl<D: SeatHandler> Frontend<D> {
     pub fn remove_window(&mut self, toplevel: &ToplevelSurface) {
         self.windows
             .remove(|window| window.wl_surface() == toplevel.wl_surface());
+        self.title_bars.remove(&toplevel.wl_surface().id());
         self.update_activation();
     }
 
@@ -148,37 +192,69 @@ impl<D: SeatHandler> Frontend<D> {
         }
     }
 
-    /// 画面の上の点 `point` にある、いちばん手前のウィンドウ。その画面と、左上の位置を返す。
+    /// 画面の上の点 `point` にある、いちばん手前のウィンドウの中身。その画面と、中身の左上の位置を返す。
     ///
-    /// ポインターの焦点を渡す相手を決めるのに使う。
+    /// ポインターの焦点を渡す相手を決めるのに使う。点が題名の帯の上にあるときは、Noneを返す
+    /// (帯はSeinasのもので、クライアントには渡さない)。
     pub fn window_under(
         &self,
         point: Point<f64, Logical>,
     ) -> Option<(WlSurface, Point<f64, Logical>)> {
         let index = self.windows.index_at(point, window_size)?;
         let window = self.windows.iter().nth(index)?;
-        Some((window.item.wl_surface().clone(), window.location.to_f64()))
+        let content = content_location(window.location).to_f64();
+        (point.y >= content.y).then(|| (window.item.wl_surface().clone(), content))
     }
 
-    /// クライアントのウィンドウを、描画の要素として並べる(手前から順)。
-    pub fn render_elements(
-        &self,
-        renderer: &mut PixmanRenderer,
-    ) -> Vec<WaylandSurfaceRenderElement<PixmanRenderer>> {
-        self.windows
-            .iter()
-            .flat_map(|window| {
-                render_elements_from_surface_tree(
+    /// ウィンドウを、描画の要素として並べる(手前から順)。1つのウィンドウは、題名の帯と、その下の中身。
+    pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
+        let mut elements = Vec::new();
+        for (window, active) in self.windows.iter_with_activation() {
+            let surface = window.item.wl_surface();
+            // まだ絵を出していないウィンドウには、帯も付けない。
+            if let Some(content) = content_size(&window.item) {
+                let text = toplevel_title(&window.item);
+                let bar = self
+                    .title_bars
+                    .entry(surface.id())
+                    .and_modify(|bar| {
+                        if !bar.matches(&text, content.w, active) {
+                            *bar = TitleBar::new(&mut self.text, &text, content.w, active);
+                        }
+                    })
+                    .or_insert_with(|| TitleBar::new(&mut self.text, &text, content.w, active));
+                elements.extend(
+                    bar.element(renderer, window.location)
+                        .map(WindowElement::TitleBar),
+                );
+            }
+            let content = content_location(window.location);
+            elements.extend(
+                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
                     renderer,
-                    window.item.wl_surface(),
+                    surface,
                     // 拡大率は1なので、画面の上の位置と画素の位置は同じ。
-                    (window.location.x, window.location.y),
+                    (content.x, content.y),
                     1.0,
                     1.0,
                     Kind::Unspecified,
                 )
-            })
-            .collect()
+                .into_iter()
+                .map(WindowElement::Surface),
+            );
+        }
+        elements
+    }
+
+    /// クライアントが、飾りの描き方を尋ねてきた・変えようとしたときに呼ぶ。いつも、サーバーの側
+    /// (Seinas)で描くと答える。
+    pub fn decorate_on_server_side(&self, toplevel: &ToplevelSurface) {
+        toplevel.with_pending_state(|state| {
+            state.decoration_mode = Some(DecorationMode::ServerSide);
+        });
+        if toplevel.is_initial_configure_sent() {
+            toplevel.send_pending_configure();
+        }
     }
 
     /// クライアントへframeコールバックを返す(「次の絵を描いてよい」の合図)。
@@ -206,9 +282,28 @@ impl<D: SeatHandler> Frontend<D> {
     }
 }
 
-/// ウィンドウの大きさ。まだ絵を出していなければNone。
-fn window_size(toplevel: &ToplevelSurface) -> Option<Size<i32, Logical>> {
+/// ウィンドウの中身(クライアントが描く所)の大きさ。まだ絵を出していなければNone。
+fn content_size(toplevel: &ToplevelSurface) -> Option<Size<i32, Logical>> {
     with_renderer_surface_state(toplevel.wl_surface(), |state| state.surface_size())?
+}
+
+/// 題名の帯を含めた、ウィンドウの外形の大きさ。まだ絵を出していなければNone。
+fn window_size(toplevel: &ToplevelSurface) -> Option<Size<i32, Logical>> {
+    content_size(toplevel).map(outer_size)
+}
+
+/// 題名の帯に出す文字。クライアントが付けた題名、無ければapp_id、それも無ければ空。
+fn toplevel_title(toplevel: &ToplevelSurface) -> String {
+    with_states(toplevel.wl_surface(), |states| {
+        let data = states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .map(|data| data.lock().expect("the toplevel data"));
+        match &data {
+            Some(data) => title_text(data.title.as_deref(), data.app_id.as_deref()).to_owned(),
+            None => String::new(),
+        }
+    })
 }
 
 /// 切られたクライアントの後片付けを、いますぐ行わせる。
@@ -298,7 +393,8 @@ macro_rules! delegate_frontend {
             }
             fn new_toplevel(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 let frontend = $crate::FrontendHost::frontend_mut(self);
-                let size = frontend.size;
+                // 中身に使える大きさ(画面から、題名の帯のぶんを引いたもの)を伝える。
+                let size = $crate::content_size_for(frontend.size);
                 frontend.output.enter(surface.wl_surface());
                 surface.with_pending_state(|state| {
                     state.size = Some(size);
@@ -308,6 +404,14 @@ macro_rules! delegate_frontend {
                 frontend.add_window(surface.clone());
                 surface.send_configure();
                 $crate::log_new_toplevel();
+                // 前に手前だったウィンドウの帯の色が変わる。
+                $crate::FrontendHost::redraw_needed(self);
+            }
+            fn title_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::FrontendHost::redraw_needed(self);
+            }
+            fn app_id_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::FrontendHost::redraw_needed(self);
             }
             fn toplevel_destroyed(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::frontend_mut(self).remove_window(&surface);
@@ -332,6 +436,23 @@ macro_rules! delegate_frontend {
                 _positioner: $crate::smithay::wayland::shell::xdg::PositionerState,
                 _token: u32,
             ) {
+            }
+        }
+
+        impl $crate::smithay::wayland::shell::xdg::decoration::XdgDecorationHandler for $ty {
+            fn new_decoration(&mut self, toplevel: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::FrontendHost::frontend(self).decorate_on_server_side(&toplevel);
+            }
+            fn request_mode(
+                &mut self,
+                toplevel: $crate::smithay::wayland::shell::xdg::ToplevelSurface,
+                _mode: $crate::smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode,
+            ) {
+                // クライアントが自分で描きたいと言っても、帯はSeinasが描く。
+                $crate::FrontendHost::frontend(self).decorate_on_server_side(&toplevel);
+            }
+            fn unset_mode(&mut self, toplevel: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::FrontendHost::frontend(self).decorate_on_server_side(&toplevel);
             }
         }
 
@@ -365,11 +486,16 @@ macro_rules! delegate_frontend {
             ) -> $crate::Frontend<Self> {
                 use $crate::smithay::{
                     input::SeatState,
-                    wayland::{compositor::CompositorState, shell::xdg::XdgShellState, shm::ShmState},
+                    wayland::{
+                        compositor::CompositorState,
+                        shell::xdg::{decoration::XdgDecorationState, XdgShellState},
+                        shm::ShmState,
+                    },
                 };
 
                 let compositor_state = CompositorState::new::<Self>(display_handle);
                 let xdg_shell_state = XdgShellState::new::<Self>(display_handle);
+                let xdg_decoration_state = XdgDecorationState::new::<Self>(display_handle);
                 let shm_state = ShmState::new::<Self>(display_handle, vec![]);
                 let mut seat_state = SeatState::new();
                 let (seat, pointer) = if config.pointer {
@@ -385,6 +511,7 @@ macro_rules! delegate_frontend {
                     display_handle: display_handle.clone(),
                     compositor_state,
                     xdg_shell_state,
+                    xdg_decoration_state,
                     shm_state,
                     seat_state,
                     seat,
@@ -392,6 +519,8 @@ macro_rules! delegate_frontend {
                     output,
                     size: (config.width, config.height).into(),
                     windows: $crate::Stack::default(),
+                    text: $crate::load_fonts(&config.font_dir),
+                    title_bars: Default::default(),
                 }
             }
         }
@@ -399,6 +528,7 @@ macro_rules! delegate_frontend {
         $crate::smithay::delegate_compositor!($ty);
         $crate::smithay::delegate_shm!($ty);
         $crate::smithay::delegate_xdg_shell!($ty);
+        $crate::smithay::delegate_xdg_decoration!($ty);
         $crate::smithay::delegate_seat!($ty);
         $crate::smithay::delegate_output!($ty);
     };

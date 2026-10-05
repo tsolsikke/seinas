@@ -2,7 +2,7 @@
 
 `tools/third-party.py` が作るファイルです。手では直さないでください。
 
-Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。実行ファイルに入るものが67個、ビルドのときだけ使うものが19個です。
+Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。実行ファイルに入るものが95個、ビルドのときだけ使うものが20個です。
 
 | クレート | 版 | ライセンス | 使われ方 | ライセンス文 |
 | --- | --- | --- | --- | --- |
@@ -12,11 +12,15 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | autocfg | 1.5.1 | Apache-2.0 OR MIT | ビルドのときだけ | [licenses/autocfg-1.5.1/](licenses/autocfg-1.5.1/) |
 | bitflags | 2.13.2 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/bitflags-2.13.2/](licenses/bitflags-2.13.2/) |
 | block-buffer | 0.10.4 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/block-buffer-0.10.4/](licenses/block-buffer-0.10.4/) |
+| bytemuck | 1.25.2 | Zlib OR Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/bytemuck-1.25.2/](licenses/bytemuck-1.25.2/) |
+| bytemuck_derive | 1.12.1 | Zlib OR Apache-2.0 OR MIT | ビルドのときだけ | [licenses/bytemuck_derive-1.12.1/](licenses/bytemuck_derive-1.12.1/) |
 | calloop | 0.14.5 | MIT | 実行ファイルに入る | [licenses/calloop-0.14.5/](licenses/calloop-0.14.5/) |
 | calloop-wayland-source | 0.4.1 | MIT | 実行ファイルに入る | [licenses/calloop-wayland-source-0.4.1/](licenses/calloop-wayland-source-0.4.1/) |
 | cc | 1.6.0 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/cc-1.6.0/](licenses/cc-1.6.0/) |
 | cfg-if | 1.0.5 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/cfg-if-1.0.5/](licenses/cfg-if-1.0.5/) |
 | cgmath | 0.18.0 | Apache-2.0 | 実行ファイルに入る | [licenses/cgmath-0.18.0/](licenses/cgmath-0.18.0/) |
+| core_maths | 0.1.1 | MIT | 実行ファイルに入る | [licenses/core_maths-0.1.1/](licenses/core_maths-0.1.1/) |
+| cosmic-text | 0.19.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/cosmic-text-0.19.0/](licenses/cosmic-text-0.19.0/) |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/cpufeatures-0.2.17/](licenses/cpufeatures-0.2.17/) |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/crypto-common-0.1.7/](licenses/crypto-common-0.1.7/) |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | 実行ファイルに入る | [licenses/cursor-icon-1.2.0/](licenses/cursor-icon-1.2.0/) |
@@ -27,13 +31,19 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | errno | 0.3.14 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/errno-0.3.14/](licenses/errno-0.3.14/) |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/fastrand-2.5.0/](licenses/fastrand-2.5.0/) |
 | find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/find-msvc-tools-0.1.14/](licenses/find-msvc-tools-0.1.14/) |
+| font-types | 0.11.3 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/font-types-0.11.3/](licenses/font-types-0.11.3/) |
+| font-types | 0.12.6 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/font-types-0.12.6/](licenses/font-types-0.12.6/) |
+| fontdb | 0.23.0 | MIT | 実行ファイルに入る | [licenses/fontdb-0.23.0/](licenses/fontdb-0.23.0/) |
 | generic-array | 0.14.7 | MIT | 実行ファイルに入る | [licenses/generic-array-0.14.7/](licenses/generic-array-0.14.7/) |
 | getrandom | 0.3.4 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/getrandom-0.3.4/](licenses/getrandom-0.3.4/) |
 | getrandom | 0.4.3 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/getrandom-0.4.3/](licenses/getrandom-0.4.3/) |
+| harfrust | 0.5.2 | MIT | 実行ファイルに入る | 配布物に入っていない |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/hashbrown-0.17.1/](licenses/hashbrown-0.17.1/) |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/indexmap-2.14.2/](licenses/indexmap-2.14.2/) |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/lazy_static-1.5.1/](licenses/lazy_static-1.5.1/) |
 | libc | 0.2.190 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/libc-0.2.190/](licenses/libc-0.2.190/) |
+| libm | 0.2.16 | MIT | 実行ファイルに入る | [licenses/libm-0.2.16/](licenses/libm-0.2.16/) |
+| linebender_resource_handle | 0.1.1 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/linebender_resource_handle-0.1.1/](licenses/linebender_resource_handle-0.1.1/) |
 | linux-raw-sys | 0.12.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/linux-raw-sys-0.12.1/](licenses/linux-raw-sys-0.12.1/) |
 | log | 0.4.34 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/log-0.4.34/](licenses/log-0.4.34/) |
 | memchr | 2.8.3 | Unlicense OR MIT | ビルドのときだけ | [licenses/memchr-2.8.3/](licenses/memchr-2.8.3/) |
@@ -55,27 +65,44 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | rand | 0.9.5 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/rand-0.9.5/](licenses/rand-0.9.5/) |
 | rand_chacha | 0.9.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/rand_chacha-0.9.0/](licenses/rand_chacha-0.9.0/) |
 | rand_core | 0.9.5 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/rand_core-0.9.5/](licenses/rand_core-0.9.5/) |
+| rangemap | 1.8.0 | MIT/Apache-2.0 | 実行ファイルに入る | [licenses/rangemap-1.8.0/](licenses/rangemap-1.8.0/) |
+| read-fonts | 0.37.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/read-fonts-0.37.0/](licenses/read-fonts-0.37.0/) |
+| read-fonts | 0.41.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/read-fonts-0.41.0/](licenses/read-fonts-0.41.0/) |
+| rustc-hash | 2.1.3 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/rustc-hash-2.1.3/](licenses/rustc-hash-2.1.3/) |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/rustix-1.1.5/](licenses/rustix-1.1.5/) |
+| self_cell | 1.3.0 | Apache-2.0 OR GPL-2.0-only | 実行ファイルに入る | [licenses/self_cell-1.3.0/](licenses/self_cell-1.3.0/) |
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/sha2-0.10.9/](licenses/sha2-0.10.9/) |
 | sharded-slab | 0.1.7 | MIT | 実行ファイルに入る | [licenses/sharded-slab-0.1.7/](licenses/sharded-slab-0.1.7/) |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/shlex-2.0.1/](licenses/shlex-2.0.1/) |
+| skrifa | 0.40.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/skrifa-0.40.0/](licenses/skrifa-0.40.0/) |
+| skrifa | 0.44.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/skrifa-0.44.0/](licenses/skrifa-0.44.0/) |
+| slotmap | 1.1.1 | Zlib | 実行ファイルに入る | [licenses/slotmap-1.1.1/](licenses/slotmap-1.1.1/) |
 | smallvec | 1.16.2 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/smallvec-1.16.2/](licenses/smallvec-1.16.2/) |
 | smithay | 0.7.0 | MIT | 実行ファイルに入る | [licenses/smithay-0.7.0/](licenses/smithay-0.7.0/) |
 | smithay-client-toolkit | 0.21.1 | MIT | 実行ファイルに入る | [licenses/smithay-client-toolkit-0.21.1/](licenses/smithay-client-toolkit-0.21.1/) |
+| smol_str | 0.3.6 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/smol_str-0.3.6/](licenses/smol_str-0.3.6/) |
+| swash | 0.2.10 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/swash-0.2.10/](licenses/swash-0.2.10/) |
 | syn | 2.0.119 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/syn-2.0.119/](licenses/syn-2.0.119/) |
 | syn | 3.0.6 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/syn-3.0.6/](licenses/syn-3.0.6/) |
+| sys-locale | 0.3.2 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/sys-locale-0.3.2/](licenses/sys-locale-0.3.2/) |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/tempfile-3.27.0/](licenses/tempfile-3.27.0/) |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/thiserror-1.0.69/](licenses/thiserror-1.0.69/) |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/thiserror-2.0.21/](licenses/thiserror-2.0.21/) |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/thiserror-impl-1.0.69/](licenses/thiserror-impl-1.0.69/) |
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/thiserror-impl-2.0.21/](licenses/thiserror-impl-2.0.21/) |
 | thread_local | 1.1.10 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/thread_local-1.1.10/](licenses/thread_local-1.1.10/) |
+| tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/tinyvec-1.13.3/](licenses/tinyvec-1.13.3/) |
 | tracing | 0.1.44 | MIT | 実行ファイルに入る | [licenses/tracing-0.1.44/](licenses/tracing-0.1.44/) |
 | tracing-attributes | 0.1.31 | MIT | ビルドのときだけ | [licenses/tracing-attributes-0.1.31/](licenses/tracing-attributes-0.1.31/) |
 | tracing-core | 0.1.36 | MIT | 実行ファイルに入る | [licenses/tracing-core-0.1.36/](licenses/tracing-core-0.1.36/) |
 | tracing-subscriber | 0.3.23 | MIT | 実行ファイルに入る | [licenses/tracing-subscriber-0.3.23/](licenses/tracing-subscriber-0.3.23/) |
+| ttf-parser | 0.25.1 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/ttf-parser-0.25.1/](licenses/ttf-parser-0.25.1/) |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/typenum-1.20.1/](licenses/typenum-1.20.1/) |
+| unicode-bidi | 0.3.18 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/unicode-bidi-0.3.18/](licenses/unicode-bidi-0.3.18/) |
 | unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | ビルドのときだけ | [licenses/unicode-ident-1.0.26/](licenses/unicode-ident-1.0.26/) |
+| unicode-linebreak | 0.1.5 | Apache-2.0 | 実行ファイルに入る | [licenses/unicode-linebreak-0.1.5/](licenses/unicode-linebreak-0.1.5/) |
+| unicode-script | 0.5.8 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/unicode-script-0.5.8/](licenses/unicode-script-0.5.8/) |
+| unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/unicode-segmentation-1.13.3/](licenses/unicode-segmentation-1.13.3/) |
 | version_check | 0.9.5 | MIT/Apache-2.0 | ビルドのときだけ | [licenses/version_check-0.9.5/](licenses/version_check-0.9.5/) |
 | wayland-backend | 0.3.17 | MIT | 実行ファイルに入る | [licenses/wayland-backend-0.3.17/](licenses/wayland-backend-0.3.17/) |
 | wayland-client | 0.31.15 | MIT | 実行ファイルに入る | [licenses/wayland-client-0.31.15/](licenses/wayland-client-0.31.15/) |
@@ -91,4 +118,6 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | xcursor | 0.3.11 | MIT | 実行ファイルに入る | [licenses/xcursor-0.3.11/](licenses/xcursor-0.3.11/) |
 | xkbcommon | 0.8.0 | MIT | 実行ファイルに入る | [licenses/xkbcommon-0.8.0/](licenses/xkbcommon-0.8.0/) |
 | xkeysym | 0.2.1 | MIT OR Apache-2.0 OR Zlib | 実行ファイルに入る | [licenses/xkeysym-0.2.1/](licenses/xkeysym-0.2.1/) |
+| yazi | 0.2.1 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/yazi-0.2.1/](licenses/yazi-0.2.1/) |
+| zeno | 0.3.3 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/zeno-0.3.3/](licenses/zeno-0.3.3/) |
 | zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/zerocopy-0.8.59/](licenses/zerocopy-0.8.59/) |

@@ -5,6 +5,8 @@
 //!
 //! 目のまわり(肌)の色は、引数 `--skin RRGGBB` か、環境変数 `ZEYES_SKIN` で変えられる(16進の6けた。
 //! 引数が優先)。既定は緑(`6ab05c`)。ウィンドウを見分けたいときに使う。
+//!
+//! ウィンドウの題名は「zeyes」。引数 `--title TEXT` で変えられる。
 
 use std::{error::Error, process::ExitCode, time::Duration};
 
@@ -357,27 +359,42 @@ fn parse_color(text: &str) -> Option<u32> {
     (digits.len() == 6).then(|| u32::from_str_radix(digits, 16).ok())?
 }
 
-/// 目のまわりの色を、引数 `--skin`、環境変数 `ZEYES_SKIN`、既定の順に決める。
-fn skin_color(args: &[String], env: Option<String>) -> Result<u32, String> {
-    let mut chosen = env;
+/// ウィンドウの題名の既定。
+const DEFAULT_TITLE: &str = "zeyes";
+
+/// 起動のときの指定。
+#[derive(Debug, PartialEq)]
+struct Options {
+    /// 目のまわりの色。
+    skin: u32,
+    /// ウィンドウの題名。
+    title: String,
+}
+
+/// 引数を読む。目のまわりの色は、引数 `--skin`、環境変数 `ZEYES_SKIN`(`skin_env`)、既定の順に決める。
+fn parse_options(args: &[String], skin_env: Option<String>) -> Result<Options, String> {
+    let mut skin = skin_env;
+    let mut title = DEFAULT_TITLE.to_owned();
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--skin" => chosen = Some(args.next().ok_or("--skin needs a value")?.clone()),
+            "--skin" => skin = Some(args.next().ok_or("--skin needs a value")?.clone()),
+            "--title" => title = args.next().ok_or("--title needs a value")?.clone(),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
-    match chosen {
+    let skin = match skin {
         Some(text) => {
-            parse_color(&text).ok_or_else(|| format!("invalid skin color: {text} (use RRGGBB)"))
+            parse_color(&text).ok_or_else(|| format!("invalid skin color: {text} (use RRGGBB)"))?
         }
-        None => Ok(DEFAULT_SKIN),
-    }
+        None => DEFAULT_SKIN,
+    };
+    Ok(Options { skin, title })
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let skin = skin_color(&args, std::env::var("ZEYES_SKIN").ok())?;
+    let Options { skin, title } = parse_options(&args, std::env::var("ZEYES_SKIN").ok())?;
 
     let conn = Connection::connect_to_env()
         .map_err(|e| format!("cannot connect to the compositor (WAYLAND_DISPLAY): {e}"))?;
@@ -393,7 +410,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let shm = Shm::bind(&globals, &qh)?;
     let surface = compositor.create_surface(&qh);
     let window = xdg_shell.create_window(surface, WindowDecorations::RequestServer, &qh);
-    window.set_title("zeyes-min");
+    window.set_title(title);
     window.set_app_id("zeyes-min");
     window.set_min_size(Some((WIDTH as u32, HEIGHT as u32)));
     window.commit();
@@ -446,21 +463,33 @@ mod tests {
     #[test]
     fn the_skin_color_comes_from_the_argument_then_the_environment() {
         let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(skin_color(&[], None), Ok(DEFAULT_SKIN));
-        assert_eq!(skin_color(&[], Some("4060d0".into())), Ok(0x4060d0));
-        assert_eq!(
-            skin_color(&args(&["--skin", "#ff8800"]), None),
-            Ok(0xff8800)
-        );
+        let skin = |list: &[&str], env: Option<&str>| {
+            parse_options(&args(list), env.map(str::to_owned)).map(|options| options.skin)
+        };
+        assert_eq!(skin(&[], None), Ok(DEFAULT_SKIN));
+        assert_eq!(skin(&[], Some("4060d0")), Ok(0x4060d0));
+        assert_eq!(skin(&["--skin", "#ff8800"], None), Ok(0xff8800));
         // 引数が、環境変数より優先される。
+        assert_eq!(skin(&["--skin", "102030"], Some("4060d0")), Ok(0x102030));
+        assert!(skin(&["--skin"], None).is_err());
+        assert!(skin(&["--skin", "blue"], None).is_err());
+        assert!(skin(&["--bogus"], None).is_err());
+        assert!(skin(&[], Some("12345")).is_err());
+    }
+
+    #[test]
+    fn the_title_can_be_changed_with_an_argument() {
+        let args = |list: &[&str]| list.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(parse_options(&[], None).unwrap().title, "zeyes");
+        let options = parse_options(&args(&["--title", "目玉", "--skin", "102030"]), None);
         assert_eq!(
-            skin_color(&args(&["--skin", "102030"]), Some("4060d0".into())),
-            Ok(0x102030)
+            options,
+            Ok(Options {
+                skin: 0x102030,
+                title: "目玉".to_owned()
+            })
         );
-        assert!(skin_color(&args(&["--skin"]), None).is_err());
-        assert!(skin_color(&args(&["--skin", "blue"]), None).is_err());
-        assert!(skin_color(&args(&["--bogus"]), None).is_err());
-        assert!(skin_color(&[], Some("12345".into())).is_err());
+        assert!(parse_options(&args(&["--title"]), None).is_err());
     }
 
     #[test]

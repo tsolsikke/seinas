@@ -11,6 +11,7 @@ Seinas自身のライセンス(MIT)は、リポジトリの先頭の `LICENSE` �
 | `licenses/` | 各クレートの配布物に入っていたライセンス文を、そのまま写したもの |
 | `licenses-upstream/` | 配布物にライセンス文が入っていないクレートについて、上流のリポジトリから取ってきたもの |
 | `c-libraries/` | 静的にリンクするCのライブラリのライセンス文と著作権表示 |
+| `fonts/` | 既定のフォントのライセンス文と著作権表示(フォントそのものは、リポジトリに入れていない) |
 
 `rust-crates.md` と `licenses/` は、`tools/third-party.py` が Cargo.lock をもとに作ります。
 依存を変えたら、次のように作り直してください。CIでも、古くなっていないかを確かめています。
@@ -27,7 +28,34 @@ python3 tools/third-party.py
 | --- | --- | --- |
 | drm-fourcc 2.2.0 | MIT | 上流の `main` ブランチの `LICENSE` を `licenses-upstream/` に置いた(2026-10-04に取得) |
 | profiling 1.0.18、profiling-procmacros 1.0.18 | MIT OR Apache-2.0 | 上流の `master` ブランチの `LICENSE-MIT` と `LICENSE-APACHE` を `licenses-upstream/` に置いた(2026-10-04に取得) |
+| harfrust 0.5.2 | MIT | 上流のリポジトリ(<https://github.com/harfbuzz/harfrust>)の、この版のもとになったコミット(efdae3142ab76a2f1524d72cff9e3dfdc5afd7ca)の `LICENSE` を `licenses-upstream/` に置いた(2026-10-05に取得) |
 | pixman 0.2.1、pixman-sys 0.1.0 | MIT | 上流のリポジトリ(<https://github.com/cmeissl/pixman-rs>)にもライセンス文のファイルが無い。`Cargo.toml` にMITと書かれていて、作者はChristian Meisslさん |
+
+## ライセンスを選んで使うクレート
+
+複数のライセンスから選べるクレートは、MIT、Apache-2.0、Zlibのどれかで使います。GPLを選ぶものは、ありません。
+
+| クレート | 書かれているライセンス | 選ぶもの |
+| --- | --- | --- |
+| self_cell 1.3.0 | Apache-2.0 OR GPL-2.0-only | Apache-2.0 |
+
+## フォント
+
+Seinasは、ウィンドウの題名などを描くのに、次のフォントを使います。
+フォントは、実行ファイルに埋め込まず、リポジトリにも入れていません。`tools/fetch-fonts.sh` が、版とSHA-256を固定して取得し、Seinasは実行のときにファイルとして読みます。
+
+| フォント | 版 | 使われ方 | ライセンス | ライセンス文と著作権表示 |
+| --- | --- | --- | --- | --- |
+| BIZ UDPゴシック Regular(`BIZUDPGothic-Regular.ttf`) | 1.051 | 題名などのUIの文字 | SIL Open Font License 1.1 | `fonts/biz-udgothic-1.051/`(`OFL.txt`、`AUTHORS.txt`、`CONTRIBUTORS.txt`) |
+| GNU Unifont JP(`unifont_jp-18.0.01.otf`) | 18.0.01 | 控え(上のフォントに無い文字) | SIL Open Font License 1.1(二重ライセンスのうち、こちらを選ぶ) | `fonts/unifont-18.0.01/`(`OFL-1.1.txt`、`COPYING`) |
+
+- BIZ UDPゴシックの取得元は、<https://github.com/googlefonts/morisawa-biz-ud-gothic> のタグ `v1.051` です。著作権表示は「Copyright 2022 The BIZ UDGothic Project Authors」で、予約されたフォント名の宣言はありません。
+- GNU Unifont JPの取得元は、GNUの配布元 <https://ftp.gnu.org/gnu/unifont/unifont-18.0.01/> です。フォントのファイルは、「SIL Open Font License 1.1」と「GNU GPL 2以降(フォントの埋め込みの例外つき)」の二重ライセンスです(上流の `COPYING` と、フォントの中のライセンスの表記に書かれています)。SeinasはOFL 1.1を選びます。`fonts/unifont-18.0.01/` の2つのファイルは、上流のソースの配布物(`unifont-18.0.01.tar.gz`)に入っているものです。
+  フォントの中の著作権表示は「Copyright © 1998-2026 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Ælla Chiana Moskopp, Rebecca Bettencourt, Ho-Seok Ee, et al.」です。
+- どちらのフォントも、手を加えずに使います。
+- `tools/fetch-fonts.sh` が取得する BIZ UDゴシック Regular(`BIZUDGothic-Regular.ttf`。端末・コード用)は、BIZ UDPゴシックと同じ配布物のもので、ライセンスも同じです。今のSeinasは、まだ使っていません。
+
+フォントのファイルをSeinasと一緒に配るときは、`fonts/` の下のライセンス文と著作権表示も一緒に配ってください。
 
 ## Cのライブラリ
 

@@ -13,8 +13,9 @@ use common::{shows_zeyes, wait_for, Compositor, BACKGROUND, SKIN};
 
 /// 縮めるクライアントの、ウィンドウの色(紫)。大きさは400x300。
 const SHRINK: [u8; 3] = [0xff, 0x00, 0xff];
-/// 縮めるクライアントのウィンドウの中の点。後からつなぐので、(32, 32)にずれて、手前に置かれる。
-const VISIBLE: [(usize, usize); 3] = [(34, 34), (200, 150), (430, 330)];
+/// 縮めるクライアントのウィンドウの中身の中の点。後からつなぐので、(32, 32)にずれて、手前に置かれる。
+/// 中身は、題名の帯(高さ24)の下、(32, 56)から始まる。
+const VISIBLE: [(usize, usize); 3] = [(34, 58), (200, 150), (430, 330)];
 
 #[test]
 fn a_client_that_shrinks_its_pool_is_cut_and_the_others_keep_running() {
@@ -31,7 +32,7 @@ fn a_client_that_shrinks_its_pool_is_cut_and_the_others_keep_running() {
     assert_eq!(shrink.next_line("the first frame"), "shrink: drawn");
     // zeyes-minは奥になり、左上の端だけが見えている。
     seinas.wait_for_screen("the window of the shrinking client", |shot| {
-        VISIBLE.iter().all(|&(x, y)| shot.pixel(x, y) == SHRINK) && shot.pixel(2, 2) == SKIN
+        VISIBLE.iter().all(|&(x, y)| shot.pixel(x, y) == SHRINK) && shot.pixel(2, 26) == SKIN
     });
 
     // 2) 縮めさせる。

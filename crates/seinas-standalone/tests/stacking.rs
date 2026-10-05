@@ -4,31 +4,43 @@
 //! - 新しいウィンドウは、いちばん手前に来る。手前のウィンドウが去ると、その下のものが見える。
 //! - 新しいウィンドウは、空いている中でいちばん小さい番号の置き場所に入る。置き場所は、番号が1つ
 //!   増えるごとに、右と下へ32画素ずつずれる。
+//! - 置き場所は、題名の帯を含めた外形の左上。中身は、帯(高さ24)の下に来る。
+//! - 帯の色は、いちばん手前のウィンドウと、そうでないウィンドウとで違う。
 
 mod common;
 
-use common::{shows_zeyes_at, Compositor, Shot, BACKGROUND, SKIN, ZEYES_HEIGHT, ZEYES_WIDTH};
+use common::{
+    bar_color, shows_zeyes_at, Compositor, Shot, ACTIVE_BAR, BACKGROUND, BAR, INACTIVE_BAR, SKIN,
+    ZEYES_HEIGHT, ZEYES_WIDTH,
+};
 
 /// 2つ目のzeyes-minの、目のまわりの色(青)。
 const BLUE: [u8; 3] = [0x40, 0x60, 0xd0];
 /// 置き場所を1つずらす量。
 const STEP: usize = 32;
 
-/// 置き場所0(左上)にある緑のウィンドウが、全体が見える形で描かれているか。
+/// 青のウィンドウ(置き場所1)の、中身の右下の端。
+const BLUE_END: (usize, usize) = (STEP + ZEYES_WIDTH - 1, STEP + BAR + ZEYES_HEIGHT - 1);
+
+/// 置き場所0(左上)にある緑のウィンドウが、全体が見える形で、選ばれているものとして描かれているか。
 fn green_in_front(shot: &Shot) -> bool {
-    shows_zeyes_at(shot, 0, 0, SKIN)
+    shows_zeyes_at(shot, 0, 0, SKIN) && bar_color(shot, 0, 0, ZEYES_WIDTH) == Some(ACTIVE_BAR)
 }
 
-/// 置き場所1(右下へ32画素)にある青のウィンドウが、全体が見える形で描かれているか。
+/// 置き場所1(右下へ32画素)にある青のウィンドウが、全体が見える形で、選ばれているものとして
+/// 描かれているか。
 fn blue_in_front(shot: &Shot) -> bool {
     shows_zeyes_at(shot, STEP, STEP, BLUE)
+        && bar_color(shot, STEP, STEP, ZEYES_WIDTH) == Some(ACTIVE_BAR)
 }
 
 /// 置き場所1の青のウィンドウの下から、置き場所0の緑のウィンドウの左と上の端がのぞいているか。
+/// 上の端には、選ばれていない色の帯が、全部見えている。
 fn green_peeks_out_behind_blue(shot: &Shot) -> bool {
-    shot.pixel(2, 2) == SKIN
-        && shot.pixel(2, ZEYES_HEIGHT - 3) == SKIN
-        && shot.pixel(ZEYES_WIDTH - 3, 2) == SKIN
+    shot.pixel(2, BAR + 2) == SKIN
+        && shot.pixel(2, BAR + ZEYES_HEIGHT - 3) == SKIN
+        && shot.pixel(ZEYES_WIDTH - 3, BAR + 2) == SKIN
+        && bar_color(shot, 0, 0, ZEYES_WIDTH) == Some(INACTIVE_BAR)
 }
 
 #[test]
@@ -47,15 +59,14 @@ fn a_new_window_goes_in_front_and_is_placed_with_an_offset() {
         blue_in_front(shot)
             && green_peeks_out_behind_blue(shot)
             // 青のウィンドウの右下の端と、その外。
-            && shot.pixel(STEP + ZEYES_WIDTH - 1, STEP + ZEYES_HEIGHT - 1) == BLUE
-            && shot.pixel(STEP + ZEYES_WIDTH, STEP + ZEYES_HEIGHT) == BACKGROUND
+            && shot.pixel(BLUE_END.0, BLUE_END.1) == BLUE
+            && shot.pixel(BLUE_END.0 + 1, BLUE_END.1 + 1) == BACKGROUND
     });
 
     // 手前の青が去ると、その下の緑が見える。
     drop(blue);
     seinas.wait_for_screen("the green window after the blue one left", |shot| {
-        green_in_front(shot)
-            && shot.pixel(STEP + ZEYES_WIDTH - 1, STEP + ZEYES_HEIGHT - 1) == BACKGROUND
+        green_in_front(shot) && shot.pixel(BLUE_END.0, BLUE_END.1) == BACKGROUND
     });
 
     // もう一度つないだ青は、空いている置き場所1に入り、また手前に来る。
@@ -74,9 +85,10 @@ fn a_new_window_goes_in_front_and_is_placed_with_an_offset() {
     let _green = seinas.connect_zeyes();
     seinas.wait_for_screen("a new green window in front of the blue one", |shot| {
         green_in_front(shot)
-            // 青は奥になり、右と下の端だけが見える。
-            && shot.pixel(STEP + ZEYES_WIDTH - 1, STEP + ZEYES_HEIGHT - 1) == BLUE
-            && shot.pixel(STEP + ZEYES_WIDTH - 3, STEP + 100) == BLUE
+            // 青は奥になり、右と下の端だけが見える。帯は、右の端だけが、選ばれていない色で見える。
+            && shot.pixel(BLUE_END.0, BLUE_END.1) == BLUE
+            && shot.pixel(STEP + ZEYES_WIDTH - 3, STEP + BAR + 100) == BLUE
+            && bar_color(shot, STEP, STEP, ZEYES_WIDTH) == Some(INACTIVE_BAR)
     });
 
     assert!(
