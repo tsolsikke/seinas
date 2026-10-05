@@ -17,9 +17,11 @@
 //! - `shrink`: ウィンドウを1つ描いた後、共有メモリーのプールを縮めて、もう一度commitする。
 //!   `--step` を付けると、縮める前に、標準入力から1行届くまで待つ。くわしくは `shrink.rs`。
 //! - `window`: 行儀よくウィンドウを1つ出し、届いたconfigureの中身を書き続ける。止められるまで動く。
-//!   `--title TEXT` と `--app-id TEXT` で、題名とapp_idを付けられる。`--decoration` で、飾りの描き方を尋ねる。くわしくは `window.rs`。
+//!   `--title TEXT` と `--app-id TEXT` で、題名とapp_idを付けられる。`--decoration` で、飾りの描き方を尋ねる。
+//!   ポインターの知らせを書く、動かしてほしいと頼む、閉じる頼みに応じない、という指定もある。くわしくは `window.rs`。
 //!
 //! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
+//! `window` は、閉じるように頼まれて終わったときも、終了コード0で終わる。
 
 mod shrink;
 mod window;
@@ -155,7 +157,7 @@ fn main() -> ExitCode {
     let Some(kind) = args.first() else {
         eprintln!("usage: test-client <unknown-opcode|unknown-object|short-message|bad-global>");
         eprintln!("       test-client shrink [--step]");
-        eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration]");
+        eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration] [--pointer] [--move-on-press] [--ignore-close]");
         return ExitCode::from(2);
     };
     let result = match kind.as_str() {

@@ -38,6 +38,10 @@ pub const INACTIVE_BAR: [u8; 3] = [0x4a, 0x50, 0x5c];
 pub const BAR: usize = 24;
 /// 帯の左右の端から、題名までの空き。
 pub const TITLE_PADDING: usize = 8;
+/// 閉じるボタンの大きさ。帯の右の端に、正方形で置かれる。
+pub const CLOSE_BUTTON: usize = 24;
+/// ポインターを乗せたときの、閉じるボタンの地の色。
+pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
 
 /// 終わるときに、動かしたプロセスを必ず止める。
 pub struct Running(pub Child);
@@ -159,20 +163,21 @@ pub fn shows_zeyes(shot: &Shot) -> bool {
 
 /// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの、題名の帯の色。
 ///
-/// 帯の右の端(題名の文字が来ない所)の、上と下の画素を見る。色がそろっていなければNone。
+/// 帯の右の端(閉じるボタンの隅。題名の文字も「×」の印も来ない所)の、上と下の画素を見る。
+/// 色がそろっていなければNone。ポインターが閉じるボタンの上にあるときは、ボタンの地の色になる。
 pub fn bar_color(shot: &Shot, x0: usize, y0: usize, width: usize) -> Option<[u8; 3]> {
     let top = shot.pixel(x0 + width - 2, y0);
     (top == shot.pixel(x0 + width - 2, y0 + BAR - 1)).then_some(top)
 }
 
 /// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの帯の中で、帯の色でない画素(題名の文字)の位置。
-/// 位置は、帯の左上を原点にした(x, y)。
+/// 位置は、帯の左上を原点にした(x, y)。右の端の閉じるボタンは、見ない。
 pub fn title_ink(shot: &Shot, x0: usize, y0: usize, width: usize) -> Vec<(usize, usize)> {
     let Some(bar) = bar_color(shot, x0, y0, width) else {
         return Vec::new();
     };
     (0..BAR)
-        .flat_map(|y| (0..width).map(move |x| (x, y)))
+        .flat_map(|y| (0..width - CLOSE_BUTTON).map(move |x| (x, y)))
         .filter(|&(x, y)| shot.pixel(x0 + x, y0 + y) != bar)
         .collect()
 }
@@ -253,14 +258,28 @@ impl Compositor {
 
     /// [`Compositor::start`] と同じだが、フォントの置き場を `fonts` にする。
     pub fn start_with_fonts(name: &str, fonts: &Path) -> Self {
+        Self::start_with(name, fonts, false)
+    }
+
+    /// [`Compositor::start`] と同じだが、試験のための入力の口を開く。ポインターの知らせは、
+    /// [`Compositor::pointer`] で送る。
+    pub fn start_with_input(name: &str) -> Self {
+        Self::start_with(name, &font_dir(), true)
+    }
+
+    fn start_with(name: &str, fonts: &Path, test_input: bool) -> Self {
         // ソケットのパスには長さの上限(約100文字)があるので、短い場所に置く。
         let dir = std::env::temp_dir().join(format!("seinas-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("create the working directory");
         let socket = dir.join("wl");
         let dump = dir.join("screen.ppm");
         let log = fs::File::create(dir.join("log")).expect("create the log file");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_seinas-standalone"));
+        if test_input {
+            command.arg("--test-input").stdin(Stdio::piped());
+        }
         let process = Running(
-            Command::new(env!("CARGO_BIN_EXE_seinas-standalone"))
+            command
                 .args(["--fake", &format!("{WIDTH}x{HEIGHT}")])
                 .arg("--dump")
                 .arg(&dump)
@@ -294,6 +313,13 @@ impl Compositor {
                 .filter(|shot| check(shot))
                 .map(|_| ())
         });
+    }
+
+    /// 試験のための入力の口へ、1行を送る(`motion 100 10`、`press`、`release` など)。
+    pub fn pointer(&mut self, line: &str) {
+        use std::io::Write;
+        let stdin = self.process.0.stdin.as_mut().expect("the test input");
+        writeln!(stdin, "{line}").expect("send a pointer event");
     }
 
     /// いまの画面。

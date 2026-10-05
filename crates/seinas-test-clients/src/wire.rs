@@ -80,6 +80,13 @@ pub struct Wire {
     next_id: u32,
     /// 飾りの描き方を尋ねるオブジェクト(zxdg_toplevel_decoration_v1)の番号。作っていなければNone。
     decoration: Option<u32>,
+    /// コンポジタが公開しているグローバル(番号と、インターフェースの名前)。
+    globals: Vec<(u32, String)>,
+    /// 席(wl_seat)とポインター(wl_pointer)の番号。[`Wire::watch_pointer`] を呼ぶまではNone。
+    seat: Option<u32>,
+    pointer: Option<u32>,
+    /// コンポジタから、閉じるように頼まれたか(xdg_toplevel.close)。
+    pub close_requested: bool,
 }
 
 impl Wire {
@@ -178,6 +185,46 @@ impl Wire {
         }
     }
 
+    /// 席のポインターを使い始める。この後、ポインターの知らせが届くようになる。
+    ///
+    /// コンポジタが席を公開していなければ、失敗する。
+    pub fn watch_pointer(&mut self) -> Result<(), String> {
+        let name = self
+            .globals
+            .iter()
+            .find(|(_, interface)| interface == "wl_seat")
+            .map(|(name, _)| *name)
+            .ok_or("the compositor does not offer wl_seat")?;
+        let (seat, pointer) = (self.new_id(), self.new_id());
+        let mut bind = name.to_le_bytes().to_vec();
+        bind.extend(string("wl_seat"));
+        bind.extend(1u32.to_le_bytes());
+        bind.extend(seat.to_le_bytes());
+        self.send(&message(REGISTRY, 0, &bind))?;
+        // wl_seat.get_pointer(新しい番号)
+        self.send(&message(seat, 0, &pointer.to_le_bytes()))?;
+        self.seat = Some(seat);
+        self.pointer = Some(pointer);
+        Ok(())
+    }
+
+    /// `event` が、ポインターのボタンが押された知らせなら、その通し番号(serial)。
+    pub fn button_press_serial(&self, event: &Event) -> Option<u32> {
+        // wl_pointer.button(通し番号、時刻、ボタン、状態)。状態の1が「押された」。
+        (Some(event.object) == self.pointer && event.opcode == 3 && event.u32_at(12) == Some(1))
+            .then(|| event.u32_at(0))?
+    }
+
+    /// 通し番号が `serial` のボタンを押したまま、ウィンドウを動かしてほしいと頼む(xdg_toplevel.move)。
+    pub fn request_move(&mut self, serial: u32) -> Result<(), String> {
+        let seat = self.seat.ok_or("the pointer is not watched")?;
+        self.send(&message(
+            TOPLEVEL,
+            5,
+            &[seat.to_le_bytes(), serial.to_le_bytes()].concat(),
+        ))
+    }
+
     /// 題名を付ける(xdg_toplevel.set_title)。commitすると、コンポジタに伝わる。
     pub fn set_title(&mut self, title: &str) -> Result<(), String> {
         self.send(&message(TOPLEVEL, 2, &string(title)))
@@ -212,7 +259,15 @@ impl Wire {
         }
     }
 
-    /// 返事の要るイベント(ping、configure)に返事をする。
+    /// `print_configures` なら、標準出力に「window: …」の1行を書く。
+    fn say(&self, text: &str) {
+        if self.print_configures {
+            println!("window: {text}");
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    /// 返事の要るイベント(ping、configure)に返事をする。届いた知らせの中身も、求められていれば書く。
     pub fn answer(&mut self, event: &Event) -> Result<(), String> {
         match (event.object, event.opcode) {
             // xdg_wm_base.ping → pong
@@ -224,6 +279,47 @@ impl Wire {
                 if self.print_configures {
                     println!("window: configure {}", describe_configure(event));
                     let _ = std::io::stdout().flush();
+                }
+                Ok(())
+            }
+            // xdg_toplevel.close(閉じるように頼まれた)
+            (TOPLEVEL, 1) => {
+                self.close_requested = true;
+                self.say("close");
+                Ok(())
+            }
+            // xdg_toplevel.wm_capabilities(コンポジタができることの並び)
+            (TOPLEVEL, 3) => {
+                let count = event.u32_at(0).unwrap_or(0) as usize / 4;
+                let names: Vec<String> = (0..count)
+                    .filter_map(|i| event.u32_at(4 + i * 4))
+                    .map(|capability| match capability {
+                        1 => "window_menu".to_owned(),
+                        2 => "maximize".to_owned(),
+                        3 => "fullscreen".to_owned(),
+                        4 => "minimize".to_owned(),
+                        other => format!("capability-{other}"),
+                    })
+                    .collect();
+                self.say(&format!("wm_capabilities [{}]", names.join(",")));
+                Ok(())
+            }
+            // wl_pointer の知らせ。位置は、中身の左上を原点にした画素(端数は切り捨て)。
+            (object, opcode) if Some(object) == self.pointer => {
+                let fixed = |at: usize| event.u32_at(at).unwrap_or(0) as i32 >> 8;
+                match opcode {
+                    0 => self.say(&format!("pointer enter {} {}", fixed(8), fixed(12))),
+                    1 => self.say("pointer leave"),
+                    2 => self.say(&format!("pointer motion {} {}", fixed(4), fixed(8))),
+                    3 => {
+                        let state = match event.u32_at(12) {
+                            Some(1) => "pressed",
+                            _ => "released",
+                        };
+                        let button = event.u32_at(8).unwrap_or(0);
+                        self.say(&format!("pointer button {button:#x} {state}"));
+                    }
+                    _ => {}
                 }
                 Ok(())
             }
@@ -311,6 +407,10 @@ pub fn connect() -> Result<Wire, String> {
         print_configures: false,
         next_id: FIRST_FREE,
         decoration: None,
+        globals: Vec::new(),
+        seat: None,
+        pointer: None,
+        close_requested: false,
     })
 }
 
@@ -375,20 +475,21 @@ pub fn open_window_with(
             globals.push((name, String::from_utf8_lossy(interface).into_owned()));
         }
     }
-    let bind = |interface: &str, id: u32| -> Result<Vec<u8>, String> {
+    let bind = |interface: &str, version: u32, id: u32| -> Result<Vec<u8>, String> {
         let (name, _) = globals
             .iter()
             .find(|(_, i)| i == interface)
             .ok_or_else(|| format!("the compositor does not offer {interface}"))?;
         let mut body = name.to_le_bytes().to_vec();
         body.extend(string(interface));
-        body.extend(1u32.to_le_bytes());
+        body.extend(version.to_le_bytes());
         body.extend(id.to_le_bytes());
         Ok(message(REGISTRY, 0, &body))
     };
-    wire.send(&bind("wl_compositor", COMPOSITOR)?)?;
-    wire.send(&bind("wl_shm", SHM)?)?;
-    wire.send(&bind("xdg_wm_base", WM_BASE)?)?;
+    wire.send(&bind("wl_compositor", 1, COMPOSITOR)?)?;
+    wire.send(&bind("wl_shm", 1, SHM)?)?;
+    // 版5から、コンポジタができることの並び(wm_capabilities)が届く。
+    wire.send(&bind("xdg_wm_base", 5, WM_BASE)?)?;
 
     // ウィンドウを作り、最初のconfigureを待つ。
     wire.send(&message(COMPOSITOR, 0, &SURFACE.to_le_bytes()))?;
@@ -431,7 +532,7 @@ pub fn open_window_with(
     if setup.decoration {
         // 番号を順に使うため、バッファを作った後に作る。バッファを画面に付ける前なので、決まりには合っている。
         let (manager, decoration) = (wire.new_id(), wire.new_id());
-        wire.send(&bind("zxdg_decoration_manager_v1", manager)?)?;
+        wire.send(&bind("zxdg_decoration_manager_v1", 1, manager)?)?;
         // zxdg_decoration_manager_v1.get_toplevel_decoration(新しい番号、toplevel)
         wire.send(&message(
             manager,
@@ -445,5 +546,6 @@ pub fn open_window_with(
     let first_frame = wire.new_id();
     commit_buffer(wire, width, height, first_frame)?;
     wire.wait_for("the first frame", |e| e.object == first_frame)?;
+    wire.globals = globals;
     Ok(pool)
 }

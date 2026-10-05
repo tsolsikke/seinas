@@ -18,13 +18,25 @@
 //! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
+//! - `--test-input`: 試験のための入力の口を開く。標準入力から、ポインターの動きとボタンを1行ずつ読む
+//!   (下の「試験のための入力の口」)。これを付けたときだけ、席(wl_seat)とポインターを公開する。
 //!
 //! 描く時機: クライアントがcommitして描き直しが要るときにだけ描き、描いた後にframeコールバックを
 //! 返す。fbdevには垂直同期の知らせが無いので、描く回数は1秒に60回までに抑える。何も起きていない間は、
 //! 何もせずに待つ。
 //!
-//! 制限: 入力は扱わない(wl_seatは公開しない)。クライアントのウィンドウは、決まった位置に少しずつ
-//! ずらして重ねる(動かせない)。
+//! 制限: 入力の装置は扱わない(ふだんは、wl_seatを公開しない)。そのため、ふだんの起動では、
+//! ウィンドウを動かすことも、閉じることもできない。
+//!
+//! 試験のための入力の口: `--test-input` を付けると、標準入力の1行を、1つのポインターの知らせとして扱う。
+//! 画素の試験が、ドラッグや閉じるボタンを確かめるのに使う。ふだんの起動では、開かない。
+//!
+//! ```text
+//! motion X Y        ポインターが、画面の上の(X, Y)へ動いた
+//! press [BUTTON]    いまの位置で、ボタンが押された(BUTTON は left か right。無ければ left)
+//! release [BUTTON]  いまの位置で、ボタンが離された
+//! leave             ポインターが、画面の外へ出た
+//! ```
 //! 止めるにはシグナルで終わらせる。終わるときの後片付け(画面を元に戻す、ソケットのファイルを消す)は
 //! していない。
 
@@ -39,12 +51,16 @@ use std::{
     time::{Duration, Instant},
 };
 
-use seinas_frontend::{font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
+use seinas_frontend::{
+    font_dir, pointer_input, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost,
+    PointerInput, LEFT_BUTTON,
+};
 use seinas_render::Painter;
 use smithay::reexports::{
-    calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
+    calloop::{channel, generic::Generic, EventLoop, Interest, Mode, PostAction},
     wayland_server::{Display, ListeningSocket},
 };
+use smithay::utils::{Logical, Point};
 use tracing::{error, info, warn};
 
 use screen::Screen;
@@ -57,8 +73,11 @@ const DEFAULT_SOCKET_NAME: &str = "seinas-0";
 /// 描く間隔の下限。1秒に60回まで。
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
+/// 右のボタンの番号(Linuxの入力の決まり)。
+const RIGHT_BUTTON: u32 = 0x111;
+
 const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--fonts DIR]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--fonts DIR]";
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--fonts DIR] [--test-input]";
 
 struct Options {
     device: PathBuf,
@@ -66,6 +85,7 @@ struct Options {
     dump: Option<PathBuf>,
     socket: Option<PathBuf>,
     fonts: Option<PathBuf>,
+    test_input: bool,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -77,6 +97,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         dump: None,
         socket: std::env::var_os(SOCKET_ENV).map(PathBuf::from),
         fonts: None,
+        test_input: false,
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -92,6 +113,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             "--dump" => options.dump = Some(PathBuf::from(value("--dump")?)),
             "--socket" => options.socket = Some(PathBuf::from(value("--socket")?)),
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
+            "--test-input" => options.test_input = true,
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -99,6 +121,37 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         return Err("--dump needs --fake".to_owned());
     }
     Ok(options)
+}
+
+/// 試験のための入力の口に届いた1行を、ポインターの知らせに直す。`at` は、ポインターのいまの位置で、
+/// `motion` の行が届くたびに書き換える。
+fn parse_test_input(line: &str, at: &mut Point<f64, Logical>) -> Result<PointerInput, String> {
+    let mut words = line.split_whitespace();
+    let command = words.next().ok_or("an empty line")?;
+    match command {
+        "motion" => {
+            let mut number = || -> Option<f64> { words.next()?.parse().ok() };
+            let (x, y) = number()
+                .zip(number())
+                .ok_or_else(|| format!("motion needs two numbers: {line}"))?;
+            *at = (x, y).into();
+            Ok(PointerInput::Motion(*at))
+        }
+        "press" | "release" => {
+            let button = match words.next() {
+                None | Some("left") => LEFT_BUTTON,
+                Some("right") => RIGHT_BUTTON,
+                Some(other) => return Err(format!("unknown button: {other}")),
+            };
+            Ok(PointerInput::Button {
+                location: *at,
+                button,
+                pressed: command == "press",
+            })
+        }
+        "leave" => Ok(PointerInput::Leave),
+        other => Err(format!("unknown command: {other}")),
+    }
 }
 
 fn parse_size(text: &str) -> Option<(u32, u32)> {
@@ -197,7 +250,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         Config {
             width,
             height,
-            pointer: false,
+            // 席とポインターは、試験のための入力の口を開いたときだけ公開する。
+            pointer: options.test_input,
             font_dir: font_dir(options.fonts),
         },
     );
@@ -232,6 +286,37 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             Ok(PostAction::Continue)
         },
     )?;
+
+    // 源その3(試験のときだけ): 標準入力から届く、ポインターの知らせ。
+    if options.test_input {
+        warn!("the test input is open; pointer events are read from the standard input");
+        let (sender, lines) = channel::channel::<String>();
+        // 標準入力は、別のスレッドで1行ずつ読む。閉じられたら、スレッドは終わる。
+        std::thread::Builder::new()
+            .name("test input".to_owned())
+            .spawn(move || {
+                for line in std::io::stdin().lines().map_while(Result::ok) {
+                    if sender.send(line).is_err() {
+                        break;
+                    }
+                }
+            })?;
+        let mut at = Point::from((0.0, 0.0));
+        event_loop
+            .handle()
+            .insert_source(lines, move |event, _, state: &mut Standalone| {
+                let channel::Event::Msg(line) = event else {
+                    return;
+                };
+                match parse_test_input(&line, &mut at) {
+                    Ok(input) => {
+                        let time = state.start.elapsed().as_millis() as u32;
+                        pointer_input(state, input, time);
+                    }
+                    Err(message) => warn!("test input: {message}"),
+                }
+            })?;
+    }
 
     let mut state = Standalone {
         frontend,

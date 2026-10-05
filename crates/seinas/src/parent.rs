@@ -5,12 +5,9 @@
 
 use std::error::Error;
 
+use seinas_frontend::{pointer_input, PointerInput};
 use seinas_render::{FrameView, PixelFormat};
-use smithay::{
-    backend::input::ButtonState,
-    input::pointer::{ButtonEvent, MotionEvent},
-    utils::{Logical, Point, SERIAL_COUNTER},
-};
+use smithay::utils::{Logical, Point};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_dispatch2, delegate_registry,
@@ -276,52 +273,24 @@ impl PointerHandler for Seinas {
                 continue;
             }
             let location = Point::<f64, Logical>::from(event.position);
+            let input = match event.kind {
+                Enter { .. } | Motion { .. } => PointerInput::Motion(location),
+                Leave { .. } => PointerInput::Leave,
+                Press { button, .. } => PointerInput::Button {
+                    location,
+                    button,
+                    pressed: true,
+                },
+                Release { button, .. } => PointerInput::Button {
+                    location,
+                    button,
+                    pressed: false,
+                },
+                Axis { .. } => continue,
+            };
+            // 手前に出す、動かす、閉じるの操作と、子へ渡す相手は、受け口が決める。
             let time = self.start.elapsed().as_millis() as u32;
-            let serial = SERIAL_COUNTER.next_serial();
-            // ボタンを押した所にウィンドウがあれば、それをいちばん手前に出す。押した知らせは、この後で
-            // そのウィンドウへ、いつもどおり渡す。
-            if matches!(event.kind, Press { .. }) && self.frontend.raise_window_at(location) {
-                self.needs_redraw = true;
-            }
-            // ポインターの下にある、いちばん手前のウィンドウへ渡す。
-            let focus = self.frontend.window_under(location);
-            let Some(pointer) = self.frontend.pointer.clone() else {
-                continue;
-            };
-            let motion = MotionEvent {
-                location,
-                serial,
-                time,
-            };
-            match event.kind {
-                Enter { .. } | Motion { .. } => {
-                    pointer.motion(self, focus, &motion);
-                    pointer.frame(self);
-                }
-                Leave { .. } => {
-                    pointer.motion(self, None, &motion);
-                    pointer.frame(self);
-                }
-                Press { button, .. } | Release { button, .. } => {
-                    let state = if matches!(event.kind, Press { .. }) {
-                        ButtonState::Pressed
-                    } else {
-                        ButtonState::Released
-                    };
-                    pointer.motion(self, focus, &motion);
-                    pointer.button(
-                        self,
-                        &ButtonEvent {
-                            serial,
-                            time,
-                            button,
-                            state,
-                        },
-                    );
-                    pointer.frame(self);
-                }
-                Axis { .. } => {}
-            }
+            pointer_input(self, input, time);
         }
     }
 }

@@ -16,16 +16,20 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 pub use smithay;
 
 mod decoration;
+mod interaction;
 mod stack;
 pub use decoration::{
-    content_location, content_size_for, load_fonts, outer_size, paint_title_bar, title_text,
-    TitleBar, ACTIVE_BAR, ACTIVE_TITLE, INACTIVE_BAR, INACTIVE_TITLE, TITLE_BAR_HEIGHT,
-    TITLE_PADDING, TITLE_SIZE,
+    clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
+    paint_title_bar, title_text, TitleBar, ACTIVE_BAR, ACTIVE_TITLE, CLOSE_BUTTON_SIZE,
+    HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR,
+    TITLE_BAR_HEIGHT, TITLE_PADDING, TITLE_SIZE,
 };
-pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, CASCADE_STEP};
+pub use interaction::{part_at, Deliver, Interaction, Outcome, Part, DRAG_SLACK, LEFT_BUTTON};
+pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, WindowId, CASCADE_STEP};
 
 use seinas_text::TextPainter;
 use smithay::{
+    backend::input::ButtonState,
     backend::renderer::{
         element::{
             memory::MemoryRenderBufferRenderElement,
@@ -36,7 +40,10 @@ use smithay::{
         pixman::PixmanRenderer,
         utils::with_renderer_surface_state,
     },
-    input::{pointer::PointerHandle, Seat, SeatHandler, SeatState},
+    input::{
+        pointer::{ButtonEvent, MotionEvent, PointerHandle},
+        Seat, SeatHandler, SeatState,
+    },
     output::Output,
     reexports::wayland_protocols::xdg::{
         decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
@@ -47,7 +54,7 @@ use smithay::{
         protocol::wl_surface::WlSurface,
         Client, Display, DisplayHandle, Resource,
     },
-    utils::{Logical, Point, Size},
+    utils::{Logical, Point, Serial, Size, SERIAL_COUNTER},
     wayland::{
         compositor::{
             with_states, with_surface_tree_downward, CompositorClientState, CompositorState,
@@ -116,6 +123,8 @@ pub struct Frontend<D: SeatHandler> {
     pub text: TextPainter,
     /// 作った題名の帯の絵。ウィンドウ(の画面)ごとに覚えておく。
     pub title_bars: HashMap<ObjectId, TitleBar>,
+    /// ポインターでの操作(動かす、閉じる)の状態。
+    pub interaction: Interaction,
 }
 
 /// コンポジタの状態の型が、受け口を使うために実装するもの。
@@ -162,18 +171,6 @@ impl<D: SeatHandler> Frontend<D> {
         self.update_activation();
     }
 
-    /// 画面の上の点 `point` にある、いちばん手前のウィンドウを、いちばん手前に出す。
-    ///
-    /// ポインターのボタンが押されたときに呼ぶ。順が変わったら(描き直しが要るなら)trueを返す。
-    /// すでにいちばん手前のとき、どのウィンドウの上でもないときは、何もしない。
-    pub fn raise_window_at(&mut self, point: Point<f64, Logical>) -> bool {
-        let raised = self.windows.raise_at(point, window_size);
-        if raised {
-            self.update_activation();
-        }
-        raised
-    }
-
     /// いちばん手前のウィンドウにだけ、activatedの状態を付ける。変わったウィンドウには、configureで知らせる。
     fn update_activation(&self) {
         for (window, active) in self.windows.iter_with_activation() {
@@ -214,15 +211,18 @@ impl<D: SeatHandler> Frontend<D> {
             // まだ絵を出していないウィンドウには、帯も付けない。
             if let Some(content) = content_size(&window.item) {
                 let text = toplevel_title(&window.item);
+                let hot = self.interaction.close_button_is_hot(window.id);
                 let bar = self
                     .title_bars
                     .entry(surface.id())
                     .and_modify(|bar| {
-                        if !bar.matches(&text, content.w, active) {
-                            *bar = TitleBar::new(&mut self.text, &text, content.w, active);
+                        if !bar.matches(&text, content.w, active, hot) {
+                            *bar = TitleBar::new(&mut self.text, &text, content.w, active, hot);
                         }
                     })
-                    .or_insert_with(|| TitleBar::new(&mut self.text, &text, content.w, active));
+                    .or_insert_with(|| {
+                        TitleBar::new(&mut self.text, &text, content.w, active, hot)
+                    });
                 elements.extend(
                     bar.element(renderer, window.location)
                         .map(WindowElement::TitleBar),
@@ -280,6 +280,173 @@ impl<D: SeatHandler> Frontend<D> {
             );
         }
     }
+}
+
+/// ポインターの知らせ。裏側(親のWayland、試験用の入力の口)が、受け口へ渡す。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PointerInput {
+    /// 画面の上の点へ動いた(入ってきたときも、これ)。
+    Motion(Point<f64, Logical>),
+    /// 画面の外へ出た。
+    Leave,
+    /// 点 `location` で、ボタン `button`(Linuxの入力の番号)が押された・離された。
+    Button {
+        location: Point<f64, Logical>,
+        button: u32,
+        pressed: bool,
+    },
+}
+
+/// ポインターの知らせを処理する。`time` は、起動からの時間(ミリ秒)。
+///
+/// 押した所のウィンドウを手前に出し、題名の帯と閉じるボタンの上での操作(動かす、閉じる)はSeinasが
+/// 自分で行い、それ以外は、ポインターの下にあるウィンドウの中身へ渡す。席(wl_seat)を公開して
+/// いない構成では、何もしない。
+pub fn pointer_input<D>(state: &mut D, input: PointerInput, time: u32)
+where
+    D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
+{
+    let frontend = state.frontend_mut();
+    let Some(pointer) = frontend.pointer.clone() else {
+        return;
+    };
+    let screen = frontend.size;
+    let (location, outcome) = match input {
+        PointerInput::Motion(location) => (
+            location,
+            frontend
+                .interaction
+                .motion(&mut frontend.windows, screen, location, window_size),
+        ),
+        PointerInput::Leave => (pointer.current_location(), frontend.interaction.leave()),
+        PointerInput::Button {
+            location,
+            button,
+            pressed: true,
+        } => (
+            location,
+            frontend
+                .interaction
+                .press(&mut frontend.windows, location, button, window_size),
+        ),
+        PointerInput::Button {
+            location,
+            button,
+            pressed: false,
+        } => (
+            location,
+            frontend
+                .interaction
+                .release(&mut frontend.windows, location, button, window_size),
+        ),
+    };
+    if outcome.raised {
+        frontend.update_activation();
+    }
+    if let Some(toplevel) = outcome.close.and_then(|id| frontend.windows.get(id)) {
+        // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
+        toplevel.item.send_close();
+    }
+    let focus = match outcome.deliver {
+        Deliver::ToClient => frontend.window_under(location),
+        Deliver::Nobody => None,
+    };
+    if outcome.redraw {
+        state.redraw_needed();
+    }
+
+    let serial = SERIAL_COUNTER.next_serial();
+    let motion = MotionEvent {
+        location,
+        serial,
+        time,
+    };
+    match input {
+        PointerInput::Motion(_) => pointer.motion(state, focus, &motion),
+        PointerInput::Leave => pointer.motion(state, None, &motion),
+        PointerInput::Button {
+            button, pressed, ..
+        } => {
+            pointer.motion(state, focus, &motion);
+            // Seinasが自分で使ったボタンは、クライアントには渡さない。離した知らせだけは、渡す相手を
+            // 無しにしたうえで、Smithayに伝える(クライアントから頼まれた移動では、押した知らせを
+            // Smithayが覚えているので、離したことも教えておく)。
+            if outcome.deliver == Deliver::ToClient || !pressed {
+                let state_of_button = if pressed {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                };
+                pointer.button(
+                    state,
+                    &ButtonEvent {
+                        serial,
+                        time,
+                        button,
+                        state: state_of_button,
+                    },
+                );
+            }
+        }
+    }
+    pointer.frame(state);
+}
+
+/// クライアントが、自分のウィンドウを動かしてほしいと頼んできた(xdg_toplevelのmove)。
+/// [`delegate_frontend!`] が使う。
+///
+/// 受けるのは、そのクライアントの上でボタンが押されている間の頼みだけ。`serial` が、いま押されている
+/// ボタンのものでなければ、何もしない。
+pub fn client_move_request<D>(state: &mut D, toplevel: &ToplevelSurface, serial: Serial)
+where
+    D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
+{
+    let frontend = state.frontend_mut();
+    let Some(pointer) = frontend.pointer.clone() else {
+        return;
+    };
+    // 押されているボタンが、このウィンドウの上で押されたものか。押した点も、ここで分かる。
+    let press = pointer
+        .grab_start_data()
+        .filter(|_| pointer.has_grab(serial))
+        .filter(|start| {
+            start.focus.as_ref().is_some_and(|(surface, _)| {
+                surface.id().same_client_as(&toplevel.wl_surface().id())
+            })
+        })
+        .map(|start| start.location);
+    let window = frontend
+        .windows
+        .iter()
+        .find(|window| window.item.wl_surface() == toplevel.wl_surface())
+        .map(|window| window.id);
+    let (Some(press), Some(window)) = (press, window) else {
+        return;
+    };
+    let screen = frontend.size;
+    if !frontend.interaction.begin_client_move(
+        &mut frontend.windows,
+        screen,
+        window,
+        press,
+        window_size,
+    ) {
+        return;
+    }
+    state.redraw_needed();
+    // ここから先、ボタンを離すまでのポインターの知らせは、Seinasが使う。クライアントからは外す。
+    let location = pointer.current_location();
+    pointer.unset_grab(state, serial, 0);
+    pointer.motion(
+        state,
+        None,
+        &MotionEvent {
+            location,
+            serial: SERIAL_COUNTER.next_serial(),
+            time: 0,
+        },
+    );
+    pointer.frame(state);
 }
 
 /// ウィンドウの中身(クライアントが描く所)の大きさ。まだ絵を出していなければNone。
@@ -407,6 +574,14 @@ macro_rules! delegate_frontend {
                 // 前に手前だったウィンドウの帯の色が変わる。
                 $crate::FrontendHost::redraw_needed(self);
             }
+            fn move_request(
+                &mut self,
+                surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface,
+                _seat: $crate::smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
+                serial: $crate::smithay::utils::Serial,
+            ) {
+                $crate::client_move_request(self, &surface, serial);
+            }
             fn title_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::redraw_needed(self);
             }
@@ -494,7 +669,11 @@ macro_rules! delegate_frontend {
                 };
 
                 let compositor_state = CompositorState::new::<Self>(display_handle);
-                let xdg_shell_state = XdgShellState::new::<Self>(display_handle);
+                // 最大化・最小化・全画面は、できない。できることの一覧を空にして、クライアントに伝える。
+                let xdg_shell_state = XdgShellState::new_with_capabilities::<Self>(
+                    display_handle,
+                    [] as [$crate::smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::WmCapabilities; 0],
+                );
                 let xdg_decoration_state = XdgDecorationState::new::<Self>(display_handle);
                 let shm_state = ShmState::new::<Self>(display_handle, vec![]);
                 let mut seat_state = SeatState::new();
@@ -521,6 +700,7 @@ macro_rules! delegate_frontend {
                     windows: $crate::Stack::default(),
                     text: $crate::load_fonts(&config.font_dir),
                     title_bars: Default::default(),
+                    interaction: Default::default(),
                 }
             }
         }

@@ -16,7 +16,7 @@ pub fn slot_count(screen: Size<i32, Logical>) -> usize {
 /// 新しいウィンドウの置き場所の番号を決める。
 ///
 /// 空いている中で、いちばん小さい番号を選ぶ。全部ふさがっていれば、先頭の番号から順に、もう一度使う
-/// (同じ位置に重なる)。`occupied` は、いまあるウィンドウの番号。
+/// (同じ位置に重なる)。`occupied` は、いまあるウィンドウの番号(動かされて番号を手放したものは入れない)。
 pub fn next_slot(occupied: &[usize], slots: usize) -> usize {
     (0..slots)
         .find(|slot| !occupied.contains(slot))
@@ -29,11 +29,17 @@ pub fn slot_location(slot: usize) -> Point<i32, Logical> {
     (offset, offset).into()
 }
 
+/// 並びの中のウィンドウを見分ける番号。ウィンドウが去るまで変わらず、使い回さない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WindowId(u64);
+
 /// 置き場所の決まった、1つのウィンドウ。
 pub struct Placed<T> {
     pub item: T,
-    /// 置き場所の番号。0が左上で、1つ増えるごとに右下へずれる。
-    pub slot: usize,
+    pub id: WindowId,
+    /// 置き場所の番号。0が左上で、1つ増えるごとに右下へずれる。動かされたウィンドウは、番号を
+    /// 手放してNoneになる(その番号は、次の新しいウィンドウが使える)。
+    pub slot: Option<usize>,
     /// 画面の中での、左上の位置。
     pub location: Point<i32, Logical>,
 }
@@ -43,12 +49,15 @@ pub struct Placed<T> {
 /// いちばん手前の1つだけが「選ばれている(activated)」ウィンドウである。
 pub struct Stack<T> {
     entries: Vec<Placed<T>>,
+    /// 次に加えるウィンドウに付ける番号。
+    next_id: u64,
 }
 
 impl<T> Default for Stack<T> {
     fn default() -> Self {
         Stack {
             entries: Vec::new(),
+            next_id: 0,
         }
     }
 }
@@ -76,17 +85,46 @@ impl<T> Stack<T> {
     }
 
     /// 新しいウィンドウを、いちばん手前に加える。置き場所は、前のものからずらして決める。
-    pub fn add(&mut self, item: T, screen: Size<i32, Logical>) {
-        let occupied: Vec<usize> = self.entries.iter().map(|entry| entry.slot).collect();
+    pub fn add(&mut self, item: T, screen: Size<i32, Logical>) -> WindowId {
+        let occupied: Vec<usize> = self.entries.iter().filter_map(|entry| entry.slot).collect();
         let slot = next_slot(&occupied, slot_count(screen));
+        let id = WindowId(self.next_id);
+        self.next_id += 1;
         self.entries.insert(
             0,
             Placed {
                 item,
-                slot,
+                id,
+                slot: Some(slot),
                 location: slot_location(slot),
             },
         );
+        id
+    }
+
+    /// 番号が `id` のウィンドウ。もう去っていればNone。
+    pub fn get(&self, id: WindowId) -> Option<&Placed<T>> {
+        self.entries.iter().find(|entry| entry.id == id)
+    }
+
+    /// 番号が `id` のウィンドウが、手前から何番目か。
+    pub fn position(&self, id: WindowId) -> Option<usize> {
+        self.entries.iter().position(|entry| entry.id == id)
+    }
+
+    /// 番号が `id` のウィンドウを、左上が `location` に来るように動かす。位置が変わったらtrue。
+    ///
+    /// 動かしたウィンドウは、置き場所の番号を手放す。重なる順は変えない。
+    pub fn move_to(&mut self, id: WindowId, location: Point<i32, Logical>) -> bool {
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
+            return false;
+        };
+        if entry.location == location {
+            return false;
+        }
+        entry.location = location;
+        entry.slot = None;
+        true
     }
 
     /// `is_gone` が真を返すウィンドウを、並びから外す。残ったものの順と置き場所は変わらない。
@@ -160,7 +198,7 @@ mod tests {
     }
 
     /// 名前と置き場所の番号・位置。名前の順に並べる(重ねる順とは別に、置き場所だけを比べるため)。
-    fn places(stack: &Stack<&'static str>) -> Vec<(&'static str, usize, (i32, i32))> {
+    fn places(stack: &Stack<&'static str>) -> Vec<(&'static str, Option<usize>, (i32, i32))> {
         let mut places: Vec<_> = stack
             .iter()
             .map(|entry| (entry.item, entry.slot, (entry.location.x, entry.location.y)))
@@ -229,7 +267,11 @@ mod tests {
         assert_eq!(order(&stack), ["c", "b", "a"]);
         assert_eq!(
             places(&stack),
-            [("a", 0, (0, 0)), ("b", 1, (32, 32)), ("c", 2, (64, 64))]
+            [
+                ("a", Some(0), (0, 0)),
+                ("b", Some(1), (32, 32)),
+                ("c", Some(2), (64, 64))
+            ]
         );
     }
 
@@ -302,8 +344,59 @@ mod tests {
         assert_eq!(order(&stack), ["d", "a", "c"]);
         assert_eq!(
             places(&stack),
-            [("a", 0, (0, 0)), ("c", 2, (64, 64)), ("d", 1, (32, 32))]
+            [
+                ("a", Some(0), (0, 0)),
+                ("c", Some(2), (64, 64)),
+                ("d", Some(1), (32, 32))
+            ]
         );
+    }
+
+    #[test]
+    fn a_moved_window_gives_up_its_slot_and_keeps_its_position() {
+        let mut stack: Stack<&'static str> = Stack::default();
+        let a = stack.add("a", SCREEN.into());
+        let b = stack.add("b", SCREEN.into());
+        stack.add("c", SCREEN.into());
+
+        // 奥のaを動かす: 位置が変わり、番号を手放す。重なる順は変わらない。
+        assert!(stack.move_to(a, (300, 200).into()));
+        assert_eq!(order(&stack), ["c", "b", "a"]);
+        assert_eq!(
+            places(&stack),
+            [
+                ("a", None, (300, 200)),
+                ("b", Some(1), (32, 32)),
+                ("c", Some(2), (64, 64))
+            ]
+        );
+        // 同じ位置へ「動かして」も、何も変わらない。
+        assert!(!stack.move_to(a, (300, 200).into()));
+        assert!(!stack.move_to(b, (32, 32).into()));
+        assert_eq!(stack.get(b).unwrap().slot, Some(1));
+
+        // 次の新しいウィンドウは、aが手放した番号0(左上)に入る。aは、動かした先に残る。
+        stack.add("d", SCREEN.into());
+        assert_eq!(order(&stack), ["d", "c", "b", "a"]);
+        assert_eq!(
+            places(&stack),
+            [
+                ("a", None, (300, 200)),
+                ("b", Some(1), (32, 32)),
+                ("c", Some(2), (64, 64)),
+                ("d", Some(0), (0, 0))
+            ]
+        );
+
+        // 当たり判定は、動かした先で行われる。
+        assert_eq!(stack.index_at(at(600.0, 430.0), size), stack.position(a));
+
+        // 去ったウィンドウは、動かせない。番号は、使い回さない。
+        stack.remove(|name| *name == "a");
+        assert!(!stack.move_to(a, (0, 0).into()));
+        assert!(stack.get(a).is_none());
+        let e = stack.add("e", SCREEN.into());
+        assert_ne!(e, a);
     }
 
     #[test]
