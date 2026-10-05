@@ -22,6 +22,13 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。
+      # キャッシュから戻したファイルも、次の手順がSHA-256を確かめ、合わなければ取り直す。
+      - name: フォントのキャッシュ
+        uses: actions/cache@v6
+        with:
+          path: target/fonts
+          key: fonts-${{ hashFiles('tools/fetch-fonts.sh') }}
       - name: フォントを取得する(題名を描くテストが使う)
         run: tools/fetch-fonts.sh
       - name: ビルド(テストが使う実行ファイルを先に作る)
@@ -57,6 +64,13 @@ jobs:
         run: tools/build-musl.sh
       - name: ELFの記録
         run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
+      # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。
+      # キャッシュから戻したファイルも、次の手順がSHA-256を確かめ、合わなければ取り直す。
+      - name: フォントのキャッシュ
+        uses: actions/cache@v6
+        with:
+          path: target/fonts
+          key: fonts-${{ hashFiles('tools/fetch-fonts.sh') }}
       - name: フォントを取得する(題名を描くテストが使う)
         run: tools/fetch-fonts.sh
       - name: musl向けのテスト
