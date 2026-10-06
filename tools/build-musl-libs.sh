@@ -50,6 +50,10 @@ system = 'linux'
 cpu_family = 'x86_64'
 cpu = 'x86_64'
 endian = 'little'
+
+[built-in options]
+# ライブラリに、作った環境の道の名前(__FILE__ など)が入らないようにする。
+c_args = ['-ffile-prefix-map=$work=/build', '-ffile-prefix-map=$root=/seinas']
 CROSS
 
 # 共通の設定。静的ライブラリだけを作る。静的PIEにリンクできるよう、位置独立のコードにする。
