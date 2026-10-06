@@ -64,10 +64,12 @@ Rustクレートのほかに、次のCのライブラリをリンクします。
 | ライブラリ | 版 | ライセンス | 使われ方 | ライセンス文 |
 | --- | --- | --- | --- | --- |
 | pixman(libpixman-1) | 0.42.2 | MIT | 画素の合成 | `c-libraries/pixman-0.42.2/COPYING` |
-| libxkbcommon | 1.6.0 | MIT(X11系の表示を含む) | キーボードの配列(Smithayが必ずリンクする) | `c-libraries/libxkbcommon-1.6.0/LICENSE` |
+| libxkbcommon | 1.6.0 | MIT(X11系の表示を含む) | キーボードの配列。Smithayがリンクの指定を付けるが、使わない実行ファイルには入らない(seinasとseinas-standaloneには入る。seinas-fbdevには入らない) | `c-libraries/libxkbcommon-1.6.0/LICENSE` |
 | musl | 1.2.5 | MIT | Cの標準ライブラリ(Rustのmusl向けターゲットに同梱のもの) | `c-libraries/musl-1.2.5/COPYRIGHT` |
 
 版は、musl向けの静的ビルド(`tools/build-musl.sh`)で実行ファイルに入るものです。
+リンクの指定があっても、使われないライブラリは、リンカーが落とすので実行ファイルに入りません。実際に入っているかは、実行ファイルのシンボル(`nm` で `xkb_` や `pixman_` で始まる関数があるか)で分かります。
+1つの実行ファイルに入っているものだけを集めるには、`tools/release-notices.py` を使います。
 pixmanとlibxkbcommonのライセンス文は、ビルドに使うソース(`tools/build-musl-libs.sh` が取る版)に入っているファイルと同じものです。
 muslのライセンス文は、musl 1.2.5のソースの `COPYRIGHT` です。
 
