@@ -63,7 +63,10 @@ jobs:
       - name: 静的ビルド(Cのライブラリもソースから作る)
         run: tools/build-musl.sh
       - name: ELFの記録
-        run: tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
+        run: |
+          tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
+          # 手元で作ったものと同じバイトになるかを比べられるよう、SHA-256を出しておく。
+          sha256sum target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min
       # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。
       # キャッシュから戻したファイルも、次の手順がSHA-256を確かめ、合わなければ取り直す。
       - name: フォントのキャッシュ
