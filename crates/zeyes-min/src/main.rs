@@ -8,7 +8,7 @@
 //!
 //! ウィンドウの題名は「zeyes」。引数 `--title TEXT` で変えられる。
 
-use std::{error::Error, process::ExitCode, time::Duration};
+use std::{error::Error, process::ExitCode};
 
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
@@ -432,9 +432,11 @@ fn run() -> Result<(), Box<dyn Error>> {
         dirty: false,
         exit: false,
     };
+    // 描画は、configure・ポインターのイベント・frame callback をきっかけに行うので、時間で起きる理由は無い。
+    // 何かが届くまで、timeout なしで待つ(何も起きていない間は、CPU を使わない)。
     while !state.exit {
         event_loop
-            .dispatch(Duration::from_millis(16), &mut state)
+            .dispatch(None, &mut state)
             .map_err(|e| format!("the connection to the compositor was lost: {e}"))?;
     }
     Ok(())

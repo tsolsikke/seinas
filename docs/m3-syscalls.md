@@ -210,7 +210,8 @@ ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall
 
 「Linux のプログラムをそのまま動かす」方針に合わせて、Linux の上でも良くなるものだけを挙げます。
 
-- zeyes-min の待ち方:16 ms の timeout つきで待つのを繰り返していて、何も起きていなくても 1 秒に約 60 回起きていました(timerfd_settime・epoll_ctl・epoll_pwait・futex・read が、それぞれ約 150 回)。待つ理由が無いときは timeout なしで待つようにすれば、Linux でも無駄が減り、ZeikOS では timerfd と epoll を呼ぶ回数が大きく減ります。
+- zeyes-min の待ち方:16 ms の timeout つきで待つのを繰り返していて、何も起きていなくても 1 秒に約 60 回起きていました(timerfd_settime・epoll_ctl・epoll_pwait・futex・read が、それぞれ約 150 回)。
+  2026-10-08 に、timeout なしで待つ形に変えました。何も起きていない 5 秒間のシステムコールは、1,812 回(epoll_ctl 604、read・futex・timerfd_settime・epoll_pwait が 302 ずつ)から 0 回になりました。上の表の zeyes-min の数は、変える前のものです。
 - shm の後始末のスレッド:Smithay 0.7.0 の作りで、Seinas の側からは止められません。スレッドを使わない構成にするには、Smithay を変えるか、別のバージョンを選ぶ必要があり、ZeikOS のための作りになるので勧めません。ZeikOS の側でスレッドに対応するのが筋だと考えます。
 - epoll の入れ子、ロックファイルと flock:wayland-server と Smithay の作りです。Seinas の側で避けるには特別な作りが要るので、勧めません。
 - フォント:置かなくても動くので、M3 の最初はフォントなしで始められます(変更は要りません)。
