@@ -5,6 +5,7 @@ exclude = ["trials"]
 members = [
     "crates/seinas-render",
     "crates/seinas-text",
+    "crates/seinas-golden",
     "crates/seinas-frontend",
     "crates/seinas",
     "crates/seinas-fbdev",

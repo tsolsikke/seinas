@@ -1,0 +1,12 @@
+[package]
+name = "seinas-golden"
+description = "Seinasの正解データ(golden)のテストの部品。出力を保存したものと比べ、作り直しもできる。テストだけで使う。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# フォントのファイルが fetch-fonts.sh の版と同じかを、SHA-256 で確かめるのに使う。
+sha2 = "0.10"

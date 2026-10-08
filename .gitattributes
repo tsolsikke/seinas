@@ -1,0 +1,4 @@
+# 正解データ(golden)は、バイナリとして扱う(改行の変換と、テキストの diff をしない)。
+crates/*/tests/golden/*.ppm binary
+crates/*/tests/golden/*.pgm binary
+crates/*/tests/golden/*.bin binary

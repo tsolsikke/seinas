@@ -25,6 +25,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/release.md` | seinas-fbdevをGitHubのreleaseとして配る手順 |
 | `docs/m3-syscalls.md` | ZeikOS の M3 の準備として、seinas-standalone と zeyes-min を strace した記録 |
 | `docs/adr/0001-replaceable-boundaries.md` | ADR: 外部ライブラリを、後で置き換えられる境界で使う決まりと、今の境界の棚卸し |
+| `docs/golden.md` | 正解データ(golden)のテスト:置き換える前の出力を保存して比べる決まりと、作り直しの手順 |
 | `docs/terminology.md` | 用語と書き方の決まり(IT 用語の使い方と、これまでの言い方との対応表) |
 | `docs/text-rendering.md` | 文字の描き方の決まり(手段、フォント、大きさ)と、手段を比べた記録 |
 | `tools/` | 静的ビルドや、依存の一覧を作るための道具、フォントを取得する手順、releaseの一式を作る手順 |

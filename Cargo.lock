@@ -627,6 +627,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "seinas-golden"
+version = "0.1.0"
+dependencies = [
+ "sha2",
+]
+
+[[package]]
 name = "seinas-render"
 version = "0.1.0"
 dependencies = [
