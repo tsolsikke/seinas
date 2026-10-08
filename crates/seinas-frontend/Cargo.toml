@@ -12,3 +12,11 @@ publish.workspace = true
 smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
 seinas-text = { path = "../seinas-text" }
 tracing = { workspace = true }
+
+[dev-dependencies]
+seinas-golden = { path = "../seinas-golden" }
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden"
+harness = false

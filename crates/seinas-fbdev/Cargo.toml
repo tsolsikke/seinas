@@ -11,3 +11,11 @@ publish.workspace = true
 # Waylandの受け口は使わない。依存は、共通の描画と、OSの呼び出しのためのlibcだけにする。
 seinas-render = { path = "../seinas-render" }
 libc = { workspace = true }
+
+[dev-dependencies]
+seinas-golden = { path = "../seinas-golden" }
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden"
+harness = false

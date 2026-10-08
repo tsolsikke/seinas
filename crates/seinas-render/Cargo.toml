@@ -14,9 +14,15 @@ pixman = { workspace = true }
 
 [dev-dependencies]
 libc = { workspace = true }
+seinas-golden = { path = "../seinas-golden" }
 
 # 共通の描画だけで動かしたときの、スレッドとシグナルの様子を確かめる。
 # スレッドの数を数えるので、テストハーネス(スレッドを作る)は使わない。
 [[test]]
 name = "render_only"
+harness = false
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden"
 harness = false

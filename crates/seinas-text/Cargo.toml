@@ -12,3 +12,11 @@ publish.workspace = true
 cosmic-text = { workspace = true }
 # 控えのフォントの決め方(cosmic-textのFallback)を実装するのに、文字の種類の型が要る。cosmic-textと同じ版を使う。
 unicode-script = "0.5"
+
+[dev-dependencies]
+seinas-golden = { path = "../seinas-golden" }
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden"
+harness = false

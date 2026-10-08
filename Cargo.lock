@@ -614,6 +614,7 @@ name = "seinas-fbdev"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "seinas-golden",
  "seinas-render",
 ]
 
@@ -621,6 +622,7 @@ dependencies = [
 name = "seinas-frontend"
 version = "0.1.0"
 dependencies = [
+ "seinas-golden",
  "seinas-text",
  "smithay",
  "tracing",
@@ -639,6 +641,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "pixman",
+ "seinas-golden",
  "smithay",
 ]
 
@@ -666,6 +669,7 @@ name = "seinas-text"
 version = "0.1.0"
 dependencies = [
  "cosmic-text",
+ "seinas-golden",
  "unicode-script",
 ]
 

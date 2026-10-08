@@ -13,7 +13,7 @@ ADR 0001(`docs/adr/0001-replaceable-boundaries.md`)の決定 4 の実装です�
 | C. タイトルバー | `seinas-frontend` | activated とそうでないもの × close ボタンの hover の有無、長いタイトルの切り詰め、フォントなし、close ボタンより狭い幅。7 ケース | PPM |
 | D. fbdev の blit | `seinas-fbdev` | XRGB、ARGB、XBGR、RGBX、オフセットと行の余白つき。5 ケース | raw(バッファのバイト列) |
 
-正解データは、各 crate の `tests/golden/` にあります。テストは `tests/golden.rs`(`harness = false`)で、ふだんの `cargo test` で動きます。
+正解データは、各 crate の `tests/golden/` にあります(説明は `crates/seinas-text/tests/golden/README.md`)。テストは `tests/golden.rs`(`harness = false`)で、ふだんの `cargo test` で動きます。
 入力はテストのコードに書いてあり、保存するのは出力だけです。
 比べる部品は `crates/seinas-golden` にあります(テストだけで使う crate で、バイナリには入りません)。
 

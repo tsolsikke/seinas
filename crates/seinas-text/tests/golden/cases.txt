@@ -1,0 +1,13 @@
+# case width truncated fallback_glyphs missing_glyphs
+b-ascii-13px 249 false 0 0
+b-kana-13px 111 false 0 0
+b-kanji-13px 109 false 0 0
+b-fallback-13px 59 false 1 1
+b-ascii-14px 268 false 0 0
+b-kana-14px 120 false 0 0
+b-kanji-14px 117 false 0 0
+b-fallback-14px 64 false 1 1
+b-ascii-16px 306 false 0 0
+b-kana-16px 137 false 0 0
+b-kanji-16px 134 false 0 0
+b-fallback-16px 73 false 1 1
