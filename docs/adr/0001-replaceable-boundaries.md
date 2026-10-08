@@ -35,11 +35,11 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 
 ### 3. 土台の決まり
 
-- 土台を使ってよいのは、`seinas-frontend` と、バイナリ(`seinas`、`seinas-standalone` などの `main.rs`。組み立てる場所、composition root)だけにする。
+- 土台を使ってよいのは、`seinas-frontend` と、バイナリ(`seinas`、`seinas-standalone` などの `main.rs`。組み立てる場所、composition root)、それに描画(`seinas-render`)の内部だけにする。
 - `seinas-frontend` は、土台の型を公開 API に出してよい(バイナリが使うため)。`pub use smithay` も、その範囲で認める。
 - バイナリは、イベントループと Wayland の display を直接持ってよい。ただし、ウィンドウ管理の決まりをバイナリに書かない。
+- 描画(`seinas-render`)は、Smithay のレンダラーの仕組み(`Renderer`・`Frame`・`RenderElement` など)を内部で使ってよい。ただし、公開 API には Smithay と pixman の型を出さず、境界には Seinas の型を置く。置き換えやすさは、公開 API が Seinas の型であることで保つ。レンダラーの仕組みを差し替える場合(GPU で描画する構成を Smithay の `GlesRenderer` で足す場合を含む)も、影響は `seinas-render` の中に閉じる。
 - 次のものは、土台に依存しない:
-  - 描画(`seinas-render`)
   - テキスト描画(`seinas-text`)
   - ウィンドウ管理の決まり(`seinas-frontend` の中の、スタック・ポインターの操作・タイトルバーの計算。`stack.rs`、`interaction.rs`、`decoration.rs` の計算の部分)
   - バックエンド(`seinas-fbdev`)
@@ -65,7 +65,7 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 
 | 層 | 種類 | 境界 | 外部ライブラリ | 今の状態 | 今ある違反 |
 | --- | --- | --- | --- | --- | --- |
-| 描画の合成 | 部品 | `seinas-render`(要素を重ねて 1 枚にする) | pixman(Smithay の `PixmanRenderer` 経由) | 合成の手順を、Smithay の `Renderer`・`Frame`・`RenderElement` で書いている | あり(違反 1〜4) |
+| 描画の合成 | 部品 | `seinas-render`(要素を重ねて 1 枚にする) | pixman(Smithay の `PixmanRenderer` 経由) | 合成の手順を、Smithay の `Renderer`・`Frame`・`RenderElement` で書いている(内部で使うことは、決定 3 で認める範囲) | あり(違反 1・2・4) |
 | テキスト描画 | 部品 | `seinas-text` | cosmic-text、swash | 公開 API は Seinas の型と標準ライブラリの型だけ(`Canvas`、`Line`、`Drawn`、`FontFiles`、`FontProblem`、`TextPainter`) | なし |
 | フォントの一覧と選択 | 部品 | (まだ無い。`seinas-text` の中) | fontdb | `seinas-text` の外には出ていない。ただし、読み込み・名前での選択・fallback の順が、シェーピングと描画と同じ `TextPainter` の中に混ざっていて、層としての境界が無い | なし(境界を作るのは、フォントの設計のときに行う) |
 | キーボード | 部品 | (まだ無い) | xkbcommon(Smithay がリンクする) | Seinas のコードは使っていない。キーボードの入力を作るときに、境界を作る | なし |
@@ -80,12 +80,12 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 | --- | --- | --- | --- |
 | 1 | `seinas-render` の `Painter::renderer()`、`Painter::paint` の bound、`RenderError::Pixman` | 公開 API に `PixmanRenderer`・`RenderElement<PixmanRenderer>`・`PixmanError` が出ている | 決定 2 |
 | 2 | `seinas-render` の `BACKGROUND`、`SolidRect`、`solid_rect` | 公開 API に Smithay の `Color32F`・`SolidColorRenderElement` が出ている | 決定 3 |
-| 3 | `seinas-render` の全体 | 合成の手順が Smithay の renderer の仕組み(`Renderer`・`Frame`・`RenderElement`)に依存している | 決定 3 |
+| 3 | (取り下げ) | `seinas-render` が内部で Smithay のレンダラーの仕組みを使うことは、決定 3 で認めた。違反になるのは、それが公開 API に出ている所だけで、違反 1・2 に含まれる | ― |
 | 4 | `seinas-frontend` の `WindowElement`、`Frontend::render_elements`、`TitleBar::element` | 公開 API に `PixmanRenderer` が出ている | 決定 2 |
 | 5 | `seinas-frontend` の `stack.rs`・`interaction.rs`・`decoration.rs` の計算 | Smithay の幾何の型(`Point`、`Size`、`Rectangle`、`Logical`)を使っている。後で Seinas の型に替える | 決定 3 |
 | 6 | `seinas-fbdev` の `test_picture` | 戻り値が `Vec<SolidRect>`(Smithay の型) | 決定 3 |
 
-違反 1〜4 と 6 は、描画の境界を Seinas の型にするときに、まとめて直る見込みである(GPU で描画する構成を足すときにも、同じ所を直す)。
+違反 1・2・4・6 は、描画の境界を Seinas の型にするときに、まとめて直る見込みである(GPU で描画する構成を足すときにも、同じ所を直す)。
 
 ## 依存の重複(様子見)
 
@@ -102,3 +102,7 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 - 境界に Seinas の型を置くぶん、変換のコードが少し増える。
 - 正解のデータを保存するぶん、リポジトリが少し大きくなる(PPM の小さな画像や、ハッシュ)。
 - 今ある違反は、すぐには直さない。順に直す。新しく書くコードは、この決まりに従う。
+
+## 改訂
+
+- 2026-10-08: `seinas-render` が内部で Smithay のレンダラーの仕組みを使うことを認め(公開 API は Seinas の型のまま)、違反 3 を取り下げた。
