@@ -23,6 +23,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/fbdev.md` | fbdevの裏側の構成、動かし方、確かめ方 |
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
 | `docs/release.md` | seinas-fbdevをGitHubのreleaseとして配る手順 |
+| `docs/terminology.md` | 用語と書き方の決まり(IT 用語の使い方と、これまでの言い方との対応表) |
 | `docs/text-rendering.md` | 文字の描き方の決まり(手段、フォント、大きさ)と、手段を比べた記録 |
 | `tools/` | 静的ビルドや、依存の一覧を作るための道具、フォントを取得する手順、releaseの一式を作る手順 |
 | `trials/` | 採るかどうかを決める前の試し。本体のワークスペースには入れていない |
