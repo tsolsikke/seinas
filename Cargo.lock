@@ -599,7 +599,6 @@ dependencies = [
 name = "seinas"
 version = "0.1.0"
 dependencies = [
- "calloop",
  "libc",
  "seinas-frontend",
  "seinas-render",

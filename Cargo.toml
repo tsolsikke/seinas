@@ -24,7 +24,6 @@ publish = false
 [workspace.dependencies]
 smithay = { version = "=0.7.0", default-features = false }
 smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop"] }
-calloop = "0.14"
 pixman = "0.2"
 wayland-client = "0.31"
 tracing = "0.1"

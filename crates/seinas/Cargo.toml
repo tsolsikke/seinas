@@ -12,7 +12,6 @@ seinas-render = { path = "../seinas-render" }
 seinas-frontend = { path = "../seinas-frontend" }
 smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
 smithay-client-toolkit = { workspace = true }
-calloop = { workspace = true }
 wayland-client = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
