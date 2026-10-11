@@ -432,6 +432,31 @@ impl Compositor {
         fs::read_to_string(self.dir.join("taskbar.log")).unwrap_or_default()
     }
 
+    /// 壁紙(seinas-wallpaper)を、シェルの部品のためのソケットへつなぐ。設定のファイルは
+    /// [`Compositor::config_dir`] の下の `seinas/wallpaper.conf`(無ければ、色だけ)。
+    pub fn connect_wallpaper(&self) -> Running {
+        let log =
+            fs::File::create(self.dir.join("wallpaper.log")).expect("create the wallpaper log");
+        Running(
+            Command::new(workspace_bin("seinas-wallpaper", "seinas-wallpaper"))
+                .env("WAYLAND_DISPLAY", self.shell_socket())
+                .env("XDG_CONFIG_HOME", &self.dir)
+                .stderr(log)
+                .spawn()
+                .expect("start seinas-wallpaper"),
+        )
+    }
+
+    /// これまでに壁紙が標準エラーへ書いたもの。
+    pub fn wallpaper_log(&self) -> String {
+        fs::read_to_string(self.dir.join("wallpaper.log")).unwrap_or_default()
+    }
+
+    /// シェルの部品とコンポジタが見る `XDG_CONFIG_HOME`(テストごとの作業用の場所)。
+    pub fn config_dir(&self) -> &Path {
+        &self.dir
+    }
+
     /// シェルの部品のためのソケット(ふだんのソケットのパスに `-shell` を付けたもの)。
     pub fn shell_socket(&self) -> PathBuf {
         let mut name = self.socket.as_os_str().to_owned();

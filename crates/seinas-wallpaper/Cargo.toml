@@ -1,0 +1,24 @@
+[package]
+name = "seinas-wallpaper"
+description = "Seinasの壁紙。コンポジタとは別のプログラム(layer-shellのクライアント)で、background の層に色か画像(PNG)を出す。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+smithay-client-toolkit = { workspace = true }
+wayland-client = { workspace = true }
+# 設定のファイル(wallpaper.conf)の読み方。フォントの設定と同じもの。
+seinas-config = { path = "../seinas-config" }
+# PNG を読む。純 Rust(zlib などの C のライブラリを使わない)。
+png = "=0.18.1"
+
+[dev-dependencies]
+seinas-golden = { path = "../seinas-golden" }
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden"
+harness = false

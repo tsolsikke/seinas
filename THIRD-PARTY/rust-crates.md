@@ -2,10 +2,11 @@
 
 `tools/third-party.py` が作るファイルです。手では直さないでください。
 
-Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。実行ファイルに入るものが95個、ビルドのときだけ使うものが20個です。
+Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。実行ファイルに入るものが104個、ビルドのときだけ使うものが20個です。
 
 | クレート | 版 | ライセンス | 使われ方 | ライセンス文 |
 | --- | --- | --- | --- | --- |
+| adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/adler2-2.0.1/](licenses/adler2-2.0.1/) |
 | appendlist | 1.4.0 | MIT | 実行ファイルに入る | [licenses/appendlist-1.4.0/](licenses/appendlist-1.4.0/) |
 | approx | 0.4.0 | Apache-2.0 | 実行ファイルに入る | [licenses/approx-0.4.0/](licenses/approx-0.4.0/) |
 | atomic_float | 1.1.0 | Apache-2.0 OR MIT OR Unlicense | 実行ファイルに入る | [licenses/atomic_float-1.1.0/](licenses/atomic_float-1.1.0/) |
@@ -22,6 +23,7 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | core_maths | 0.1.1 | MIT | 実行ファイルに入る | [licenses/core_maths-0.1.1/](licenses/core_maths-0.1.1/) |
 | cosmic-text | 0.19.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/cosmic-text-0.19.0/](licenses/cosmic-text-0.19.0/) |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/cpufeatures-0.2.17/](licenses/cpufeatures-0.2.17/) |
+| crc32fast | 1.5.2 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/crc32fast-1.5.2/](licenses/crc32fast-1.5.2/) |
 | crypto-common | 0.1.7 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/crypto-common-0.1.7/](licenses/crypto-common-0.1.7/) |
 | cursor-icon | 1.2.0 | MIT OR Apache-2.0 OR Zlib | 実行ファイルに入る | [licenses/cursor-icon-1.2.0/](licenses/cursor-icon-1.2.0/) |
 | digest | 0.10.7 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/digest-0.10.7/](licenses/digest-0.10.7/) |
@@ -30,7 +32,9 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | equivalent | 1.0.2 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/equivalent-1.0.2/](licenses/equivalent-1.0.2/) |
 | errno | 0.3.14 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/errno-0.3.14/](licenses/errno-0.3.14/) |
 | fastrand | 2.5.0 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/fastrand-2.5.0/](licenses/fastrand-2.5.0/) |
+| fdeflate | 0.3.7 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/fdeflate-0.3.7/](licenses/fdeflate-0.3.7/) |
 | find-msvc-tools | 0.1.14 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/find-msvc-tools-0.1.14/](licenses/find-msvc-tools-0.1.14/) |
+| flate2 | 1.1.10 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/flate2-1.1.10/](licenses/flate2-1.1.10/) |
 | font-types | 0.11.3 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/font-types-0.11.3/](licenses/font-types-0.11.3/) |
 | font-types | 0.12.6 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/font-types-0.12.6/](licenses/font-types-0.12.6/) |
 | fontdb | 0.23.0 | MIT | 実行ファイルに入る | [licenses/fontdb-0.23.0/](licenses/fontdb-0.23.0/) |
@@ -48,6 +52,8 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | log | 0.4.34 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/log-0.4.34/](licenses/log-0.4.34/) |
 | memchr | 2.8.3 | Unlicense OR MIT | ビルドのときだけ | [licenses/memchr-2.8.3/](licenses/memchr-2.8.3/) |
 | memmap2 | 0.9.11 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/memmap2-0.9.11/](licenses/memmap2-0.9.11/) |
+| miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | 実行ファイルに入る | [licenses/miniz_oxide-0.8.9/](licenses/miniz_oxide-0.8.9/) |
+| miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | 実行ファイルに入る | [licenses/miniz_oxide-0.9.1/](licenses/miniz_oxide-0.9.1/) |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/num-traits-0.2.19/](licenses/num-traits-0.2.19/) |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/once_cell-1.21.4/](licenses/once_cell-1.21.4/) |
 | paste | 1.0.15 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/paste-1.0.15/](licenses/paste-1.0.15/) |
@@ -55,6 +61,7 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | pixman | 0.2.1 | MIT | 実行ファイルに入る | 配布物に入っていない |
 | pixman-sys | 0.1.0 | MIT | 実行ファイルに入る | 配布物に入っていない |
 | pkg-config | 0.3.34 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/pkg-config-0.3.34/](licenses/pkg-config-0.3.34/) |
+| png | 0.18.1 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/png-0.18.1/](licenses/png-0.18.1/) |
 | polling | 3.11.0 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/polling-3.11.0/](licenses/polling-3.11.0/) |
 | ppv-lite86 | 0.2.21 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/ppv-lite86-0.2.21/](licenses/ppv-lite86-0.2.21/) |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/proc-macro2-1.0.107/](licenses/proc-macro2-1.0.107/) |
@@ -74,6 +81,7 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | sha2 | 0.10.9 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/sha2-0.10.9/](licenses/sha2-0.10.9/) |
 | sharded-slab | 0.1.7 | MIT | 実行ファイルに入る | [licenses/sharded-slab-0.1.7/](licenses/sharded-slab-0.1.7/) |
 | shlex | 2.0.1 | MIT OR Apache-2.0 | ビルドのときだけ | [licenses/shlex-2.0.1/](licenses/shlex-2.0.1/) |
+| simd-adler32 | 0.3.10 | MIT | 実行ファイルに入る | [licenses/simd-adler32-0.3.10/](licenses/simd-adler32-0.3.10/) |
 | skrifa | 0.40.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/skrifa-0.40.0/](licenses/skrifa-0.40.0/) |
 | skrifa | 0.44.0 | MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/skrifa-0.44.0/](licenses/skrifa-0.44.0/) |
 | slotmap | 1.1.1 | Zlib | 実行ファイルに入る | [licenses/slotmap-1.1.1/](licenses/slotmap-1.1.1/) |
@@ -121,3 +129,4 @@ Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使う�
 | yazi | 0.2.1 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/yazi-0.2.1/](licenses/yazi-0.2.1/) |
 | zeno | 0.3.3 | Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/zeno-0.3.3/](licenses/zeno-0.3.3/) |
 | zerocopy | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | 実行ファイルに入る | [licenses/zerocopy-0.8.59/](licenses/zerocopy-0.8.59/) |
+| zlib-rs | 0.6.8 | Zlib | 実行ファイルに入る | [licenses/zlib-rs-0.6.8/](licenses/zlib-rs-0.6.8/) |

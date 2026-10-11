@@ -50,6 +50,11 @@ jobs:
         run: |
           tools/check-deps.sh seinas-fbdev seinas-text cosmic-text swash fontdb
           tools/check-deps.sh seinas-render seinas-text cosmic-text swash fontdb
+      - name: PNG を読むクレートが、壁紙のほかに入っていないこと
+        run: |
+          tools/check-deps.sh seinas-standalone png
+          tools/check-deps.sh seinas png
+          tools/check-deps.sh seinas-taskbar png
       - name: 依存の一覧とライセンス文が最新か
         run: python3 tools/third-party.py --check
 
@@ -75,14 +80,14 @@ jobs:
         run: tools/build-musl.sh
       - name: ELFの記録
         run: |
-          tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-taskbar target/x86_64-unknown-linux-musl/release/zeyes-min
+          tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-taskbar target/x86_64-unknown-linux-musl/release/seinas-wallpaper target/x86_64-unknown-linux-musl/release/zeyes-min
           # 手元で作ったものと同じバイトになるかを比べられるよう、SHA-256を出しておく。
-          sha256sum target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-taskbar target/x86_64-unknown-linux-musl/release/zeyes-min
+          sha256sum target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-taskbar target/x86_64-unknown-linux-musl/release/seinas-wallpaper target/x86_64-unknown-linux-musl/release/zeyes-min
       - name: 配布物にフォントとライセンスが入っていること
         run: |
           for f in fonts/BIZUDPGothic-Regular.ttf fonts/BIZUDGothic-Regular.ttf fonts/unifont_jp-18.0.01.otf \
                    THIRD-PARTY/fonts/biz-udgothic-1.051/OFL.txt THIRD-PARTY/fonts/unifont-18.0.01/OFL-1.1.txt \
-                   THIRD-PARTY/fonts/unifont-18.0.01/COPYING LICENSE seinas-taskbar; do
+                   THIRD-PARTY/fonts/unifont-18.0.01/COPYING LICENSE seinas-taskbar seinas-wallpaper; do
             test -s "target/dist/seinas-musl/$f" || { echo "missing in the dist: $f"; exit 1; }
           done
       - name: musl向けのテスト
