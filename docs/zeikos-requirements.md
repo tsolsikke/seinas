@@ -15,6 +15,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | seinas-standalone | コンポジタ(親の Wayland を持たない構成。fbdev か fake screen へ描く) | M3 で動かす本体 |
 | seinas | コンポジタ(入れ子の構成。親の Wayland のクライアントとして窓を出す) | 親の Wayland が無いので、ZeikOS では動かさない見込み。比べるために載せる |
 | seinas-taskbar | タスクバー(シェルの部品。layer-shell と foreign-toplevel のクライアント) | コンポジタと同時に動かす |
+| seinas-wallpaper | 壁紙(シェルの部品。layer-shell のクライアント) | コンポジタと同時に動かす(下の「壁紙」) |
 | zeyes-min | 試しのクライアント(xdg_toplevel の窓を 1 つ出す) | コンポジタと同時に動かす |
 
 ## 要るものと、ZeikOS の対応
@@ -191,3 +192,6 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 10. 入力の装置(マウスと、Linux の /dev/input/event* の形)。Seinas の側の、seinas-standalone が装置から入力を読む作りと合わせて決める。
 11. pread64(入れ子の構成だけ。低い)。
 
+## 壁紙
+
+seinas-wallpaper(`docs/wallpaper.md`)が要るものは、zeyes-min と同じ形に、設定と画像のファイルの open(O_RDONLY\|O_LARGEFILE\|O_CLOEXEC)・fstat・read を足したもの(syscall は 33 種類)です。スレッドは作らず、fd は AF_UNIX の接続・memfd・epoll・eventfd・timerfd が 1 つずつです。違いは、画像が 4 MiB を越えると ZEIKOS-128 が要ることと、出力の大きさの pool(800x600 で 1,920,000 バイト。上の「共有メモリーの量」の候補)が要ることです。syscall・fd・メモリーの記録は、`docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。
