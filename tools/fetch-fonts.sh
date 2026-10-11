@@ -26,16 +26,28 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 out="$root/target/fonts"
 mkdir -p "$out"
 
-# 取ってきて、SHA-256を確かめる。合わなければ、置かずに止まる。
+# 取ってきて、SHA-256を確かめる。取れないとき、合わないときは、置かずに理由を出して止まる。
+# ネットワークが無いときに長く待たないよう、つなぐまでと全体の時間に上限を置く。
 fetch() {
     url=$1
     sha256=$2
     file="$out/$(basename "$url")"
-    if [ ! -f "$file" ] || ! echo "$sha256  $file" | sha256sum --check --quiet 2>/dev/null; then
-        curl --fail --location --silent --show-error --retry 3 --output "$file.part" "$url"
-        echo "$sha256  $file.part" | sha256sum --check --quiet
-        mv "$file.part" "$file"
+    if [ -f "$file" ] && echo "$sha256  $file" | sha256sum --check --quiet >/dev/null 2>&1; then
+        return
     fi
+    if ! curl --fail --location --silent --show-error --retry 3 \
+        --connect-timeout 30 --max-time 900 --output "$file.part" "$url"; then
+        rm -f "$file.part"
+        echo "fetch-fonts.sh: $url を取得できませんでした(ネットワークか、取得元の問題)" >&2
+        exit 1
+    fi
+    actual=$(sha256sum "$file.part" | cut -d ' ' -f 1)
+    if [ "$actual" != "$sha256" ]; then
+        rm -f "$file.part"
+        echo "fetch-fonts.sh: $url の SHA-256 が合いません(期待 $sha256、実際 $actual)" >&2
+        exit 1
+    fi
+    mv "$file.part" "$file"
 }
 
 fetch "$BIZ_UD/fonts/ttf/BIZUDPGothic-Regular.ttf" 258d7156c165f2ff774b6efee637c22c3b950de0d8a10e501137061bc8085d01

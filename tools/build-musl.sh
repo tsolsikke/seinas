@@ -46,12 +46,17 @@ tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client call
 tools/check-no-wayland.sh seinas-fbdev "$out/seinas-fbdev"
 
 # 既定のフォントを取得する(置いてあり、SHA-256 が合えば、何もしない)。
-tools/fetch-fonts.sh > /dev/null
+# 取得できないとき(ネットワークが無い、SHA-256 が合わない)は、フォントの無い配布物を作らずに止まる。
+# 前に作った配布物が残って、新しいものと取り違えないよう、先に消しておく。
+dist=target/dist/seinas-musl
+rm -rf "$dist"
+if ! tools/fetch-fonts.sh > /dev/null; then
+    echo "build-musl.sh: 既定のフォントを取得できなかったので、配布物を作らずに止めます(理由は上のとおり)" >&2
+    exit 1
+fi
 
 # 配布物をまとめる。静的にリンクしたライブラリのライセンス文と、既定のフォントを、実行ファイルと一緒に置く。
 # フォントのライセンス文と著作権表示は、THIRD-PARTY/fonts/ に入っている。
-dist=target/dist/seinas-musl
-rm -rf "$dist"
 mkdir -p "$dist/fonts"
 cp "$out/seinas" "$out/seinas-standalone" "$out/seinas-fbdev" "$out/zeyes-min" LICENSE "$dist/"
 cp -R THIRD-PARTY "$dist/THIRD-PARTY"
