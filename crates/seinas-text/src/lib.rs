@@ -1,7 +1,8 @@
 //! Seinasが自分で描く文字。
 //!
-//! フォントをファイルから読み、1行の文字を、呼ぶ側の画素の上に描く。システムのフォントは探さない
-//! (fontconfigを使わない)。フォントは実行ファイルに埋め込まず、置き場所を呼ぶ側が教える。
+//! フォントをファイルから読み、1行の文字を、呼ぶ側のピクセルの上に描く。fontconfig は使わない。フォントは実行
+//! ファイルに埋め込まず、同梱のフォントの置き場を呼ぶ側が教える。利用者が設定のファイルで選んだフォントは、
+//! 置き場を自分で調べて使う(`fonts` の module。ADR 0003)。フォントのファイルは、mmap で読む。
 //!
 //! - 主のフォント(UI用)に無い文字は、控えのフォントで描く。
 //! - 控えにも無い文字は、四角の枠で描く(字が欠けていることが分かるようにする)。
@@ -15,9 +16,14 @@ use std::{
 };
 
 use cosmic_text::{
-    fontdb, Attrs, Buffer, CacheKeyFlags, Color, Fallback, Family, FontSystem, Hinting, Metrics,
-    Shaping, SwashCache, Wrap,
+    fontdb, Attrs, Buffer, CacheKeyFlags, Fallback, Family, FontSystem, Hinting, Metrics, Shaping,
+    SwashCache, SwashContent, Wrap,
 };
+
+pub mod fonts;
+mod glyph_cache;
+
+pub use glyph_cache::{GlyphCache, GLYPH_CACHE_LIMIT};
 
 use unicode_script::Script;
 
@@ -69,10 +75,7 @@ pub enum FontProblem {
         error: std::io::Error,
     },
     /// ファイルは読めたが、求めるフォントとして使えなかった(壊れている、別のフォントである)。
-    Unusable {
-        path: PathBuf,
-        expected: &'static str,
-    },
+    Unusable { path: PathBuf, expected: String },
 }
 
 impl fmt::Display for FontProblem {
@@ -159,12 +162,12 @@ pub struct Drawn {
     pub missing_glyphs: usize,
 }
 
-/// 主のフォントに無い文字を、どのフォントで探すか。控えのフォントだけを、どの文字の種類にも使う。
-struct UnifontFallback;
+/// 主のフォントに無い文字を、どのフォントで探すか。フォールバックのフォントを、順に、どの文字の種類にも使う。
+struct ListFallback(Vec<&'static str>);
 
-impl Fallback for UnifontFallback {
+impl Fallback for ListFallback {
     fn common_fallback(&self) -> &[&'static str] {
-        &[FALLBACK_FONT_FAMILY]
+        &self.0
     }
     fn forbidden_fallback(&self) -> &[&'static str] {
         &[]
@@ -177,9 +180,13 @@ impl Fallback for UnifontFallback {
 /// 読み込んだフォント。
 struct Fonts {
     system: FontSystem,
-    cache: SwashCache,
+    /// グリフの絵を作るもの(覚えは使わない)と、上限のある覚え。
+    swash: SwashCache,
+    glyphs: GlyphCache,
     /// 行を組むときに、最初に使うフォントの名前。主のフォントが無ければ、控えのフォント。
     family: &'static str,
+    /// フォールバックのフォントの名前(順)。
+    fallback: Vec<&'static str>,
 }
 
 /// 文字を描くもの。フォントを持つ。
@@ -194,26 +201,66 @@ impl TextPainter {
     /// 主のフォントだけが読めないときは、控えのフォントで全部を描く。どちらも読めないときは、
     /// 何も描かない([`TextPainter::can_draw`] がfalseを返す)。
     pub fn load(files: &FontFiles) -> (Self, Vec<FontProblem>) {
+        Self::load_faces(
+            (&files.ui, UI_FONT_FAMILY),
+            &[(&files.fallback, FALLBACK_FONT_FAMILY)],
+        )
+    }
+
+    /// 設定 `setup` で選んだフォントを読む(ADR 0003)。ログに出すこと(設定の読めなかった行、見つからなかった
+    /// フォント、読めなかったフォント)を、一緒に返す。
+    ///
+    /// 設定のファイルが無ければ、[`TextPainter::load`] で同梱のフォントを読んだときと同じになる。
+    pub fn load_setup(setup: &FontSetup) -> (Self, Vec<String>) {
+        let env = fonts::Env::from_process();
+        let config_file = setup.config_file.clone().or_else(|| env.config_file());
+        let (config, config_problems) = match &config_file {
+            Some(path) => fonts::read_config(path),
+            None => (fonts::FontConfig::default(), Vec::new()),
+        };
+        let resolved = fonts::resolve(&setup.bundled_dir, &config, &env);
+        let mut messages: Vec<String> = config_problems.iter().map(|p| p.to_string()).collect();
+        messages.extend(resolved.notes.iter().cloned());
+        let fallback: Vec<(&Path, &str)> = resolved
+            .fallback
+            .iter()
+            .map(|picked| (picked.path.as_path(), picked.family.as_str()))
+            .collect();
+        let (painter, problems) =
+            Self::load_faces((&resolved.ui.path, &resolved.ui.family), &fallback);
+        messages.extend(problems.iter().map(|p| p.to_string()));
+        (painter, messages)
+    }
+
+    /// UI のフォント `ui` と、フォールバックのフォント `fallback`(順)を読む。
+    fn load_faces(ui: (&Path, &str), fallback: &[(&Path, &str)]) -> (Self, Vec<FontProblem>) {
         let mut db = fontdb::Database::new();
         let mut problems = Vec::new();
-        let mut loaded = Vec::new();
-        for (path, family) in [
-            (&files.ui, UI_FONT_FAMILY),
-            (&files.fallback, FALLBACK_FONT_FAMILY),
-        ] {
-            match load_font(&mut db, path, family) {
-                Ok(()) => loaded.push(family),
+        let mut loaded: Vec<&'static str> = Vec::new();
+        for &(path, family) in std::iter::once(&ui).chain(fallback) {
+            match load_font(&mut db, path, family, true) {
+                // cosmic-text は、フォールバックの名前を 'static で持つので、プロセスの間は残しておく
+                // (役ごとに 1 つずつで、数は少ない)。
+                Ok(()) => loaded.push(leak(family)),
                 Err(problem) => problems.push(problem),
             }
         }
+        let ui_loaded = loaded.first() == Some(&leak(ui.1));
+        let fallback_names: Vec<&'static str> = if ui_loaded {
+            loaded[1..].to_vec()
+        } else {
+            loaded.clone()
+        };
         let fonts = loaded.first().map(|&family| Fonts {
             system: FontSystem::new_with_locale_and_db_and_fallback(
                 LOCALE.to_owned(),
                 db,
-                UnifontFallback,
+                ListFallback(fallback_names.clone()),
             ),
-            cache: SwashCache::new(),
+            swash: SwashCache::new(),
+            glyphs: GlyphCache::new(),
             family,
+            fallback: fallback_names,
         });
         (TextPainter { fonts }, problems)
     }
@@ -221,6 +268,23 @@ impl TextPainter {
     /// フォントを1つも持たないもの。何も描かない。
     pub fn without_fonts() -> Self {
         TextPainter { fonts: None }
+    }
+
+    /// 使っているフォントの名前(ログに出す形)。例:`ui "BIZ UDPGothic", fallback "Unifont-JP"`。
+    pub fn describe(&self) -> String {
+        match &self.fonts {
+            None => "no fonts".to_owned(),
+            Some(fonts) => format!(
+                "ui \"{}\", fallback {}",
+                fonts.family,
+                fonts
+                    .fallback
+                    .iter()
+                    .map(|name| format!("\"{name}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
     }
 
     /// 文字を描けるか(使えるフォントが1つでもあるか)。
@@ -249,7 +313,6 @@ impl TextPainter {
             ..Drawn::default()
         };
         let ui_font = fonts.face_of(fonts.family);
-        let color = Color::rgb(line.color[0], line.color[1], line.color[2]);
         for run in buffer.layout_runs().take(1) {
             drawn.width = run.line_w.ceil() as i32;
             for glyph in run.glyphs {
@@ -263,14 +326,18 @@ impl TextPainter {
                     drawn.fallback_glyphs += 1;
                 }
                 let physical = glyph.physical((line.x as f32, line.top as f32 + run.line_y), 1.0);
-                fonts.cache.with_pixels(
-                    &mut fonts.system,
-                    physical.cache_key,
-                    color,
-                    |x, y, pixel| {
-                        canvas.blend(physical.x + x, physical.y + y, line.color, pixel.a());
-                    },
-                );
+                let Fonts {
+                    system,
+                    swash,
+                    glyphs,
+                    ..
+                } = fonts;
+                let image = glyphs.get_or_insert_with(physical.cache_key, || {
+                    swash.get_image_uncached(system, physical.cache_key)
+                });
+                if let Some(image) = image {
+                    blend_glyph(canvas, image, physical.x, physical.y, line.color);
+                }
             }
         }
         drawn
@@ -351,6 +418,56 @@ fn line_width(buffer: &Buffer) -> f32 {
         .unwrap_or(0.0)
 }
 
+/// グリフの絵を、(x, y)を基準に、色 `color` で重ねる。濃さは、絵の濃さ(カラーの絵なら、その透明度)。
+fn blend_glyph(
+    canvas: &mut Canvas<'_>,
+    image: &cosmic_text::SwashImage,
+    x: i32,
+    y: i32,
+    color: [u8; 3],
+) {
+    let left = x + image.placement.left;
+    let top = y - image.placement.top;
+    let (width, height) = (image.placement.width as i32, image.placement.height as i32);
+    let step = match image.content {
+        SwashContent::Mask => 1,
+        SwashContent::Color => 4,
+        // cosmic-text も描かない形(swash に頼まないので、来ない)。
+        SwashContent::SubpixelMask => return,
+    };
+    for row in 0..height {
+        for column in 0..width {
+            let at = ((row * width + column) as usize) * step + (step - 1);
+            if let Some(&alpha) = image.data.get(at) {
+                canvas.blend(left + column, top + row, color, alpha);
+            }
+        }
+    }
+}
+
+/// 名前を、プロセスの間ずっと残る形にする(同じ名前は 1 度だけ)。
+fn leak(name: &str) -> &'static str {
+    use std::sync::Mutex;
+    static NAMES: Mutex<Vec<&'static str>> = Mutex::new(Vec::new());
+    let mut names = NAMES.lock().expect("the names");
+    if let Some(&kept) = names.iter().find(|&&kept| kept == name) {
+        return kept;
+    }
+    let kept: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    names.push(kept);
+    kept
+}
+
+/// 同梱のフォントの置き場と、設定のファイル。[`TextPainter::load_setup`] に渡す。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FontSetup {
+    /// 同梱のフォントの置き場(今までの `--fonts`、`SEINAS_FONTS`)。
+    pub bundled_dir: PathBuf,
+    /// 設定のファイル(`--font-config`)。Noneなら、`$XDG_CONFIG_HOME/seinas/fonts.conf`(無ければ
+    /// `~/.config/seinas/fonts.conf`)。
+    pub config_file: Option<PathBuf>,
+}
+
 /// どのフォントにも無い文字の代わりに、四角の枠を描く。
 fn draw_missing_box(canvas: &mut Canvas<'_>, x: f32, width: f32, baseline: f32, line: Line) {
     // 幅は字形の送りに合わせ、高さは大文字の高さくらいにする。字と字の間に、1画素ずつ空きを残す。
@@ -369,29 +486,96 @@ fn draw_missing_box(canvas: &mut Canvas<'_>, x: f32, width: f32, baseline: f32, 
 }
 
 /// フォントのファイルを読んで、一覧に入れる。中に `family` という名前のフォントが無ければ、使えない。
+///
+/// `mmap` なら、ファイルを mmap で読む(描くときに触ったページだけがメモリーに乗り、ページキャッシュは
+/// プロセスの間で共有される)。mmap できなければ、ヒープへ丸ごと読む。
 fn load_font(
     db: &mut fontdb::Database,
     path: &Path,
-    family: &'static str,
+    family: &str,
+    mmap: bool,
 ) -> Result<(), FontProblem> {
-    let data = std::fs::read(path).map_err(|error| FontProblem::Unreadable {
+    let unreadable = |error| FontProblem::Unreadable {
         path: path.to_owned(),
         error,
-    })?;
+    };
+    std::fs::metadata(path).map_err(unreadable)?;
+    if mmap {
+        let added = db.load_font_source(fontdb::Source::File(path.to_owned()));
+        if keep_family(db, &added, family) {
+            // いま mmap しておく(cosmic-text も、使うときに同じことをする)。できなければ、ヒープへ読む。
+            // SAFETY: mmap したファイルが、使っている間に書き換えられると、壊れた内容を読むことになる。
+            // フォントの置き場のファイルは、動いている間に書き換えないものとする(fontconfig を使うアプリと同じ)。
+            let mapped = added
+                .iter()
+                .all(|&id| unsafe { db.make_shared_face_data(id) }.is_some());
+            if mapped {
+                return Ok(());
+            }
+            for &id in &added {
+                db.remove_face(id);
+            }
+        }
+    }
+    let data = std::fs::read(path).map_err(unreadable)?;
     // 壊れたファイルは、一覧に入らないだけで、失敗は返ってこない。入ったものを見て確かめる。
     let added = db.load_font_source(fontdb::Source::Binary(std::sync::Arc::new(data)));
+    if keep_family(db, &added, family) {
+        return Ok(());
+    }
+    Err(FontProblem::Unusable {
+        path: path.to_owned(),
+        expected: family.to_owned(),
+    })
+}
+
+/// 入れた face `added` の中に、`family` という名前のものがあればtrue。無ければ、入れたものを外してfalse。
+fn keep_family(db: &mut fontdb::Database, added: &[fontdb::ID], family: &str) -> bool {
     let usable = added.iter().any(|&id| {
         db.face(id)
             .is_some_and(|face| face.families.iter().any(|(name, _)| name == family))
     });
-    if usable {
-        return Ok(());
+    if !usable {
+        for &id in added {
+            db.remove_face(id);
+        }
     }
-    for id in added {
-        db.remove_face(id);
+    usable
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// テストのフォントの置き場(`tools/fetch-fonts.sh` が置く)。無ければ、テストを飛ばす。
+    fn font_dir() -> Option<PathBuf> {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/fonts");
+        dir.join(UI_FONT_FILE).exists().then_some(dir)
     }
-    Err(FontProblem::Unusable {
-        path: path.to_owned(),
-        expected: family,
-    })
+
+    #[test]
+    fn a_font_is_read_by_mmap_or_into_the_heap() {
+        let Some(dir) = font_dir() else {
+            return;
+        };
+        let path = dir.join(UI_FONT_FILE);
+        for mmap in [true, false] {
+            let mut db = fontdb::Database::new();
+            load_font(&mut db, &path, UI_FONT_FAMILY, mmap).expect("the font");
+            let face = db.faces().next().expect("a face");
+            let mapped = matches!(face.source, fontdb::Source::SharedFile(..));
+            assert_eq!(mapped, mmap, "mmap {mmap}");
+        }
+        // 別の名前を求めると、使えない。
+        let mut db = fontdb::Database::new();
+        assert!(matches!(
+            load_font(&mut db, &path, "Another", true),
+            Err(FontProblem::Unusable { .. })
+        ));
+        assert_eq!(db.faces().count(), 0);
+        assert!(matches!(
+            load_font(&mut db, &dir.join("missing.ttf"), UI_FONT_FAMILY, true),
+            Err(FontProblem::Unreadable { .. })
+        ));
+    }
 }
