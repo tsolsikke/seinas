@@ -5,9 +5,8 @@
 
 use std::error::Error;
 
-use seinas_frontend::{pointer_input, PointerInput};
+use seinas_frontend::{geometry::PointF, pointer_input, PointerInput};
 use seinas_render::{FrameView, PixelFormat};
-use smithay::utils::{Logical, Point};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_dispatch2, delegate_registry,
@@ -272,7 +271,7 @@ impl PointerHandler for Seinas {
             if &event.surface != self.parent.window.wl_surface() {
                 continue;
             }
-            let location = Point::<f64, Logical>::from(event.position);
+            let location = PointF::from(event.position);
             let input = match event.kind {
                 Enter { .. } | Motion { .. } => PointerInput::Motion(location),
                 Leave { .. } => PointerInput::Leave,

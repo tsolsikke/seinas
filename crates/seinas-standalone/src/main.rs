@@ -15,6 +15,9 @@
 //! - `--dump FILE`: 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く。
 //! - `--socket PATH`: クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、
 //!   それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0`。
+//! - `--shell-socket PATH`: シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットの
+//!   パスに `-shell` を付けたもの(`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。
+//!   ここからつないだクライアントにだけ、layer-shell を見せる(`docs/adr/0002-shell-components.md`)。
 //! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
@@ -52,15 +55,14 @@ use std::{
 };
 
 use seinas_frontend::{
-    font_dir, pointer_input, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost,
-    PointerInput, LEFT_BUTTON,
+    font_dir, geometry::PointF, pointer_input, reap_dead_clients, BuildFrontend, Config, Frontend,
+    FrontendHost, PointerInput, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{channel, generic::Generic, EventLoop, Interest, Mode, PostAction},
     wayland_server::{Display, ListeningSocket},
 };
-use smithay::utils::{Logical, Point};
 use tracing::{error, info, warn};
 
 use screen::Screen;
@@ -70,20 +72,23 @@ const DEVICE_ENV: &str = "SEINAS_FBDEV";
 const SOCKET_ENV: &str = "SEINAS_SOCKET";
 /// 場所の指定が無いときの、ソケットの名前(`XDG_RUNTIME_DIR` の下)。
 const DEFAULT_SOCKET_NAME: &str = "seinas-0";
+/// シェルの部品のためのソケットの名前に付けるもの。
+const SHELL_SOCKET_SUFFIX: &str = "-shell";
 /// 描く間隔の下限。1秒に60回まで。
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// 右のボタンの番号(Linuxの入力の決まり)。
 const RIGHT_BUTTON: u32 = 0x111;
 
-const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--fonts DIR]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--fonts DIR] [--test-input]";
+const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR]
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--test-input]";
 
 struct Options {
     device: PathBuf,
     fake: Option<(u32, u32)>,
     dump: Option<PathBuf>,
     socket: Option<PathBuf>,
+    shell_socket: Option<PathBuf>,
     fonts: Option<PathBuf>,
     test_input: bool,
 }
@@ -96,6 +101,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         fake: None,
         dump: None,
         socket: std::env::var_os(SOCKET_ENV).map(PathBuf::from),
+        shell_socket: None,
         fonts: None,
         test_input: false,
     };
@@ -112,6 +118,9 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             }
             "--dump" => options.dump = Some(PathBuf::from(value("--dump")?)),
             "--socket" => options.socket = Some(PathBuf::from(value("--socket")?)),
+            "--shell-socket" => {
+                options.shell_socket = Some(PathBuf::from(value("--shell-socket")?))
+            }
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             "--test-input" => options.test_input = true,
             other => return Err(format!("unknown argument: {other}")),
@@ -125,7 +134,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
 
 /// 試験のための入力の口に届いた1行を、ポインターの知らせに直す。`at` は、ポインターのいまの位置で、
 /// `motion` の行が届くたびに書き換える。
-fn parse_test_input(line: &str, at: &mut Point<f64, Logical>) -> Result<PointerInput, String> {
+fn parse_test_input(line: &str, at: &mut PointF) -> Result<PointerInput, String> {
     let mut words = line.split_whitespace();
     let command = words.next().ok_or("an empty line")?;
     match command {
@@ -216,7 +225,8 @@ impl Standalone {
     }
 }
 
-fn bind_socket(path: Option<PathBuf>) -> Result<ListeningSocket, Box<dyn Error>> {
+/// ソケットを listen する。`path` があれば、その絶対パス。無ければ、`XDG_RUNTIME_DIR` の下の `name`。
+fn bind_socket(path: Option<PathBuf>, name: &str) -> Result<ListeningSocket, Box<dyn Error>> {
     match path {
         Some(path) => {
             let socket = ListeningSocket::bind_absolute(path.clone())
@@ -225,13 +235,24 @@ fn bind_socket(path: Option<PathBuf>) -> Result<ListeningSocket, Box<dyn Error>>
             Ok(socket)
         }
         None => {
-            let socket = ListeningSocket::bind(DEFAULT_SOCKET_NAME).map_err(|e| {
-                format!("cannot listen on {DEFAULT_SOCKET_NAME} in XDG_RUNTIME_DIR: {e} (use --socket PATH)")
+            let socket = ListeningSocket::bind(name).map_err(|e| {
+                format!("cannot listen on {name} in XDG_RUNTIME_DIR: {e} (use --socket PATH)")
             })?;
-            info!("listening on {DEFAULT_SOCKET_NAME} in XDG_RUNTIME_DIR");
+            info!("listening on {name} in XDG_RUNTIME_DIR");
             Ok(socket)
         }
     }
+}
+
+/// シェルの部品のためのソケットの場所。指定が無ければ、ふだんのソケットのパスに `-shell` を付ける。
+fn shell_socket_path(socket: Option<&PathBuf>, shell: Option<PathBuf>) -> Option<PathBuf> {
+    shell.or_else(|| {
+        socket.map(|path| {
+            let mut name = path.as_os_str().to_owned();
+            name.push(SHELL_SOCKET_SUFFIX);
+            PathBuf::from(name)
+        })
+    })
 }
 
 fn run(options: Options) -> Result<(), Box<dyn Error>> {
@@ -257,13 +278,25 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     );
     let painter = Painter::new(width, height)?;
 
-    // 源その1: クライアントの接続の受け付け。
-    let listener = bind_socket(options.socket)?;
+    // 源その1: クライアントの接続の受け付け。ふだんのソケットと、シェルの部品のためのソケット。
+    let shell_path = shell_socket_path(options.socket.as_ref(), options.shell_socket);
+    let listener = bind_socket(options.socket, DEFAULT_SOCKET_NAME)?;
     event_loop.handle().insert_source(
         Generic::new(listener, Interest::READ, Mode::Level),
         |_, listener, state: &mut Standalone| {
             while let Some(stream) = listener.accept()? {
                 state.frontend.accept(stream);
+            }
+            Ok(PostAction::Continue)
+        },
+    )?;
+    let shell_name = format!("{DEFAULT_SOCKET_NAME}{SHELL_SOCKET_SUFFIX}");
+    let shell_listener = bind_socket(shell_path, &shell_name)?;
+    event_loop.handle().insert_source(
+        Generic::new(shell_listener, Interest::READ, Mode::Level),
+        |_, listener, state: &mut Standalone| {
+            while let Some(stream) = listener.accept()? {
+                state.frontend.accept_shell(stream);
             }
             Ok(PostAction::Continue)
         },
@@ -301,7 +334,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     }
                 }
             })?;
-        let mut at = Point::from((0.0, 0.0));
+        let mut at = PointF::new(0.0, 0.0);
         event_loop
             .handle()
             .insert_source(lines, move |event, _, state: &mut Standalone| {

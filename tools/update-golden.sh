@@ -4,7 +4,8 @@
 # 使い方:
 #     tools/update-golden.sh
 #
-# 4 つの crate(seinas-render、seinas-text、seinas-frontend、seinas-fbdev)の golden テストを、
+# 4 つの crate(seinas-render、seinas-text、seinas-frontend、seinas-fbdev)の golden テストと、
+# seinas-standalone の golden_layers を、
 # SEINAS_UPDATE_GOLDEN=1 を付けてホストで動かす。テストは、比べるかわりに tests/golden/ のファイルを上書きし、
 # 古いファイルとの差を 1 ケース 1 行で出す。最後に git diff --stat を出す。
 #
@@ -18,6 +19,8 @@ cd "$root"
 SEINAS_UPDATE_GOLDEN=1 cargo test --locked \
     -p seinas-render -p seinas-text -p seinas-frontend -p seinas-fbdev \
     --test golden
+# layer surface とウィンドウの重なり(seinas-standalone を fake screen で動かす)。
+SEINAS_UPDATE_GOLDEN=1 cargo test --locked -p seinas-standalone --test golden_layers
 
 echo
 git status --short -- 'crates/*/tests/golden'

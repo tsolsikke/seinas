@@ -9,7 +9,8 @@ publish.workspace = true
 
 [dependencies]
 # 裏側(入れ子のためのSCTKやwayland-client、fbdev)は、ここには入れない。
-smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
+# desktop は、layer surface の並べ方(exclusive zone の計算)に使う。追加の依存は無い。
+smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman", "desktop"] }
 seinas-text = { path = "../seinas-text" }
 tracing = { workspace = true }
 

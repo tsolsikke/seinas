@@ -15,3 +15,11 @@ seinas-fbdev = { path = "../seinas-fbdev" }
 smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+seinas-golden = { path = "../seinas-golden" }
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden_layers"
+harness = false

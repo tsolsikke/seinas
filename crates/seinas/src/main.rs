@@ -12,6 +12,8 @@
 //! 環境変数:
 //! - `WAYLAND_DISPLAY` / `XDG_RUNTIME_DIR`: 親のソケット。
 //! - 子に見せるソケットは `seinas-0`(`XDG_RUNTIME_DIR` の下)。子は `WAYLAND_DISPLAY=seinas-0` でつなぐ。
+//! - シェルの部品(タスクバーなど)のためのソケットは `seinas-0-shell`。ここからつないだクライアントにだけ、
+//!   layer-shell を見せる(`docs/adr/0002-shell-components.md`)。
 //! - `SEINAS_FONTS`: フォントの置き場(題名を描くのに使う)。引数 `--fonts DIR` でも指定できる。どちらも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
@@ -45,6 +47,8 @@ const WIDTH: i32 = 800;
 const HEIGHT: i32 = 600;
 /// 子に見せるソケットの名前。
 const CHILD_SOCKET: &str = "seinas-0";
+/// シェルの部品のためのソケットの名前。
+const SHELL_SOCKET: &str = "seinas-0-shell";
 
 /// コンポジタの状態。SmithayのハンドラもSCTKのハンドラも、この1つの型に実装する。
 pub struct Seinas {
@@ -162,6 +166,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         |_, listener, state: &mut Seinas| {
             while let Some(stream) = listener.accept()? {
                 state.frontend.accept(stream);
+            }
+            Ok(PostAction::Continue)
+        },
+    )?;
+    let shell_listener = ListeningSocket::bind(SHELL_SOCKET)?;
+    info!("listening on {SHELL_SOCKET} for the shell components");
+    event_loop.handle().insert_source(
+        Generic::new(shell_listener, Interest::READ, Mode::Level),
+        |_, listener, state: &mut Seinas| {
+            while let Some(stream) = listener.accept()? {
+                state.frontend.accept_shell(stream);
             }
             Ok(PostAction::Continue)
         },

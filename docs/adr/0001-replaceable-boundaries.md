@@ -71,7 +71,7 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 | フォントの一覧と選択 | 部品 | (まだ無い。`seinas-text` の中) | fontdb | `seinas-text` の外には出ていない。ただし、読み込み・名前での選択・fallback の順が、シェーピングと描画と同じ `TextPainter` の中に混ざっていて、層としての境界が無い | なし(境界を作るのは、フォントの設計のときに行う) |
 | キーボード | 部品 | (まだ無い) | xkbcommon(Smithay がリンクする) | Seinas のコードは使っていない。キーボードの入力を作るときに、境界を作る | なし |
 | Wayland の protocol | 土台 | `seinas-frontend` | Smithay | `pub use smithay`、`Frontend` の公開フィールド、`FrontendHost: SeatHandler` などで、バイナリに Smithay の型を見せている(決定 3 で認める範囲) | なし |
-| ウィンドウ管理の決まり | 土台に依存しない | `seinas-frontend` の `stack.rs`・`interaction.rs`・`decoration.rs` の計算 | (なし) | Smithay の振る舞いには依存していないが、Smithay の幾何の型を使っている | あり(違反 5) |
+| ウィンドウ管理の決まり | 土台に依存しない | `seinas-frontend` の `stack.rs`・`interaction.rs`・`decoration.rs`(幾何の型は `geometry.rs`) | (なし) | Seinas の幾何の型だけを使う。Smithay の型との変換は `lib.rs` の中だけで行う | なし(違反 5 は 2026-10-11 に直した) |
 | イベントループ | 土台 | バイナリの `main.rs` | calloop | `seinas` と `seinas-standalone` の `main.rs` だけで、Smithay の reexport を通して使っている | なし |
 | バックエンド(fbdev) | 土台に依存しない | `seinas-fbdev` | (なし。`libc` は対象外) | Smithay に直接は依存していないが、`seinas-render` を通して Smithay の型を公開 API に出している | あり(違反 6) |
 
@@ -83,7 +83,7 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 | 2 | `seinas-render` の `BACKGROUND`、`SolidRect`、`solid_rect` | 公開 API に Smithay の `Color32F`・`SolidColorRenderElement` が出ている | 決定 3 |
 | 3 | (取り下げ) | `seinas-render` が内部で Smithay のレンダラーの仕組みを使うことは、決定 3 で認めた。違反になるのは、それが公開 API に出ている所だけで、違反 1・2 に含まれる | ― |
 | 4 | `seinas-frontend` の `WindowElement`、`Frontend::render_elements`、`TitleBar::element` | 公開 API に `PixmanRenderer` が出ている | 決定 2 |
-| 5 | `seinas-frontend` の `stack.rs`・`interaction.rs`・`decoration.rs` の計算 | Smithay の幾何の型(`Point`、`Size`、`Rectangle`、`Logical`)を使っている。後で Seinas の型に替える | 決定 3 |
+| 5 | (直した) | ウィンドウ管理の決まりが Smithay の幾何の型を使っていた。2026-10-11 に Seinas の幾何の型(`geometry.rs`)に替え、タイトルバーを描画の要素にする所(Smithay を使う)は `title_bar.rs` に分けた | ― |
 | 6 | `seinas-fbdev` の `test_picture` | 戻り値が `Vec<SolidRect>`(Smithay の型) | 決定 3 |
 
 違反 1・2・4・6 は、描画の境界を Seinas の型にするときに、まとめて直る見込みである(GPU で描画する構成を足すときにも、同じ所を直す)。
@@ -107,3 +107,4 @@ Seinas は、描画の合成に pixman、テキスト描画に cosmic-text と s
 ## 改訂
 
 - 2026-10-08: `seinas-render` が内部で Smithay のレンダラーの仕組みを使うことを認め(公開 API は Seinas の型のまま)、違反 3 を取り下げた。
+- 2026-10-11: 違反 5 を直した(ウィンドウ管理の決まりの幾何の型を、Seinas の型にした)。

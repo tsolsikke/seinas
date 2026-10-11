@@ -82,6 +82,8 @@ cargo run --locked -p seinas
 WAYLAND_DISPLAY=seinas-0 cargo run --locked -p zeyes-min
 ```
 
+タスクバーなどのシェルの部品は、`seinas-0-shell` のソケットへつなぎます(`docs/adr/0002-shell-components.md`)。そこからつないだクライアントにだけ、layer-shell が見えます。
+
 クライアントのウィンドウの上には、Seinasが題名の帯を描きます。zeyes-minの題名は「zeyes」で、`--title TEXT` で変えられます。
 帯を掴んで動かすと、ウィンドウが動きます。帯の右の端の「×」を押すと、閉じます。
 

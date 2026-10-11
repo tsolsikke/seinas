@@ -114,24 +114,35 @@ pub fn wait_for<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
 
 /// 偽の画面の写し。
 pub struct Shot {
+    pub width: usize,
+    pub height: usize,
     /// PPMの画素の部分(赤, 緑, 青の順)。
-    pixels: Vec<u8>,
+    pub pixels: Vec<u8>,
 }
 
 impl Shot {
-    /// 偽の画面の写し(PPM)を読む。まだ無いか、大きさが合わなければNone。
+    /// 偽の画面の写し(PPM)を読む。まだ無いか、書きかけならNone。
     pub fn read(path: &Path) -> Option<Self> {
         let image = fs::read(path).ok()?;
-        let header = format!("P6 {WIDTH} {HEIGHT} 255\n");
-        let pixels = image.strip_prefix(header.as_bytes())?;
-        (pixels.len() == WIDTH * HEIGHT * 3).then(|| Shot {
+        // ヘッダーは「P6 幅 高さ 255」と改行。
+        let end = image.iter().position(|&b| b == b'\n')?;
+        let header = std::str::from_utf8(&image[..end]).ok()?;
+        let fields: Vec<&str> = header.split_whitespace().collect();
+        let [magic, width, height, max] = fields[..] else {
+            return None;
+        };
+        let (width, height): (usize, usize) = (width.parse().ok()?, height.parse().ok()?);
+        let pixels = &image[end + 1..];
+        (magic == "P6" && max == "255" && pixels.len() == width * height * 3).then(|| Shot {
+            width,
+            height,
             pixels: pixels.to_vec(),
         })
     }
 
     /// (x, y)の色。
     pub fn pixel(&self, x: usize, y: usize) -> [u8; 3] {
-        let at = (y * WIDTH + x) * 3;
+        let at = (y * self.width + x) * 3;
         [self.pixels[at], self.pixels[at + 1], self.pixels[at + 2]]
     }
 }
@@ -267,7 +278,21 @@ impl Compositor {
         Self::start_with(name, &font_dir(), true)
     }
 
+    /// [`Compositor::start`] と同じだが、fake screen の大きさを `width` × `height` にする。
+    pub fn start_sized(name: &str, width: usize, height: usize) -> Self {
+        Self::start_full(name, &font_dir(), false, (width, height))
+    }
+
     fn start_with(name: &str, fonts: &Path, test_input: bool) -> Self {
+        Self::start_full(name, fonts, test_input, (WIDTH, HEIGHT))
+    }
+
+    fn start_full(
+        name: &str,
+        fonts: &Path,
+        test_input: bool,
+        (width, height): (usize, usize),
+    ) -> Self {
         // ソケットのパスには長さの上限(約100文字)があるので、短い場所に置く。
         let dir = std::env::temp_dir().join(format!("seinas-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("create the working directory");
@@ -280,7 +305,7 @@ impl Compositor {
         }
         let process = Running(
             command
-                .args(["--fake", &format!("{WIDTH}x{HEIGHT}")])
+                .args(["--fake", &format!("{width}x{height}")])
                 .arg("--dump")
                 .arg(&dump)
                 .arg("--socket")
@@ -299,7 +324,16 @@ impl Compositor {
             dump,
             dir,
         };
-        compositor.wait_for_screen("the first frame (background only)", shows_only_background);
+        compositor.wait_for_screen("the first frame (background only)", |shot| {
+            shot.width == width
+                && shot.height == height
+                && if (width, height) == (WIDTH, HEIGHT) {
+                    shows_only_background(shot)
+                } else {
+                    shot.pixel(0, 0) == BACKGROUND
+                        && shot.pixel(width - 1, height - 1) == BACKGROUND
+                }
+        });
         wait_for("the listening socket", || {
             compositor.socket.exists().then_some(())
         });
@@ -360,12 +394,28 @@ impl Compositor {
         )
     }
 
+    /// シェルの部品のためのソケット(ふだんのソケットのパスに `-shell` を付けたもの)。
+    pub fn shell_socket(&self) -> PathBuf {
+        let mut name = self.socket.as_os_str().to_owned();
+        name.push("-shell");
+        PathBuf::from(name)
+    }
+
     /// 試験用のクライアント(`test-client`)を、引数 `args` でつなぐ。標準入力と標準出力は、こちらで持つ。
     pub fn connect_test_client(&self, args: &[&str]) -> TestClient {
+        self.connect_test_client_to(&self.socket, args)
+    }
+
+    /// 試験用のクライアントを、シェルの部品のためのソケットへつなぐ。
+    pub fn connect_shell_client(&self, args: &[&str]) -> TestClient {
+        self.connect_test_client_to(&self.shell_socket(), args)
+    }
+
+    fn connect_test_client_to(&self, socket: &Path, args: &[&str]) -> TestClient {
         let mut process = Running(
             Command::new(workspace_bin("seinas-test-clients", "test-client"))
                 .args(args)
-                .env("WAYLAND_DISPLAY", &self.socket)
+                .env("WAYLAND_DISPLAY", socket)
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())

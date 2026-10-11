@@ -1,25 +1,16 @@
 //! ウィンドウの飾り。上に付ける題名の帯(タイトルバー)と、その右の端の閉じるボタン。
 //!
 //! 帯は、Seinasの側で描く(クライアントには、xdg-decorationで「サーバーの側で飾りを描く」と伝える)。
-//! 帯の絵は、題名・幅・選ばれているか・閉じるボタンの見た目が変わったときにだけ作り直し、それまでは
-//! 覚えておいたものを使う。
+//! ここにあるのは、大きさと位置の計算と、帯の絵(バイト列)を作る所だけで、土台(Smithay)を使わない。
+//! 帯の絵を描画の要素にする所は `title_bar.rs` にある。
 //! 決まりの説明は `docs/window-placement.md` にある。
 
 use std::path::Path;
 
 use seinas_text::{Canvas, FontFiles, Line, TextPainter, DEFAULT_SIZE};
-use smithay::{
-    backend::{
-        allocator::Fourcc,
-        renderer::element::{
-            memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
-            Kind,
-        },
-        renderer::pixman::PixmanRenderer,
-    },
-    utils::{Logical, Point, Size, Transform},
-};
 use tracing::{info, warn};
+
+use crate::geometry::{Point, Rect, Size};
 
 /// 題名の帯の高さ(画素)。
 pub const TITLE_BAR_HEIGHT: i32 = 24;
@@ -46,34 +37,34 @@ pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
 pub const HOT_CLOSE_MARK: [u8; 3] = [0xff, 0xff, 0xff];
 
 /// 帯を含めた、ウィンドウの外形の大きさ。`content` は、クライアントが描く中身の大きさ。
-pub fn outer_size(content: Size<i32, Logical>) -> Size<i32, Logical> {
+pub fn outer_size(content: Size) -> Size {
     (content.w, content.h + TITLE_BAR_HEIGHT).into()
 }
 
 /// 外形の左上が `outer` にあるウィンドウの、中身の左上。中身は、帯の下に置く。
-pub fn content_location(outer: Point<i32, Logical>) -> Point<i32, Logical> {
+pub fn content_location(outer: Point) -> Point {
     (outer.x, outer.y + TITLE_BAR_HEIGHT).into()
 }
 
 /// 画面の大きさが `screen` のとき、クライアントに伝える中身の大きさ。帯のぶんだけ低い。
-pub fn content_size_for(screen: Size<i32, Logical>) -> Size<i32, Logical> {
+pub fn content_size_for(screen: Size) -> Size {
     (screen.w, (screen.h - TITLE_BAR_HEIGHT).max(1)).into()
 }
 
-/// 外形の幅が `width` のウィンドウを、左上が `wanted` に来るように動かしたいとき、実際に置く位置。
+/// 外枠の幅が `width` のウィンドウを、左上が `wanted` に来るように動かしたいとき、実際に置く位置。
 ///
-/// 帯をもう一度掴めるように、画面の外へ出せる範囲を限る。
-/// - 上: 帯の上の端は、画面の上の端より上へ行かない。
-/// - 下: 帯の全体が、画面の中に残る。
-/// - 左右: 帯のうち、少なくとも [`MIN_VISIBLE_BAR`] 画素(帯がそれより短ければ、帯の全体)が、画面の中に残る。
-pub fn clamp_outer_location(
-    wanted: Point<i32, Logical>,
-    width: i32,
-    screen: Size<i32, Logical>,
-) -> Point<i32, Logical> {
+/// タイトルバーをもう一度 grab できるように、使える範囲(`area`。画面から layer-shell の exclusive zone を
+/// 除いた矩形)の外へ出せる範囲を限る。
+/// - 上: タイトルバーの上の端は、使える範囲の上の端より上へ行かない。
+/// - 下: タイトルバーの全体が、使える範囲の中に残る。
+/// - 左右: タイトルバーのうち、少なくとも [`MIN_VISIBLE_BAR`] ピクセル(タイトルバーがそれより短ければ、
+///   その全体)が、使える範囲の中に残る。
+pub fn clamp_outer_location(wanted: Point, width: i32, area: Rect) -> Point {
     let keep = MIN_VISIBLE_BAR.min(width);
-    let x = wanted.x.min(screen.w - keep).max(keep - width);
-    let y = wanted.y.min(screen.h - TITLE_BAR_HEIGHT).max(0);
+    let (left, top) = (area.loc.x, area.loc.y);
+    let (right, bottom) = (left + area.size.w, top + area.size.h);
+    let x = wanted.x.min(right - keep).max(left + keep - width);
+    let y = wanted.y.min(bottom - TITLE_BAR_HEIGHT).max(top);
     (x, y).into()
 }
 
@@ -103,70 +94,6 @@ pub fn load_fonts(dir: &Path) -> TextPainter {
         info!("fonts loaded from {}", dir.display());
     }
     painter
-}
-
-/// 1つのウィンドウの帯の絵と、それを作ったときの条件。
-pub struct TitleBar {
-    text: String,
-    width: i32,
-    active: bool,
-    close_hot: bool,
-    buffer: MemoryRenderBuffer,
-}
-
-impl TitleBar {
-    /// 帯の絵を作る。`close_hot` は、閉じるボタンを目立たせて描くか。
-    pub fn new(
-        painter: &mut TextPainter,
-        text: &str,
-        width: i32,
-        active: bool,
-        close_hot: bool,
-    ) -> Self {
-        let pixels = paint_title_bar(painter, text, width, active, close_hot);
-        TitleBar {
-            text: text.to_owned(),
-            width,
-            active,
-            close_hot,
-            buffer: MemoryRenderBuffer::from_slice(
-                &pixels,
-                Fourcc::Xrgb8888,
-                (width, TITLE_BAR_HEIGHT),
-                1,
-                Transform::Normal,
-                None,
-            ),
-        }
-    }
-
-    /// 同じ条件で作った絵か(作り直さなくてよいか)。
-    pub fn matches(&self, text: &str, width: i32, active: bool, close_hot: bool) -> bool {
-        self.text == text
-            && self.width == width
-            && self.active == active
-            && self.close_hot == close_hot
-    }
-
-    /// 左上を `location` に置いた、描画の要素。
-    pub fn element(
-        &self,
-        renderer: &mut PixmanRenderer,
-        location: Point<i32, Logical>,
-    ) -> Option<MemoryRenderBufferRenderElement<PixmanRenderer>> {
-        MemoryRenderBufferRenderElement::from_buffer(
-            renderer,
-            // 拡大率は1なので、画面の上の位置と画素の位置は同じ。
-            (location.x as f64, location.y as f64),
-            &self.buffer,
-            None,
-            None,
-            None,
-            Kind::Unspecified,
-        )
-        .map_err(|e| warn!("failed to prepare a title bar: {e}"))
-        .ok()
-    }
 }
 
 /// 帯の絵を作る。幅は `width`、高さは [`TITLE_BAR_HEIGHT`]。画素の並びは B, G, R, X。
@@ -330,7 +257,7 @@ mod tests {
 
     #[test]
     fn a_moved_window_keeps_its_bar_reachable() {
-        let screen: Size<i32, Logical> = (640, 480).into();
+        let screen = Rect::from_size((640, 480).into());
         let clamp = |x: i32, y: i32| {
             let p = clamp_outer_location((x, y).into(), 320, screen);
             (p.x, p.y)

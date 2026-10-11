@@ -45,6 +45,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--fake WIDTHxHEIGHT` | 装置を開かず、その大きさの偽の画面へ描く |
 | `--dump FILE` | 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く(`--fake` のときだけ) |
 | `--socket PATH` | クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0` |
+| `--shell-socket PATH` | シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットのパスに `-shell` を付けたもの(`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。ここからつないだクライアントにだけ、layer-shell を見せる |
 | `--fonts DIR` | フォントの置き場(ウィンドウの題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(題名の文字が出ないだけ) |
 
 | `--test-input` | 試験のための入力の口を開く(下の「試験のための入力の口」)。ふだんの起動では、付けない |
@@ -62,6 +63,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | wl_shm | 共有メモリーのバッファ |
 | xdg_wm_base | ウィンドウ |
 | zxdg_decoration_manager_v1 | 飾り(題名の帯)を描く側の知らせ。いつも、サーバーの側で描くと答える |
+| zwlr_layer_shell_v1 | layer surface(タスクバーなどのシェルの部品)。シェルの部品のためのソケットからつないだクライアントにだけ見せる(`window-placement.md`) |
 | wl_output | 画面の大きさ。表示モードは1つで、幅と高さは画面と同じ |
 
 wl_seatは、ふだんは公開しません(入力の装置を扱わないためです)。試験のための入力の口を開いたときだけ、wl_seatとポインターを公開します。

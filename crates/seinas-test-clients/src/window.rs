@@ -12,6 +12,8 @@
 //! - `--move-on-press`: 中身の上でボタンが押されたら、ウィンドウを動かしてほしいと頼む(xdg_toplevelのmove)。
 //!   `--pointer` も付けたことになる。
 //! - `--ignore-close`: 閉じるように頼まれても、終わらない(応じないクライアントのまね)。
+//! - `--size WxH`: コンテンツの大きさ(既定は 200x150)。
+//! - `--color RRGGBB`: コンテンツの色(既定は ff8000、橙)。
 //!
 //! 標準入力から `title TEXT` の行が届くと、題名を `TEXT` に変える。
 //!
@@ -48,6 +50,8 @@ struct Options {
     pointer: bool,
     move_on_press: bool,
     ignore_close: bool,
+    size: Option<(u32, u32)>,
+    pixel: Option<[u8; 4]>,
 }
 
 /// 引数を読む。
@@ -63,6 +67,8 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--pointer" => options.pointer = true,
             "--move-on-press" => (options.pointer, options.move_on_press) = (true, true),
             "--ignore-close" => options.ignore_close = true,
+            "--size" => options.size = Some(crate::layer::parse_size(&value()?)?),
+            "--color" => options.pixel = Some(crate::layer::parse_color(&value()?)?),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -75,7 +81,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut wire = connect()?;
     wire.print_configures = true;
     // プールは、ウィンドウを出している間、持ち続ける。
-    let _pool = open_window_with(&mut wire, WIDTH, HEIGHT, PIXEL, &options.setup)?;
+    let (width, height) = options
+        .size
+        .map(|(w, h)| (w as i32, h as i32))
+        .unwrap_or((WIDTH, HEIGHT));
+    let pixel = options.pixel.unwrap_or(PIXEL);
+    let _pool = open_window_with(&mut wire, width, height, pixel, &options.setup)?;
     if options.pointer {
         wire.watch_pointer()?;
     }

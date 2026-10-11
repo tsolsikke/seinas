@@ -224,3 +224,4 @@ ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall
 | 日付 | 変更 | 差分 |
 | --- | --- | --- |
 | 2026-10-11 | 既定のフォントの確認、golden の追加、配布物へのフォントの同梱 | なし。M3 の構成のバイナリ(seinas-standalone、zeyes-min)の SHA-256 が変わっていない(1d29536e…、f40cff4e…)。フォントを読む syscall(open・fstat・read・close)は、上の「ファイル(フォント)」のとおり |
+| 2026-10-11 | layer-shell の受け口と、シェルの部品のためのソケット | コンポジタの syscall の種類は増えない(37 種類のまま)。ソケットが 1 つ増えるぶん、socket・bind・listen・flock が 1 回ずつ、ロックファイルの open と stat が増える(socket 2、bind 2、listen 2、flock 2)。fd は、起動した直後で 12(標準入出力とログを含む。シェルのソケットとそのロックファイルの 2 つが、前より増えた分。前の数は測っていない)、layer surface のクライアントがつながると +2(接続と、pool の memfd)。プロセスの本数は変わらない(layer surface のクライアントは、試験用のクライアントで、fd は 5) |

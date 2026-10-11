@@ -4,7 +4,7 @@
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! 決まりの説明は `docs/window-placement.md` にある。
 
-use smithay::utils::{Logical, Point, Rectangle, Size};
+use crate::geometry::{Point, PointF, Rect, Size};
 
 use crate::{
     decoration::{clamp_outer_location, CLOSE_BUTTON_SIZE, TITLE_BAR_HEIGHT},
@@ -30,12 +30,8 @@ pub enum Part {
 
 /// 外形の左上が `location`、外形の大きさが `outer` のウィンドウの中で、点 `point` がどの部分か。
 /// ウィンドウの外ならNone。
-pub fn part_at(
-    location: Point<i32, Logical>,
-    outer: Size<i32, Logical>,
-    point: Point<f64, Logical>,
-) -> Option<Part> {
-    if !Rectangle::new(location, outer).to_f64().contains(point) {
+pub fn part_at(location: Point, outer: Size, point: PointF) -> Option<Part> {
+    if !Rect::new(location, outer).contains(point) {
         return None;
     }
     Some(if point.y >= (location.y + TITLE_BAR_HEIGHT) as f64 {
@@ -56,8 +52,8 @@ enum Grab {
     Bar {
         window: WindowId,
         /// 押した点と、そのときのウィンドウの位置。
-        press: Point<f64, Logical>,
-        origin: Point<i32, Logical>,
+        press: PointF,
+        origin: Point,
         /// もう動かし始めたか([`DRAG_SLACK`] を超えたか)。
         moving: bool,
     },
@@ -96,6 +92,11 @@ pub struct Outcome {
 }
 
 impl Outcome {
+    /// 何も変えず、クライアントへ渡すだけの結果。
+    pub fn to_client() -> Self {
+        Outcome::new(Deliver::ToClient)
+    }
+
     fn new(deliver: Deliver) -> Self {
         Outcome {
             redraw: false,
@@ -113,7 +114,7 @@ pub struct Interaction {
     /// ボタンを押していないときに、ポインターが閉じるボタンの上にあるウィンドウ。
     hover: Option<WindowId>,
     /// 最後に見たポインターの位置。
-    last: Point<f64, Logical>,
+    last: PointF,
 }
 
 impl Default for Interaction {
@@ -142,6 +143,11 @@ impl Interaction {
         }
     }
 
+    /// ボタンを押していない(何も grab していない)か。
+    pub fn is_idle(&self) -> bool {
+        self.grab == Grab::None
+    }
+
     /// ウィンドウを動かしている最中か。
     pub fn is_moving(&self) -> bool {
         matches!(self.grab, Grab::Bar { moving: true, .. })
@@ -153,9 +159,9 @@ impl Interaction {
     pub fn motion<T>(
         &mut self,
         stack: &mut Stack<T>,
-        screen: Size<i32, Logical>,
-        point: Point<f64, Logical>,
-        outer_size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
+        area: Rect,
+        point: PointF,
+        outer_size_of: impl Fn(&T) -> Option<Size>,
     ) -> Outcome {
         self.last = point;
         match self.grab {
@@ -190,7 +196,7 @@ impl Interaction {
                 };
                 if moving {
                     let wanted = (origin.x + dx.round() as i32, origin.y + dy.round() as i32);
-                    let location = clamp_outer_location(wanted.into(), width, screen);
+                    let location = clamp_outer_location(wanted.into(), width, area);
                     outcome.redraw = stack.move_to(window, location);
                 }
                 outcome
@@ -219,9 +225,9 @@ impl Interaction {
     pub fn press<T>(
         &mut self,
         stack: &mut Stack<T>,
-        point: Point<f64, Logical>,
+        point: PointF,
         button: u32,
-        outer_size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
+        outer_size_of: impl Fn(&T) -> Option<Size>,
     ) -> Outcome {
         self.last = point;
         match &mut self.grab {
@@ -283,9 +289,9 @@ impl Interaction {
     pub fn release<T>(
         &mut self,
         stack: &mut Stack<T>,
-        point: Point<f64, Logical>,
+        point: PointF,
         button: u32,
-        outer_size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
+        outer_size_of: impl Fn(&T) -> Option<Size>,
     ) -> Outcome {
         self.last = point;
         let mut outcome = match &mut self.grab {
@@ -328,10 +334,10 @@ impl Interaction {
     pub fn begin_client_move<T>(
         &mut self,
         stack: &mut Stack<T>,
-        screen: Size<i32, Logical>,
+        area: Rect,
         window: WindowId,
-        press: Point<f64, Logical>,
-        outer_size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
+        press: PointF,
+        outer_size_of: impl Fn(&T) -> Option<Size>,
     ) -> bool {
         let (Grab::Client { .. }, Some(entry)) = (self.grab, stack.get(window)) else {
             return false;
@@ -342,7 +348,7 @@ impl Interaction {
             origin: entry.location,
             moving: true,
         };
-        self.motion(stack, screen, self.last, outer_size_of);
+        self.motion(stack, area, self.last, outer_size_of);
         true
     }
 
@@ -350,8 +356,8 @@ impl Interaction {
     fn update_hover<T>(
         &mut self,
         stack: &Stack<T>,
-        point: Point<f64, Logical>,
-        outer_size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
+        point: PointF,
+        outer_size_of: impl Fn(&T) -> Option<Size>,
     ) -> bool {
         let hover = close_button_under(stack, point, outer_size_of);
         std::mem::replace(&mut self.hover, hover) != hover
@@ -361,8 +367,8 @@ impl Interaction {
 /// 点 `point` が、見えている閉じるボタンの上にあれば、そのウィンドウ。
 fn close_button_under<T>(
     stack: &Stack<T>,
-    point: Point<f64, Logical>,
-    outer_size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
+    point: PointF,
+    outer_size_of: impl Fn(&T) -> Option<Size>,
 ) -> Option<WindowId> {
     let index = stack.index_at(point, &outer_size_of)?;
     let entry = stack.iter().nth(index)?;
@@ -379,11 +385,11 @@ mod tests {
     const OUTER: (i32, i32) = (320, 264);
     const RIGHT_BUTTON: u32 = 0x111;
 
-    fn size(_: &&str) -> Option<Size<i32, Logical>> {
+    fn size(_: &&str) -> Option<Size> {
         Some(OUTER.into())
     }
 
-    fn at(x: f64, y: f64) -> Point<f64, Logical> {
+    fn at(x: f64, y: f64) -> PointF {
         (x, y).into()
     }
 
@@ -397,8 +403,8 @@ mod tests {
         /// a(番号0、左上)、b(番号1、(32, 32))の順につないだ並び。手前はb。
         fn two() -> Self {
             let mut stack = Stack::default();
-            stack.add("a", SCREEN.into());
-            stack.add("b", SCREEN.into());
+            stack.add("a", Rect::from_size(SCREEN.into()));
+            stack.add("b", Rect::from_size(SCREEN.into()));
             World {
                 stack,
                 interaction: Interaction::default(),
@@ -406,8 +412,12 @@ mod tests {
         }
 
         fn motion(&mut self, x: f64, y: f64) -> Outcome {
-            self.interaction
-                .motion(&mut self.stack, SCREEN.into(), at(x, y), size)
+            self.interaction.motion(
+                &mut self.stack,
+                Rect::from_size(SCREEN.into()),
+                at(x, y),
+                size,
+            )
         }
 
         fn press(&mut self, x: f64, y: f64, button: u32) -> Outcome {
@@ -423,7 +433,7 @@ mod tests {
         fn begin_client_move(&mut self, window: WindowId, x: f64, y: f64) -> bool {
             self.interaction.begin_client_move(
                 &mut self.stack,
-                SCREEN.into(),
+                Rect::from_size(SCREEN.into()),
                 window,
                 at(x, y),
                 size,
@@ -528,7 +538,7 @@ mod tests {
         assert_eq!(world.place("a"), ((0, 50), None));
         world.release(100.0, 60.0, LEFT_BUTTON);
         // 次の新しいウィンドウは、aが手放した番号0に入る。
-        world.stack.add("c", SCREEN.into());
+        world.stack.add("c", Rect::from_size(SCREEN.into()));
         assert_eq!(world.place("c"), ((0, 0), Some(0)));
         assert_eq!(world.place("a"), ((0, 50), None));
     }

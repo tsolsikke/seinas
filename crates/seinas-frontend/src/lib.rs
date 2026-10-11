@@ -16,16 +16,19 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 pub use smithay;
 
 mod decoration;
+pub mod geometry;
 mod interaction;
 mod stack;
+mod title_bar;
 pub use decoration::{
     clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
-    paint_title_bar, title_text, TitleBar, ACTIVE_BAR, ACTIVE_TITLE, CLOSE_BUTTON_SIZE,
-    HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR,
-    TITLE_BAR_HEIGHT, TITLE_PADDING, TITLE_SIZE,
+    paint_title_bar, title_text, ACTIVE_BAR, ACTIVE_TITLE, CLOSE_BUTTON_SIZE, HOT_CLOSE_BUTTON,
+    HOT_CLOSE_MARK, INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, TITLE_BAR_HEIGHT, TITLE_PADDING,
+    TITLE_SIZE,
 };
 pub use interaction::{part_at, Deliver, Interaction, Outcome, Part, DRAG_SLACK, LEFT_BUTTON};
 pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, WindowId, CASCADE_STEP};
+pub use title_bar::TitleBar;
 
 use seinas_text::TextPainter;
 use smithay::{
@@ -40,6 +43,7 @@ use smithay::{
         pixman::PixmanRenderer,
         utils::with_renderer_surface_state,
     },
+    desktop::{layer_map_for_output, LayerSurface as MappedLayer, WindowSurfaceType},
     input::{
         pointer::{ButtonEvent, MotionEvent, PointerHandle},
         Seat, SeatHandler, SeatState,
@@ -54,19 +58,27 @@ use smithay::{
         protocol::wl_surface::WlSurface,
         Client, Display, DisplayHandle, Resource,
     },
-    utils::{Logical, Point, Serial, Size, SERIAL_COUNTER},
+    utils::{
+        Logical, Point as SmithayPoint, Rectangle, Serial, Size as SmithaySize, SERIAL_COUNTER,
+    },
     wayland::{
         compositor::{
             with_states, with_surface_tree_downward, CompositorClientState, CompositorState,
             SurfaceAttributes, TraversalAction,
         },
-        shell::xdg::{
-            decoration::XdgDecorationState, ToplevelSurface, XdgShellState, XdgToplevelSurfaceData,
+        shell::{
+            wlr_layer::{Layer, LayerSurface, LayerSurfaceData, WlrLayerShellState},
+            xdg::{
+                decoration::XdgDecorationState, ToplevelSurface, XdgShellState,
+                XdgToplevelSurfaceData,
+            },
         },
         shm::ShmState,
     },
 };
 use tracing::{error, info};
+
+use geometry::{Point, PointF, Rect, Size};
 
 /// フォントの置き場を指定する環境変数。
 pub const FONTS_ENV: &str = "SEINAS_FONTS";
@@ -95,7 +107,7 @@ pub struct Config {
 }
 
 render_elements! {
-    /// 画面に描く要素。クライアントの画面と、Seinasが描く題名の帯。
+    /// 画面に描く要素。クライアントの画面(ウィンドウと layer surface)と、Seinas が描くタイトルバー。
     pub WindowElement<=PixmanRenderer>;
     Surface=WaylandSurfaceRenderElement<PixmanRenderer>,
     TitleBar=MemoryRenderBufferRenderElement<PixmanRenderer>,
@@ -107,6 +119,8 @@ pub struct Frontend<D: SeatHandler> {
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
     pub xdg_decoration_state: XdgDecorationState,
+    /// layer-shell。global は、シェルの部品(シェルのソケットからつないだクライアント)にだけ見せる。
+    pub layer_shell_state: WlrLayerShellState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<D>,
     /// 席は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
@@ -115,7 +129,10 @@ pub struct Frontend<D: SeatHandler> {
     /// 画面(wl_output)。
     pub output: Output,
     /// 画面の大きさ。
-    pub size: Size<i32, Logical>,
+    pub size: Size,
+    /// 使える範囲(画面から、layer surface の exclusive zone を除いた矩形)。layer surface が変わったときに
+    /// 求め直す。
+    pub usable: Rect,
     /// ウィンドウの並び。先頭がいちばん手前で、それだけが「選ばれている(activated)」。
     /// 置き場所は、題名の帯を含めた外形の左上。
     pub windows: Stack<ToplevelSurface>,
@@ -142,23 +159,102 @@ pub trait BuildFrontend: SeatHandler + Sized {
 }
 
 impl<D: SeatHandler> Frontend<D> {
-    /// つないできたクライアントを受け入れる。
+    /// ふだんのソケットからつないできたクライアントを受け入れる。
     pub fn accept(&mut self, stream: std::os::unix::net::UnixStream) {
-        if let Err(e) = self
-            .display_handle
-            .insert_client(stream, Arc::new(ClientState::default()))
-        {
+        self.insert_client(stream, false);
+    }
+
+    /// シェルの部品のためのソケットからつないできたクライアントを受け入れる。このクライアントにだけ、
+    /// layer-shell の global を見せる(ADR 0002)。
+    pub fn accept_shell(&mut self, stream: std::os::unix::net::UnixStream) {
+        self.insert_client(stream, true);
+    }
+
+    fn insert_client(&mut self, stream: std::os::unix::net::UnixStream, shell: bool) {
+        let state = ClientState {
+            shell,
+            ..ClientState::default()
+        };
+        if let Err(e) = self.display_handle.insert_client(stream, Arc::new(state)) {
             error!("failed to accept a client: {e}");
         }
     }
 
-    /// 新しいウィンドウを、いちばん手前に加える。置き場所は、前のものからずらして決める。
+    /// 新しいウィンドウを、いちばん手前に加える。置き場所は、使える範囲の中で、前のものからずらして決める。
     ///
     /// 新しいウィンドウが「選ばれている」ものになり、前のものからは外れる。新しいウィンドウへの
     /// 最初のconfigureは、呼ぶ側が送る。
     pub fn add_window(&mut self, toplevel: ToplevelSurface) {
-        self.windows.add(toplevel, self.size);
+        self.windows.add(toplevel, self.usable);
         self.update_activation();
+    }
+
+    /// 新しい layer surface を、画面の layer の一覧に加える。最初の configure は、最初の commit で送る。
+    pub fn map_layer(&mut self, surface: LayerSurface, namespace: String) {
+        let layer = MappedLayer::new(surface, namespace);
+        if let Err(e) = layer_map_for_output(&self.output).map_layer(&layer) {
+            error!("failed to map a layer surface: {e}");
+        }
+        self.update_usable_area();
+    }
+
+    /// 去った layer surface を、一覧から外す。使える範囲が広がることがある。
+    pub fn unmap_layer(&mut self, surface: &LayerSurface) {
+        let mut map = layer_map_for_output(&self.output);
+        let layer = map
+            .layer_for_surface(surface.wl_surface(), WindowSurfaceType::TOPLEVEL)
+            .cloned();
+        if let Some(layer) = layer {
+            map.unmap_layer(&layer);
+        }
+        drop(map);
+        self.update_usable_area();
+    }
+
+    /// `surface` が layer surface なら、commit に合わせて並べ直し、まだなら最初の configure を送る。
+    /// layer surface だったらtrue。
+    pub fn commit_layer(&mut self, surface: &WlSurface) -> bool {
+        let mut map = layer_map_for_output(&self.output);
+        let Some(layer) = map
+            .layer_for_surface(surface, WindowSurfaceType::TOPLEVEL)
+            .cloned()
+        else {
+            return false;
+        };
+        // anchor、exclusive zone、margin、大きさの変更は、commit で効く。
+        map.arrange();
+        drop(map);
+        let initial_configure_sent = with_states(surface, |states| {
+            states
+                .data_map
+                .get::<LayerSurfaceData>()
+                .is_some_and(|data| data.lock().expect("the layer data").initial_configure_sent)
+        });
+        if !initial_configure_sent {
+            layer.layer_surface().send_configure();
+        }
+        self.update_usable_area();
+        true
+    }
+
+    /// 使える範囲を求め直す。変わったら、ウィンドウの位置を直して、trueを返す。
+    ///
+    /// スロットにあるウィンドウは新しい範囲の同じスロットへ、動かされたウィンドウはタイトルバーが範囲に
+    /// 入るように動かす。configure で伝えた大きさは、送り直さない(新しいウィンドウから、新しい範囲で伝える)。
+    pub fn update_usable_area(&mut self) -> bool {
+        let zone = layer_map_for_output(&self.output).non_exclusive_zone();
+        let usable = rect_from(zone);
+        if usable == self.usable {
+            return false;
+        }
+        info!(
+            "usable area: {}x{} at ({}, {})",
+            usable.size.w, usable.size.h, usable.loc.x, usable.loc.y
+        );
+        self.usable = usable;
+        self.windows
+            .rearrange(usable, window_size, clamp_outer_location);
+        true
     }
 
     /// 去ったウィンドウを、並びから外す。その下にあったものが見えるようになる。
@@ -191,21 +287,45 @@ impl<D: SeatHandler> Frontend<D> {
 
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウの中身。その画面と、中身の左上の位置を返す。
     ///
-    /// ポインターの焦点を渡す相手を決めるのに使う。点が題名の帯の上にあるときは、Noneを返す
-    /// (帯はSeinasのもので、クライアントには渡さない)。
-    pub fn window_under(
-        &self,
-        point: Point<f64, Logical>,
-    ) -> Option<(WlSurface, Point<f64, Logical>)> {
+    /// 点がタイトルバーの上にあるときは、Noneを返す(タイトルバーはSeinasのもので、クライアントには渡さない)。
+    pub fn window_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
         let index = self.windows.index_at(point, window_size)?;
         let window = self.windows.iter().nth(index)?;
         let content = content_location(window.location).to_f64();
         (point.y >= content.y).then(|| (window.item.wl_surface().clone(), content))
     }
 
-    /// ウィンドウを、描画の要素として並べる(手前から順)。1つのウィンドウは、題名の帯と、その下の中身。
+    /// 画面の上の点 `point` にある、層が `layers` のどれかの layer surface(手前から探す)。その画面と、
+    /// 左上の位置を返す。
+    pub fn layer_under(&self, point: PointF, layers: &[Layer]) -> Option<(WlSurface, PointF)> {
+        let map = layer_map_for_output(&self.output);
+        layers.iter().find_map(|&layer| {
+            map.layers_on(layer).rev().find_map(|mapped| {
+                let geometry = rect_from(map.layer_geometry(mapped)?);
+                geometry
+                    .contains(point)
+                    .then(|| (mapped.wl_surface().clone(), geometry.loc.to_f64()))
+            })
+        })
+    }
+
+    /// 画面の上の点 `point` で、ポインターのイベントを受け取る画面。手前から順に、overlay と top の
+    /// layer surface、ウィンドウの中身、bottom と background の layer surface。
+    pub fn surface_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
+        if let Some(found) = self.layer_under(point, &[Layer::Overlay, Layer::Top]) {
+            return Some(found);
+        }
+        if self.windows.index_at(point, window_size).is_some() {
+            // ウィンドウの上なら、タイトルバーの上でも、その下の層には渡さない。
+            return self.window_under(point);
+        }
+        self.layer_under(point, &[Layer::Bottom, Layer::Background])
+    }
+
+    /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay と top の layer surface、
+    /// ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
-        let mut elements = Vec::new();
+        let mut elements = self.layer_elements(renderer, &[Layer::Overlay, Layer::Top]);
         for (window, active) in self.windows.iter_with_activation() {
             let surface = window.item.wl_surface();
             // まだ絵を出していないウィンドウには、帯も付けない。
@@ -243,6 +363,38 @@ impl<D: SeatHandler> Frontend<D> {
                 .map(WindowElement::Surface),
             );
         }
+        elements.extend(self.layer_elements(renderer, &[Layer::Bottom, Layer::Background]));
+        elements
+    }
+
+    /// 層が `layers` の layer surface を、描画の要素として並べる(`layers` の順に、同じ層の中は手前から)。
+    fn layer_elements(
+        &self,
+        renderer: &mut PixmanRenderer,
+        layers: &[Layer],
+    ) -> Vec<WindowElement> {
+        let map = layer_map_for_output(&self.output);
+        let mut elements = Vec::new();
+        for &layer in layers {
+            // 同じ層の中では、後から加わったものが手前。
+            for mapped in map.layers_on(layer).rev() {
+                let Some(geometry) = map.layer_geometry(mapped) else {
+                    continue;
+                };
+                elements.extend(
+                    render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                        renderer,
+                        mapped.wl_surface(),
+                        (geometry.loc.x, geometry.loc.y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    )
+                    .into_iter()
+                    .map(WindowElement::Surface),
+                );
+            }
+        }
         elements
     }
 
@@ -260,9 +412,14 @@ impl<D: SeatHandler> Frontend<D> {
     /// クライアントへframeコールバックを返す(「次の絵を描いてよい」の合図)。
     pub fn send_frame_callbacks(&self, elapsed: Duration) {
         let time = elapsed.as_millis() as u32;
-        for window in self.windows.iter() {
+        let layers: Vec<WlSurface> = layer_map_for_output(&self.output)
+            .layers()
+            .map(|layer| layer.wl_surface().clone())
+            .collect();
+        let windows = self.windows.iter().map(|window| window.item.wl_surface());
+        for surface in windows.chain(layers.iter()) {
             with_surface_tree_downward(
-                window.item.wl_surface(),
+                surface,
                 (),
                 |_, _, &()| TraversalAction::DoChildren(()),
                 |_, states, &()| {
@@ -286,12 +443,12 @@ impl<D: SeatHandler> Frontend<D> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PointerInput {
     /// 画面の上の点へ動いた(入ってきたときも、これ)。
-    Motion(Point<f64, Logical>),
+    Motion(PointF),
     /// 画面の外へ出た。
     Leave,
     /// 点 `location` で、ボタン `button`(Linuxの入力の番号)が押された・離された。
     Button {
-        location: Point<f64, Logical>,
+        location: PointF,
         button: u32,
         pressed: bool,
     },
@@ -310,15 +467,36 @@ where
     let Some(pointer) = frontend.pointer.clone() else {
         return;
     };
-    let screen = frontend.size;
+    let area = frontend.usable;
+    // ボタンを押していない間に、top か overlay の layer surface(タスクバーなど)の上にあるときは、
+    // ウィンドウの操作(raise、ドラッグ、close ボタン)をせず、その layer surface に渡す。
+    let over_layer_above = |frontend: &Frontend<D>, point: PointF| {
+        frontend.interaction.is_idle()
+            && frontend
+                .layer_under(point, &[Layer::Overlay, Layer::Top])
+                .is_some()
+    };
     let (location, outcome) = match input {
+        PointerInput::Motion(location) if over_layer_above(frontend, location) => {
+            let mut outcome = frontend.interaction.leave();
+            outcome.deliver = Deliver::ToClient;
+            (location, outcome)
+        }
+        PointerInput::Button {
+            location,
+            pressed: true,
+            ..
+        } if over_layer_above(frontend, location) => (location, Outcome::to_client()),
         PointerInput::Motion(location) => (
             location,
             frontend
                 .interaction
-                .motion(&mut frontend.windows, screen, location, window_size),
+                .motion(&mut frontend.windows, area, location, window_size),
         ),
-        PointerInput::Leave => (pointer.current_location(), frontend.interaction.leave()),
+        PointerInput::Leave => (
+            point_from(pointer.current_location()),
+            frontend.interaction.leave(),
+        ),
         PointerInput::Button {
             location,
             button,
@@ -348,7 +526,9 @@ where
         toplevel.item.send_close();
     }
     let focus = match outcome.deliver {
-        Deliver::ToClient => frontend.window_under(location),
+        Deliver::ToClient => frontend
+            .surface_under(location)
+            .map(|(surface, origin)| (surface, to_smithay_point(origin))),
         Deliver::Nobody => None,
     };
     if outcome.redraw {
@@ -357,7 +537,7 @@ where
 
     let serial = SERIAL_COUNTER.next_serial();
     let motion = MotionEvent {
-        location,
+        location: to_smithay_point(location),
         serial,
         time,
     };
@@ -414,7 +594,7 @@ where
                 surface.id().same_client_as(&toplevel.wl_surface().id())
             })
         })
-        .map(|start| start.location);
+        .map(|start| point_from(start.location));
     let window = frontend
         .windows
         .iter()
@@ -423,10 +603,10 @@ where
     let (Some(press), Some(window)) = (press, window) else {
         return;
     };
-    let screen = frontend.size;
+    let area = frontend.usable;
     if !frontend.interaction.begin_client_move(
         &mut frontend.windows,
-        screen,
+        area,
         window,
         press,
         window_size,
@@ -449,14 +629,34 @@ where
     pointer.frame(state);
 }
 
-/// ウィンドウの中身(クライアントが描く所)の大きさ。まだ絵を出していなければNone。
-fn content_size(toplevel: &ToplevelSurface) -> Option<Size<i32, Logical>> {
-    with_renderer_surface_state(toplevel.wl_surface(), |state| state.surface_size())?
+/// ウィンドウのコンテンツ(クライアントが描く所)の大きさ。まだ絵を出していなければNone。
+fn content_size(toplevel: &ToplevelSurface) -> Option<Size> {
+    let size: SmithaySize<i32, Logical> =
+        with_renderer_surface_state(toplevel.wl_surface(), |state| state.surface_size())??;
+    Some(Size::new(size.w, size.h))
 }
 
-/// 題名の帯を含めた、ウィンドウの外形の大きさ。まだ絵を出していなければNone。
-fn window_size(toplevel: &ToplevelSurface) -> Option<Size<i32, Logical>> {
+/// タイトルバーを含めた、ウィンドウの外枠の大きさ。まだ絵を出していなければNone。
+fn window_size(toplevel: &ToplevelSurface) -> Option<Size> {
     content_size(toplevel).map(outer_size)
+}
+
+// 土台(Smithay)の幾何の型と、ウィンドウ管理の決まりの幾何の型(`geometry`)の変換。ADR 0001 の決まりで、
+// 変換はフロントエンドの中のここだけで行う。
+
+fn point_from(point: SmithayPoint<f64, Logical>) -> PointF {
+    PointF::new(point.x, point.y)
+}
+
+fn to_smithay_point(point: PointF) -> SmithayPoint<f64, Logical> {
+    (point.x, point.y).into()
+}
+
+fn rect_from(rect: Rectangle<i32, Logical>) -> Rect {
+    Rect::new(
+        Point::new(rect.loc.x, rect.loc.y),
+        Size::new(rect.size.w, rect.size.h),
+    )
 }
 
 /// 題名の帯に出す文字。クライアントが付けた題名、無ければapp_id、それも無ければ空。
@@ -495,6 +695,15 @@ pub fn reap_dead_clients<D: FrontendHost + 'static>(display: &mut Display<D>, st
 #[derive(Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
+    /// シェルの部品のためのソケットからつないだクライアントか。layer-shell の global は、このクライアントにだけ見せる。
+    pub shell: bool,
+}
+
+/// `client` がシェルの部品か。layer-shell などの global を見せる相手を絞るのに使う([`delegate_frontend!`])。
+pub fn is_shell_client(client: &Client) -> bool {
+    client
+        .get_data::<ClientState>()
+        .is_some_and(|state| state.shell)
 }
 
 impl ClientData for ClientState {
@@ -544,6 +753,7 @@ macro_rules! delegate_frontend {
                 surface: &$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
             ) {
                 $crate::smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
+                $crate::FrontendHost::frontend_mut(self).commit_layer(surface);
                 $crate::FrontendHost::redraw_needed(self);
             }
         }
@@ -561,7 +771,8 @@ macro_rules! delegate_frontend {
             fn new_toplevel(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 let frontend = $crate::FrontendHost::frontend_mut(self);
                 // 中身に使える大きさ(画面から、題名の帯のぶんを引いたもの)を伝える。
-                let size = $crate::content_size_for(frontend.size);
+                let size = $crate::content_size_for(frontend.usable.size);
+                let size = $crate::smithay::utils::Size::from((size.w, size.h));
                 frontend.output.enter(surface.wl_surface());
                 surface.with_pending_state(|state| {
                     state.size = Some(size);
@@ -631,6 +842,27 @@ macro_rules! delegate_frontend {
             }
         }
 
+        impl $crate::smithay::wayland::shell::wlr_layer::WlrLayerShellHandler for $ty {
+            fn shell_state(&mut self) -> &mut $crate::smithay::wayland::shell::wlr_layer::WlrLayerShellState {
+                &mut $crate::FrontendHost::frontend_mut(self).layer_shell_state
+            }
+            fn new_layer_surface(
+                &mut self,
+                surface: $crate::smithay::wayland::shell::wlr_layer::LayerSurface,
+                _output: Option<$crate::smithay::reexports::wayland_server::protocol::wl_output::WlOutput>,
+                _layer: $crate::smithay::wayland::shell::wlr_layer::Layer,
+                namespace: String,
+            ) {
+                // 画面は 1 つなので、output の指定は見ない。
+                $crate::FrontendHost::frontend_mut(self).map_layer(surface, namespace);
+                $crate::FrontendHost::redraw_needed(self);
+            }
+            fn layer_destroyed(&mut self, surface: $crate::smithay::wayland::shell::wlr_layer::LayerSurface) {
+                $crate::FrontendHost::frontend_mut(self).unmap_layer(&surface);
+                $crate::FrontendHost::redraw_needed(self);
+            }
+        }
+
         impl $crate::smithay::input::SeatHandler for $ty {
             type KeyboardFocus = $crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
             type PointerFocus = $crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
@@ -663,7 +895,10 @@ macro_rules! delegate_frontend {
                     input::SeatState,
                     wayland::{
                         compositor::CompositorState,
-                        shell::xdg::{decoration::XdgDecorationState, XdgShellState},
+                        shell::{
+                            wlr_layer::WlrLayerShellState,
+                            xdg::{decoration::XdgDecorationState, XdgShellState},
+                        },
                         shm::ShmState,
                     },
                 };
@@ -675,6 +910,9 @@ macro_rules! delegate_frontend {
                     [] as [$crate::smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::WmCapabilities; 0],
                 );
                 let xdg_decoration_state = XdgDecorationState::new::<Self>(display_handle);
+                // layer-shell は、シェルの部品にだけ見せる(ADR 0002)。
+                let layer_shell_state =
+                    WlrLayerShellState::new_with_filter::<Self, _>(display_handle, $crate::is_shell_client);
                 let shm_state = ShmState::new::<Self>(display_handle, vec![]);
                 let mut seat_state = SeatState::new();
                 let (seat, pointer) = if config.pointer {
@@ -691,12 +929,17 @@ macro_rules! delegate_frontend {
                     compositor_state,
                     xdg_shell_state,
                     xdg_decoration_state,
+                    layer_shell_state,
                     shm_state,
                     seat_state,
                     seat,
                     pointer,
                     output,
-                    size: (config.width, config.height).into(),
+                    size: $crate::geometry::Size::new(config.width, config.height),
+                    usable: $crate::geometry::Rect::from_size($crate::geometry::Size::new(
+                        config.width,
+                        config.height,
+                    )),
                     windows: $crate::Stack::default(),
                     text: $crate::load_fonts(&config.font_dir),
                     title_bars: Default::default(),
@@ -709,6 +952,7 @@ macro_rules! delegate_frontend {
         $crate::smithay::delegate_shm!($ty);
         $crate::smithay::delegate_xdg_shell!($ty);
         $crate::smithay::delegate_xdg_decoration!($ty);
+        $crate::smithay::delegate_layer_shell!($ty);
         $crate::smithay::delegate_seat!($ty);
         $crate::smithay::delegate_output!($ty);
     };

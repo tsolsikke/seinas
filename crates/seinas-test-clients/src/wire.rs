@@ -87,6 +87,10 @@ pub struct Wire {
     pointer: Option<u32>,
     /// コンポジタから、閉じるように頼まれたか(xdg_toplevel.close)。
     pub close_requested: bool,
+    /// layer surface(zwlr_layer_surface_v1)の番号。layer surface を作ったときだけ。
+    layer_surface: Option<u32>,
+    /// layer surface に届いた、いちばん新しい configure の大きさ。
+    pub layer_size: Option<(u32, u32)>,
 }
 
 impl Wire {
@@ -269,6 +273,32 @@ impl Wire {
 
     /// 返事の要るイベント(ping、configure)に返事をする。届いた知らせの中身も、求められていれば書く。
     pub fn answer(&mut self, event: &Event) -> Result<(), String> {
+        if let Some(layer) = self.layer_surface {
+            // layer surface を作ったときは、xdg のオブジェクトは無い(番号が重なるので、先に見る)。
+            return match (event.object, event.opcode) {
+                // zwlr_layer_surface_v1.configure(serial、幅、高さ)→ ack_configure
+                (object, 0) if object == layer => {
+                    let (width, height) =
+                        (event.u32_at(4).unwrap_or(0), event.u32_at(8).unwrap_or(0));
+                    self.layer_size = Some((width, height));
+                    if self.print_configures {
+                        println!("layer: configure {width}x{height}");
+                        let _ = std::io::stdout().flush();
+                    }
+                    self.send(&message(layer, 6, &event.body[..4]))
+                }
+                // zwlr_layer_surface_v1.closed
+                (object, 1) if object == layer => {
+                    self.close_requested = true;
+                    if self.print_configures {
+                        println!("layer: closed");
+                        let _ = std::io::stdout().flush();
+                    }
+                    Ok(())
+                }
+                _ => Ok(()),
+            };
+        }
         match (event.object, event.opcode) {
             // xdg_wm_base.ping → pong
             (WM_BASE, 0) => self.send(&message(WM_BASE, 3, &event.body[..4])),
@@ -411,6 +441,8 @@ pub fn connect() -> Result<Wire, String> {
         seat: None,
         pointer: None,
         close_requested: false,
+        layer_surface: None,
+        layer_size: None,
     })
 }
 
@@ -421,7 +453,18 @@ pub fn commit_buffer(
     height: i32,
     callback: u32,
 ) -> Result<(), String> {
-    let mut attach = BUFFER.to_le_bytes().to_vec();
+    commit_buffer_with(wire, BUFFER, width, height, callback)
+}
+
+/// [`commit_buffer`] と同じだが、付けるバッファの番号を `buffer` にする。
+fn commit_buffer_with(
+    wire: &mut Wire,
+    buffer: u32,
+    width: i32,
+    height: i32,
+    callback: u32,
+) -> Result<(), String> {
+    let mut attach = buffer.to_le_bytes().to_vec();
     attach.extend([0i32.to_le_bytes(), 0i32.to_le_bytes()].concat());
     let mut damage = Vec::new();
     for value in [0, 0, width, height] {
@@ -545,6 +588,134 @@ pub fn open_window_with(
     // バッファを出し、frameコールバックが届くまで待つ(コンポジタが描いた合図)。
     let first_frame = wire.new_id();
     commit_buffer(wire, width, height, first_frame)?;
+    wire.wait_for("the first frame", |e| e.object == first_frame)?;
+    wire.globals = globals;
+    Ok(pool)
+}
+
+/// layer surface の指定(wlr-layer-shell)。
+pub struct LayerSetup {
+    /// 層。0 が background、1 が bottom、2 が top、3 が overlay。
+    pub layer: u32,
+    /// anchor のビット(上 1、下 2、左 4、右 8)。
+    pub anchor: u32,
+    /// 頼む大きさ。0 は「コンポジタに任せる」(anchor した向きいっぱい)。
+    pub width: u32,
+    pub height: u32,
+    pub exclusive_zone: i32,
+    /// margin(上、右、下、左)。
+    pub margin: [i32; 4],
+    pub namespace: String,
+    /// 色(B, G, R, X)。
+    pub pixel: [u8; 4],
+}
+
+/// layer surface を 1 つ出し、コンポジタが描くまで待つ。返すのは、絵を置いた pool(memfd)。
+///
+/// コンポジタが zwlr_layer_shell_v1 を見せていなければ、失敗する(シェルのソケットからつないでいない場合など)。
+pub fn open_layer(wire: &mut Wire, setup: &LayerSetup) -> Result<File, String> {
+    // 新しいオブジェクトの番号は、間を空けずに順に使う決まりなので、この手順だけの番号を使う。
+    const LAYER_SHELL: u32 = 6;
+    const LAYER_SURFACE: u32 = 8;
+    const LAYER_POOL: u32 = 9;
+    const LAYER_BUFFER: u32 = 10;
+
+    wire.send(&message(WL_DISPLAY, 1, &REGISTRY.to_le_bytes()))?;
+    wire.send(&message(WL_DISPLAY, 0, &SYNC.to_le_bytes()))?;
+    let mut globals: Vec<(u32, String)> = Vec::new();
+    loop {
+        let event = wire.wait_for("the globals", |e| matches!(e.object, REGISTRY | SYNC))?;
+        if event.object == SYNC {
+            break;
+        }
+        if event.opcode == 0 {
+            let name = event.u32_at(0).ok_or("a broken global")?;
+            let length = event.u32_at(4).ok_or("a broken global")? as usize;
+            let interface = event
+                .body
+                .get(8..8 + length.saturating_sub(1))
+                .ok_or("a broken global")?;
+            globals.push((name, String::from_utf8_lossy(interface).into_owned()));
+        }
+    }
+    let bind = |interface: &str, version: u32, id: u32| -> Result<Vec<u8>, String> {
+        let (name, _) = globals
+            .iter()
+            .find(|(_, i)| i == interface)
+            .ok_or_else(|| format!("the compositor does not offer {interface}"))?;
+        let mut body = name.to_le_bytes().to_vec();
+        body.extend(string(interface));
+        body.extend(version.to_le_bytes());
+        body.extend(id.to_le_bytes());
+        Ok(message(REGISTRY, 0, &body))
+    };
+    wire.send(&bind("wl_compositor", 1, COMPOSITOR)?)?;
+    wire.send(&bind("wl_shm", 1, SHM)?)?;
+    wire.send(&bind("zwlr_layer_shell_v1", 4, LAYER_SHELL)?)?;
+
+    // layer surface を作り、最初の configure を待つ。
+    wire.send(&message(COMPOSITOR, 0, &SURFACE.to_le_bytes()))?;
+    let mut get = LAYER_SURFACE.to_le_bytes().to_vec();
+    get.extend(SURFACE.to_le_bytes());
+    // output は指定しない(null)。
+    get.extend(0u32.to_le_bytes());
+    get.extend(setup.layer.to_le_bytes());
+    get.extend(string(&setup.namespace));
+    wire.send(&message(LAYER_SHELL, 0, &get))?;
+    wire.layer_surface = Some(LAYER_SURFACE);
+    wire.send(&message(
+        LAYER_SURFACE,
+        0,
+        &[setup.width.to_le_bytes(), setup.height.to_le_bytes()].concat(),
+    ))?;
+    wire.send(&message(LAYER_SURFACE, 1, &setup.anchor.to_le_bytes()))?;
+    wire.send(&message(
+        LAYER_SURFACE,
+        2,
+        &setup.exclusive_zone.to_le_bytes(),
+    ))?;
+    let margin: Vec<u8> = setup.margin.iter().flat_map(|m| m.to_le_bytes()).collect();
+    wire.send(&message(LAYER_SURFACE, 3, &margin))?;
+    wire.commit()?;
+    wire.wait_for("the first configure of the layer surface", |e| {
+        (e.object, e.opcode) == (LAYER_SURFACE, 0)
+    })?;
+    // コンポジタが決めた大きさ。0 なら、頼んだ大きさ。
+    let (configured_w, configured_h) = wire.layer_size.unwrap_or((0, 0));
+    let width = if configured_w > 0 {
+        configured_w
+    } else {
+        setup.width
+    } as i32;
+    let height = if configured_h > 0 {
+        configured_h
+    } else {
+        setup.height
+    } as i32;
+    if width <= 0 || height <= 0 {
+        return Err(format!("no size for the layer surface ({width}x{height})"));
+    }
+
+    let stride = width * 4;
+    let pool = make_pool(width, height, setup.pixel)?;
+    wire.send_with_fd(
+        &message(
+            SHM,
+            0,
+            &[LAYER_POOL.to_le_bytes(), (stride * height).to_le_bytes()].concat(),
+        ),
+        pool.as_raw_fd(),
+    )?;
+    let mut create_buffer = LAYER_BUFFER.to_le_bytes().to_vec();
+    for value in [0, width, height, stride] {
+        create_buffer.extend(value.to_le_bytes());
+    }
+    create_buffer.extend(FORMAT_XRGB8888.to_le_bytes());
+    wire.send(&message(LAYER_POOL, 0, &create_buffer))?;
+
+    wire.next_id = LAYER_BUFFER + 1;
+    let first_frame = wire.new_id();
+    commit_buffer_with(wire, LAYER_BUFFER, width, height, first_frame)?;
     wire.wait_for("the first frame", |e| e.object == first_frame)?;
     wire.globals = globals;
     Ok(pool)

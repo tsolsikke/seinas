@@ -651,6 +651,7 @@ version = "0.1.0"
 dependencies = [
  "seinas-fbdev",
  "seinas-frontend",
+ "seinas-golden",
  "seinas-render",
  "smithay",
  "tracing",

@@ -3,14 +3,14 @@
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! 受け口は、`T` をtoplevelにして使う。決まりの説明は `docs/window-placement.md` にある。
 
-use smithay::utils::{Logical, Point, Rectangle, Size};
+use crate::geometry::{Point, PointF, Rect, Size};
 
 /// 新しいウィンドウを、前のものからずらす量(画素)。右へも下へも、この量だけずらす。
 pub const CASCADE_STEP: i32 = 32;
 
-/// 置き場所の数。ウィンドウの左上が、画面の短い辺の半分を超えない範囲に収まるだけ用意する。
-pub fn slot_count(screen: Size<i32, Logical>) -> usize {
-    ((screen.w.min(screen.h) / 2 / CASCADE_STEP).max(1)) as usize
+/// スロットの数。ウィンドウの左上が、使える範囲の短い辺の半分を超えない範囲に収まるだけ用意する。
+pub fn slot_count(area: Size) -> usize {
+    ((area.w.min(area.h) / 2 / CASCADE_STEP).max(1)) as usize
 }
 
 /// 新しいウィンドウの置き場所の番号を決める。
@@ -23,10 +23,10 @@ pub fn next_slot(occupied: &[usize], slots: usize) -> usize {
         .unwrap_or(occupied.len() % slots)
 }
 
-/// 置き場所の番号から、左上の位置を求める。
-pub fn slot_location(slot: usize) -> Point<i32, Logical> {
+/// スロット番号から、使える範囲 `area` の中での左上の位置を求める。
+pub fn slot_location(slot: usize, area: Rect) -> Point {
     let offset = slot as i32 * CASCADE_STEP;
-    (offset, offset).into()
+    (area.loc.x + offset, area.loc.y + offset).into()
 }
 
 /// 並びの中のウィンドウを見分ける番号。ウィンドウが去るまで変わらず、使い回さない。
@@ -41,7 +41,7 @@ pub struct Placed<T> {
     /// 手放してNoneになる(その番号は、次の新しいウィンドウが使える)。
     pub slot: Option<usize>,
     /// 画面の中での、左上の位置。
-    pub location: Point<i32, Logical>,
+    pub location: Point,
 }
 
 /// ウィンドウの並び。先頭がいちばん手前。
@@ -84,10 +84,11 @@ impl<T> Stack<T> {
         self.entries.is_empty()
     }
 
-    /// 新しいウィンドウを、いちばん手前に加える。置き場所は、前のものからずらして決める。
-    pub fn add(&mut self, item: T, screen: Size<i32, Logical>) -> WindowId {
+    /// 新しいウィンドウを、いちばん手前に加える。置き場所は、使える範囲 `area` の中で、前のものから
+    /// ずらして決める。
+    pub fn add(&mut self, item: T, area: Rect) -> WindowId {
         let occupied: Vec<usize> = self.entries.iter().filter_map(|entry| entry.slot).collect();
-        let slot = next_slot(&occupied, slot_count(screen));
+        let slot = next_slot(&occupied, slot_count(area.size));
         let id = WindowId(self.next_id);
         self.next_id += 1;
         self.entries.insert(
@@ -96,10 +97,38 @@ impl<T> Stack<T> {
                 item,
                 id,
                 slot: Some(slot),
-                location: slot_location(slot),
+                location: slot_location(slot, area),
             },
         );
         id
+    }
+
+    /// 使える範囲が `area` に変わったときに、ウィンドウの位置を直す。位置が変わったウィンドウがあればtrue。
+    ///
+    /// スロットにあるウィンドウは、新しい範囲の同じスロットへ移す。動かされた(スロットの無い)ウィンドウは、
+    /// タイトルバーが新しい範囲に入るように直す(`clamp` は、外枠の幅と左上の位置から、置く位置を返す)。
+    /// 重なる順は変えない。
+    pub fn rearrange(
+        &mut self,
+        area: Rect,
+        size_of: impl Fn(&T) -> Option<Size>,
+        clamp: impl Fn(Point, i32, Rect) -> Point,
+    ) -> bool {
+        let mut changed = false;
+        for entry in &mut self.entries {
+            let location = match entry.slot {
+                Some(slot) => slot_location(slot, area),
+                None => match size_of(&entry.item) {
+                    Some(size) => clamp(entry.location, size.w, area),
+                    None => entry.location,
+                },
+            };
+            if location != entry.location {
+                entry.location = location;
+                changed = true;
+            }
+        }
+        changed
     }
 
     /// 番号が `id` のウィンドウ。もう去っていればNone。
@@ -115,7 +144,7 @@ impl<T> Stack<T> {
     /// 番号が `id` のウィンドウを、左上が `location` に来るように動かす。位置が変わったらtrue。
     ///
     /// 動かしたウィンドウは、置き場所の番号を手放す。重なる順は変えない。
-    pub fn move_to(&mut self, id: WindowId, location: Point<i32, Logical>) -> bool {
+    pub fn move_to(&mut self, id: WindowId, location: Point) -> bool {
         let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
             return false;
         };
@@ -135,17 +164,9 @@ impl<T> Stack<T> {
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウが、手前から何番目か。
     ///
     /// `size_of` は、ウィンドウの大きさを返す。まだ絵を出していないウィンドウ(大きさが無い)には当たらない。
-    pub fn index_at(
-        &self,
-        point: Point<f64, Logical>,
-        size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
-    ) -> Option<usize> {
+    pub fn index_at(&self, point: PointF, size_of: impl Fn(&T) -> Option<Size>) -> Option<usize> {
         self.entries.iter().position(|entry| {
-            size_of(&entry.item).is_some_and(|size| {
-                Rectangle::new(entry.location, size)
-                    .to_f64()
-                    .contains(point)
-            })
+            size_of(&entry.item).is_some_and(|size| Rect::new(entry.location, size).contains(point))
         })
     }
 
@@ -164,11 +185,7 @@ impl<T> Stack<T> {
     /// 点 `point` にある、いちばん手前のウィンドウを、いちばん手前に出す。順が変わったらtrue。
     ///
     /// すでにいちばん手前のとき、どのウィンドウの上でもないときは、何もしない。
-    pub fn raise_at(
-        &mut self,
-        point: Point<f64, Logical>,
-        size_of: impl Fn(&T) -> Option<Size<i32, Logical>>,
-    ) -> bool {
+    pub fn raise_at(&mut self, point: PointF, size_of: impl Fn(&T) -> Option<Size>) -> bool {
         match self.index_at(point, size_of) {
             Some(index) => self.raise(index),
             None => false,
@@ -184,11 +201,11 @@ mod tests {
     /// 試験のウィンドウの大きさ(どれも同じ)。
     const SIZE: (i32, i32) = (320, 240);
 
-    fn size(_: &&str) -> Option<Size<i32, Logical>> {
+    fn size(_: &&str) -> Option<Size> {
         Some(SIZE.into())
     }
 
-    fn at(x: f64, y: f64) -> Point<f64, Logical> {
+    fn at(x: f64, y: f64) -> PointF {
         (x, y).into()
     }
 
@@ -220,7 +237,7 @@ mod tests {
     fn three() -> Stack<&'static str> {
         let mut stack = Stack::default();
         for name in ["a", "b", "c"] {
-            stack.add(name, SCREEN.into());
+            stack.add(name, Rect::from_size(SCREEN.into()));
         }
         stack
     }
@@ -245,9 +262,14 @@ mod tests {
 
     #[test]
     fn slots_step_down_and_right_and_stay_in_the_upper_left_half() {
-        assert_eq!(slot_location(0), Point::from((0, 0)));
-        assert_eq!(slot_location(1), Point::from((32, 32)));
-        assert_eq!(slot_location(3), Point::from((96, 96)));
+        let screen = Rect::from_size((640, 480).into());
+        assert_eq!(slot_location(0, screen), Point::from((0, 0)));
+        assert_eq!(slot_location(1, screen), Point::from((32, 32)));
+        assert_eq!(slot_location(3, screen), Point::from((96, 96)));
+        // 使える範囲が画面の左上から始まらないとき(上にタスクバーがあるときなど)は、その左上が基準。
+        let below_a_bar = Rect::new((0, 40).into(), (640, 440).into());
+        assert_eq!(slot_location(0, below_a_bar), Point::from((0, 40)));
+        assert_eq!(slot_location(2, below_a_bar), Point::from((64, 104)));
 
         assert_eq!(slot_count((800, 600).into()), 9);
         assert_eq!(slot_count((640, 480).into()), 7);
@@ -256,7 +278,10 @@ mod tests {
         assert_eq!(slot_count((40, 30).into()), 1);
         // いちばん遠い置き場所でも、左上は、画面の短い辺の半分より手前にある。
         for (w, h) in [(800, 600), (640, 480), (1024, 768), (600, 800)] {
-            let last = slot_location(slot_count((w, h).into()) - 1);
+            let last = slot_location(
+                slot_count((w, h).into()) - 1,
+                Rect::from_size((w, h).into()),
+            );
             assert!(last.x < w.min(h) / 2 && last.y < w.min(h) / 2);
         }
     }
@@ -340,7 +365,7 @@ mod tests {
         // aを手前に出してから、bを外す。空くのはbの番号1で、次のウィンドウはそこに入る。
         stack.raise_at(at(10.0, 10.0), size);
         stack.remove(|name| *name == "b");
-        stack.add("d", SCREEN.into());
+        stack.add("d", Rect::from_size(SCREEN.into()));
         assert_eq!(order(&stack), ["d", "a", "c"]);
         assert_eq!(
             places(&stack),
@@ -355,9 +380,9 @@ mod tests {
     #[test]
     fn a_moved_window_gives_up_its_slot_and_keeps_its_position() {
         let mut stack: Stack<&'static str> = Stack::default();
-        let a = stack.add("a", SCREEN.into());
-        let b = stack.add("b", SCREEN.into());
-        stack.add("c", SCREEN.into());
+        let a = stack.add("a", Rect::from_size(SCREEN.into()));
+        let b = stack.add("b", Rect::from_size(SCREEN.into()));
+        stack.add("c", Rect::from_size(SCREEN.into()));
 
         // 奥のaを動かす: 位置が変わり、番号を手放す。重なる順は変わらない。
         assert!(stack.move_to(a, (300, 200).into()));
@@ -376,7 +401,7 @@ mod tests {
         assert_eq!(stack.get(b).unwrap().slot, Some(1));
 
         // 次の新しいウィンドウは、aが手放した番号0(左上)に入る。aは、動かした先に残る。
-        stack.add("d", SCREEN.into());
+        stack.add("d", Rect::from_size(SCREEN.into()));
         assert_eq!(order(&stack), ["d", "c", "b", "a"]);
         assert_eq!(
             places(&stack),
@@ -395,8 +420,44 @@ mod tests {
         stack.remove(|name| *name == "a");
         assert!(!stack.move_to(a, (0, 0).into()));
         assert!(stack.get(a).is_none());
-        let e = stack.add("e", SCREEN.into());
+        let e = stack.add("e", Rect::from_size(SCREEN.into()));
         assert_ne!(e, a);
+    }
+
+    #[test]
+    fn windows_follow_the_usable_area_when_it_changes() {
+        let mut stack: Stack<&'static str> = Stack::default();
+        let screen = Rect::from_size(SCREEN.into());
+        stack.add("a", screen);
+        stack.add("b", screen);
+        let c = stack.add("c", screen);
+        // c は動かされて、スロットを手放している。
+        stack.move_to(c, (300, 2).into());
+        // 上に高さ 40 のタスクバーが来た: スロットのウィンドウは、新しい範囲の同じスロットへ移る。
+        // 動かされたウィンドウは、タイトルバーが範囲に入るように下がる。
+        let below_a_bar = Rect::new((0, 40).into(), (640, 440).into());
+        let clamp = |p: Point, _: i32, area: Rect| Point::new(p.x, p.y.max(area.loc.y));
+        assert!(stack.rearrange(below_a_bar, size, clamp));
+        assert_eq!(
+            places(&stack),
+            [
+                ("a", Some(0), (0, 40)),
+                ("b", Some(1), (32, 72)),
+                ("c", None, (300, 40))
+            ]
+        );
+        // 同じ範囲で、もう一度呼んでも、何も変わらない。
+        assert!(!stack.rearrange(below_a_bar, size, clamp));
+        // 次の新しいウィンドウも、新しい範囲を基準に置かれる。
+        stack.remove(|name| *name == "b");
+        stack.add("d", below_a_bar);
+        assert_eq!(
+            stack
+                .iter()
+                .find(|e| e.item == "d")
+                .map(|e| (e.slot, e.location)),
+            Some((Some(1), Point::new(32, 72)))
+        );
     }
 
     #[test]
@@ -405,11 +466,11 @@ mod tests {
         assert!(activated(&stack).is_empty());
 
         // つないだとき: 新しいものが選ばれ、前のものからは外れる。
-        stack.add("a", SCREEN.into());
+        stack.add("a", Rect::from_size(SCREEN.into()));
         assert_eq!(activated(&stack), ["a"]);
-        stack.add("b", SCREEN.into());
+        stack.add("b", Rect::from_size(SCREEN.into()));
         assert_eq!(activated(&stack), ["b"]);
-        stack.add("c", SCREEN.into());
+        stack.add("c", Rect::from_size(SCREEN.into()));
         assert_eq!(activated(&stack), ["c"]);
 
         // 手前に出したとき: 出したものが選ばれる。
