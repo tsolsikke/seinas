@@ -9,6 +9,9 @@
 //! - `--app-id TEXT`: app_idを付ける。無ければ、付けない。
 //! - `--decoration`: 飾り(題名の帯など)をどちらの側で描くかを、xdg-decorationで尋ねる。
 //! - `--pointer`: 席のポインターを使い、届いた知らせを書く。
+//! - `--keyboard`: seat のキーボードを使い、届いたイベントを書く(`window: keyboard enter`、`window: keyboard leave`、
+//!   `window: key 30 pressed`、`window: modifiers 1 0 0 0`(押されている・ラッチ・ロック・グループ)、
+//!   `window: keymap 大きさ`)。
 //! - `--move-on-press`: 中身の上でボタンが押されたら、ウィンドウを動かしてほしいと頼む(xdg_toplevelのmove)。
 //!   `--pointer` も付けたことになる。
 //! - `--ignore-close`: 閉じるように頼まれても、終わらない(応じないクライアントのまね)。
@@ -59,6 +62,7 @@ const PIXEL: [u8; 4] = [0x00, 0x80, 0xff, 0xff]; // B, G, R, X
 struct Options {
     setup: WindowSetup,
     pointer: bool,
+    keyboard: bool,
     move_on_press: bool,
     ignore_close: bool,
     size: Option<(u32, u32)>,
@@ -78,6 +82,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--app-id" => options.setup.app_id = Some(value()?),
             "--decoration" => options.setup.decoration = true,
             "--pointer" => options.pointer = true,
+            "--keyboard" => options.keyboard = true,
             "--move-on-press" => (options.pointer, options.move_on_press) = (true, true),
             "--ignore-close" => options.ignore_close = true,
             "--size" => options.size = Some(crate::layer::parse_size(&value()?)?),
@@ -125,8 +130,8 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut seen = (wire.toplevel_size, wire.toplevel_maximized);
     // `sync` の行で送った wl_display.sync の callback の番号。
     let mut sync = None;
-    if options.pointer {
-        wire.watch_pointer()?;
+    if options.pointer || options.keyboard {
+        wire.watch_seat(options.pointer, options.keyboard)?;
     }
     println!("window: drawn");
     let _ = std::io::stdout().flush();

@@ -153,6 +153,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             width: WIDTH,
             height: HEIGHT,
             pointer: true,
+            keyboard: None,
             font_dir: font_dir(fonts),
         },
     );

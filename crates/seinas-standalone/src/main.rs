@@ -55,8 +55,8 @@ use std::{
 };
 
 use seinas_frontend::{
-    font_dir, geometry::PointF, pointer_input, reap_dead_clients, BuildFrontend, Config, Frontend,
-    FrontendHost, PointerInput, LEFT_BUTTON,
+    font_dir, geometry::PointF, keyboard_input, pointer_input, reap_dead_clients, BuildFrontend,
+    Config, Frontend, FrontendHost, KeyboardConfig, PointerInput, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -134,7 +134,35 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
 
 /// 試験のための入力の口に届いた1行を、ポインターの知らせに直す。`at` は、ポインターのいまの位置で、
 /// `motion` の行が届くたびに書き換える。
-fn parse_test_input(line: &str, at: &mut PointF) -> Result<PointerInput, String> {
+/// テスト用の入力インターフェースの 1 行。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum TestInput {
+    Pointer(PointerInput),
+    /// キー(evdev の番号)を押した・離した。
+    Key {
+        code: u32,
+        pressed: bool,
+    },
+}
+
+fn parse_test_input(line: &str, at: &mut PointF) -> Result<TestInput, String> {
+    if let Some(rest) = line.strip_prefix("key ") {
+        let mut words = rest.split_whitespace();
+        let code = words
+            .next()
+            .and_then(|code| code.parse().ok())
+            .ok_or_else(|| format!("key needs a key code: {line}"))?;
+        let pressed = match words.next() {
+            Some("press") => true,
+            Some("release") => false,
+            _ => return Err(format!("key needs press or release: {line}")),
+        };
+        return Ok(TestInput::Key { code, pressed });
+    }
+    parse_pointer_input(line, at).map(TestInput::Pointer)
+}
+
+fn parse_pointer_input(line: &str, at: &mut PointF) -> Result<PointerInput, String> {
     let mut words = line.split_whitespace();
     let command = words.next().ok_or("an empty line")?;
     match command {
@@ -271,8 +299,10 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         Config {
             width,
             height,
-            // 席とポインターは、試験のための入力の口を開いたときだけ公開する。
+            // seat とポインターとキーボードは、テスト用の入力インターフェースを開いたときだけ公開する。
             pointer: options.test_input,
+            // 親のいない構成なので、keymap は日本語の配列(jp106)。
+            keyboard: options.test_input.then(KeyboardConfig::jp106),
             font_dir: font_dir(options.fonts),
         },
     );
@@ -322,7 +352,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
 
     // 源その3(試験のときだけ): 標準入力から届く、ポインターの知らせ。
     if options.test_input {
-        warn!("the test input is open; pointer events are read from the standard input");
+        warn!("the test input is open; pointer and key events are read from the standard input");
         let (sender, lines) = channel::channel::<String>();
         // 標準入力は、別のスレッドで1行ずつ読む。閉じられたら、スレッドは終わる。
         std::thread::Builder::new()
@@ -341,10 +371,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 let channel::Event::Msg(line) = event else {
                     return;
                 };
+                let time = state.start.elapsed().as_millis() as u32;
                 match parse_test_input(&line, &mut at) {
-                    Ok(input) => {
-                        let time = state.start.elapsed().as_millis() as u32;
-                        pointer_input(state, input, time);
+                    Ok(TestInput::Pointer(input)) => pointer_input(state, input, time),
+                    Ok(TestInput::Key { code, pressed }) => {
+                        keyboard_input(state, code, pressed, time);
                     }
                     Err(message) => warn!("test input: {message}"),
                 }

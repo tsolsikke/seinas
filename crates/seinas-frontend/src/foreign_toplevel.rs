@@ -280,7 +280,7 @@ where
         foreign.managers.push(manager);
         // 最小化のボタンを出せるようになったかもしれない。
         frontend.managers_changed();
-        state.redraw_needed();
+        crate::changed(state);
     }
 
     fn can_view(client: Client, _global_data: &()) -> bool {
@@ -322,7 +322,7 @@ fn forget_manager<D: FrontendHost>(state: &mut D, manager: &ZwlrForeignToplevelM
     if frontend.foreign_toplevels.managers.len() != before {
         // 最後のシェルの部品が去ったら、最小化のボタンを消し、最小化しているウィンドウを戻す。
         frontend.managers_changed();
-        state.redraw_needed();
+        crate::changed(state);
     }
 }
 
@@ -344,7 +344,7 @@ impl<D: FrontendHost> Dispatch<ZwlrForeignToplevelHandleV1, HandleData, D>
             Request::Activate { seat: _ } => {
                 // seat は 1 つだけなので、指定は見ない。
                 if state.frontend_mut().activate(data.window) {
-                    state.redraw_needed();
+                    crate::changed(state);
                 }
             }
             Request::Close => state.frontend().request_close(data.window),
@@ -374,18 +374,18 @@ impl<D: FrontendHost> Dispatch<ZwlrForeignToplevelHandleV1, HandleData, D>
             Request::SetMaximized | Request::UnsetMaximized => {
                 let maximized = matches!(request, Request::SetMaximized);
                 if state.frontend_mut().set_maximized(data.window, maximized) {
-                    state.redraw_needed();
+                    crate::changed(state);
                 }
             }
             Request::SetMinimized => {
                 if state.frontend_mut().minimize(data.window) {
-                    state.redraw_needed();
+                    crate::changed(state);
                 }
             }
             // 戻すと、raise して activated にする(Windows のタスクバーと同じ)。
             Request::UnsetMinimized => {
                 if state.frontend_mut().unminimize(data.window) {
-                    state.redraw_needed();
+                    crate::changed(state);
                 }
             }
             // 全画面は、まだ持っていない。頼みは受けるが、今は何もしない(状態も変えない)。

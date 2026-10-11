@@ -20,6 +20,7 @@ mod foreign_toplevel;
 pub mod geometry;
 mod interaction;
 mod resize;
+mod shortcuts;
 mod stack;
 mod title_bar;
 pub use decoration::{
@@ -38,6 +39,7 @@ pub use resize::{
     anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
     MIN_CONTENT_SIZE, RESIZE_BORDER,
 };
+pub use shortcuts::{Decision, Modifiers, Shortcut, Shortcuts};
 pub use stack::{
     next_slot, slot_count, slot_location, Placed, Restore, Stack, WindowId, CASCADE_STEP,
 };
@@ -45,7 +47,7 @@ pub use title_bar::TitleBar;
 
 use seinas_text::TextPainter;
 use smithay::{
-    backend::input::ButtonState,
+    backend::input::{ButtonState, KeyState},
     backend::renderer::{
         element::{
             memory::MemoryRenderBufferRenderElement,
@@ -58,6 +60,7 @@ use smithay::{
     },
     desktop::{layer_map_for_output, LayerSurface as MappedLayer, WindowSurfaceType},
     input::{
+        keyboard::{FilterResult, KeyboardHandle, XkbConfig},
         pointer::{ButtonEvent, MotionEvent, PointerHandle},
         Seat, SeatHandler, SeatState,
     },
@@ -91,7 +94,7 @@ use smithay::{
         shm::ShmState,
     },
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use geometry::{Point, PointF, Rect, Size};
 
@@ -117,8 +120,44 @@ pub struct Config {
     pub height: i32,
     /// 席(wl_seat)とポインターを公開するか。入力を扱わない構成ではfalseにする。
     pub pointer: bool,
+    /// seat にキーボードを足すときの keymap。キーボードを扱わない構成ではNone。
+    pub keyboard: Option<KeyboardConfig>,
     /// フォントの置き場。題名を描くのに使う。読めなくても動く(題名の文字が出ないだけ)。
     pub font_dir: PathBuf,
+}
+
+/// キーボードの keymap(xkb の名前)と、押し続けたときの繰り返しの設定。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardConfig {
+    /// xkb の layout と model。空なら、xkbcommon の既定(環境変数か、us)。
+    pub layout: String,
+    pub model: String,
+    /// 繰り返しが始まるまでの時間(ミリ秒)と、1 秒あたりの回数。
+    pub repeat_delay: i32,
+    pub repeat_rate: i32,
+}
+
+impl KeyboardConfig {
+    /// 日本語の配列(jp106)。親のいない構成(seinas-standalone、fbdev)の既定。
+    pub fn jp106() -> Self {
+        KeyboardConfig {
+            layout: "jp".to_owned(),
+            model: "jp106".to_owned(),
+            ..KeyboardConfig::default()
+        }
+    }
+}
+
+impl Default for KeyboardConfig {
+    /// xkbcommon の既定の keymap。入れ子の構成で、親の keymap が届くまでに使う。
+    fn default() -> Self {
+        KeyboardConfig {
+            layout: String::new(),
+            model: String::new(),
+            repeat_delay: 600,
+            repeat_rate: 25,
+        }
+    }
 }
 
 render_elements! {
@@ -143,6 +182,10 @@ pub struct Frontend<D: SeatHandler> {
     /// 席は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
     pub seat: Option<Seat<D>>,
     pub pointer: Option<PointerHandle<D>>,
+    /// キーボード。キーボードを扱わない構成か、keymap を作れなかったときはNone。
+    pub keyboard: Option<KeyboardHandle<D>>,
+    /// Seinas のショートカット。キーを IME とアプリへ渡す前に見る。
+    pub shortcuts: Shortcuts,
     /// 画面(wl_output)。
     pub output: Output,
     /// 画面の大きさ。
@@ -168,7 +211,7 @@ pub struct Frontend<D: SeatHandler> {
 ///
 /// `Dispatch` と `ForeignToplevelListHandler` は、[`delegate_frontend!`] が実装する。
 pub trait FrontendHost:
-    SeatHandler
+    SeatHandler<KeyboardFocus = WlSurface, PointerFocus = WlSurface>
     + Dispatch<ZwlrForeignToplevelHandleV1, HandleData>
     + ForeignToplevelListHandler
     + Sized
@@ -451,6 +494,17 @@ impl<D: FrontendHost> Frontend<D> {
         }
         self.update_activation();
         true
+    }
+
+    /// キーボードのフォーカスを付けるウィンドウの画面。activated のウィンドウ(最小化していないうちの、いちばん
+    /// 手前)で、絵を出しているもの。無ければNone。
+    pub fn keyboard_focus_target(&self) -> Option<WlSurface> {
+        self.windows
+            .iter_with_activation()
+            .find(|(_, activated)| *activated)
+            .map(|(window, _)| &window.item)
+            .filter(|toplevel| window_size(toplevel).is_some())
+            .map(|toplevel| toplevel.wl_surface().clone())
     }
 
     /// ウィンドウの測り方(操作の決まりが使う)。
@@ -853,6 +907,8 @@ where
     if outcome.redraw {
         state.redraw_needed();
     }
+    // raise や最小化で activated のウィンドウが変わったら、キーボードのフォーカスも移す。
+    sync_keyboard_focus(state);
 
     let serial = SERIAL_COUNTER.next_serial();
     let motion = MotionEvent {
@@ -917,7 +973,7 @@ pub fn toplevel_request<D: FrontendHost>(
         Command::Close => false,
     };
     if changed {
-        state.redraw_needed();
+        self::changed(state);
     }
 }
 
@@ -1007,13 +1063,106 @@ where
     Some((pointer, window, press))
 }
 
+/// ウィンドウのスタックや状態が変わった後に呼ぶ。キーボードのフォーカスを activated のウィンドウへ合わせ、
+/// 再描画を頼む。
+pub fn changed<D: FrontendHost>(state: &mut D) {
+    sync_keyboard_focus(state);
+    state.redraw_needed();
+}
+
+/// キーボードのフォーカスを、activated のウィンドウ(最小化していないうちの、いちばん手前で、絵を出したもの)に
+/// 合わせる。変わったときだけ、leave と enter を送る。キーボードが無ければ、何もしない。
+pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
+    let frontend = state.frontend();
+    let Some(keyboard) = frontend.keyboard.clone() else {
+        return;
+    };
+    let target = frontend.keyboard_focus_target();
+    if keyboard.current_focus() != target {
+        keyboard.set_focus(state, target, SERIAL_COUNTER.next_serial());
+    }
+}
+
+/// キーの押下か解放を受ける。`code` は evdev のキーの番号、`time` は起動からの時間(ミリ秒)。
+///
+/// 先に Seinas のショートカットを見て(IME とアプリへ渡す前)、使わなければ、キーボードのフォーカスのある
+/// クライアントへ渡す。使ったショートカットを返す(今は一覧が空なので、いつもNone)。最小化しているウィンドウには、
+/// フォーカスが無いので届かない。
+pub fn keyboard_input<D: FrontendHost>(
+    state: &mut D,
+    code: u32,
+    pressed: bool,
+    time: u32,
+) -> Option<Shortcut> {
+    let keyboard = state.frontend().keyboard.clone()?;
+    sync_keyboard_focus(state);
+    let key_state = if pressed {
+        KeyState::Pressed
+    } else {
+        KeyState::Released
+    };
+    keyboard
+        .input(
+            state,
+            (code + 8).into(),
+            key_state,
+            SERIAL_COUNTER.next_serial(),
+            time,
+            |state, modifiers, keysym| {
+                let modifiers = Modifiers {
+                    ctrl: modifiers.ctrl,
+                    alt: modifiers.alt,
+                    shift: modifiers.shift,
+                    logo: modifiers.logo,
+                };
+                let sym = keysym.modified_sym().raw();
+                match state
+                    .frontend_mut()
+                    .shortcuts
+                    .filter(code, pressed, sym, modifiers)
+                {
+                    Decision::Forward => FilterResult::Forward,
+                    Decision::Use(shortcut) => FilterResult::Intercept(Some(shortcut)),
+                    Decision::Swallow => FilterResult::Intercept(None),
+                }
+            },
+        )
+        .flatten()
+}
+
+/// キーボードの keymap を、xkb の文字列(XKB_KEYMAP_FORMAT_TEXT_V1)で置き換え、クライアントへ配り直す。
+/// 入れ子の構成で、親の keymap をそのまま使うのに使う。置き換えたらtrue。
+pub fn set_keymap<D: FrontendHost>(state: &mut D, keymap: String) -> bool {
+    let Some(keyboard) = state.frontend().keyboard.clone() else {
+        return false;
+    };
+    match keyboard.set_keymap_from_string(state, keymap) {
+        Ok(()) => true,
+        Err(e) => {
+            warn!("failed to use the keymap: {e:?}");
+            false
+        }
+    }
+}
+
+/// 押されているキーを、全部離したことにする。入れ子の構成で、親のキーボードのフォーカスが外れたときに使う
+/// (離したイベントが届かないまま、クライアントで繰り返しが続かないように)。
+pub fn release_all_keys<D: FrontendHost>(state: &mut D, time: u32) {
+    let Some(keyboard) = state.frontend().keyboard.clone() else {
+        return;
+    };
+    for keycode in keyboard.pressed_keys() {
+        keyboard_input(state, keycode.raw() - 8, false, time);
+    }
+}
+
 /// クライアントから頼まれた移動・サイズ変更を受けた後、ボタンを離すまでのポインターのイベントを、
 /// クライアントから外す(Seinas が使う)。
 fn take_pointer_from_client<D>(state: &mut D, pointer: &PointerHandle<D>, serial: Serial)
 where
     D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
 {
-    state.redraw_needed();
+    changed(state);
     let location = pointer.current_location();
     pointer.unset_grab(state, serial, 0);
     pointer.motion(
@@ -1226,7 +1375,7 @@ macro_rules! delegate_frontend {
                 if !frontend.commit_layer(surface) {
                     frontend.commit_window(surface);
                 }
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
         }
 
@@ -1255,7 +1404,7 @@ macro_rules! delegate_frontend {
                 surface.send_configure();
                 $crate::log_new_toplevel();
                 // 前に手前だったウィンドウの帯の色が変わる。
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
             fn move_request(
                 &mut self,
@@ -1285,15 +1434,15 @@ macro_rules! delegate_frontend {
             }
             fn title_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::frontend_mut(self).update_foreign_toplevels();
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
             fn app_id_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::frontend_mut(self).update_foreign_toplevels();
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
             fn toplevel_destroyed(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::frontend_mut(self).remove_window(&surface);
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
             fn new_popup(
                 &mut self,
@@ -1347,11 +1496,11 @@ macro_rules! delegate_frontend {
             ) {
                 // 画面は 1 つなので、output の指定は見ない。
                 $crate::FrontendHost::frontend_mut(self).map_layer(surface, namespace);
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
             fn layer_destroyed(&mut self, surface: $crate::smithay::wayland::shell::wlr_layer::LayerSurface) {
                 $crate::FrontendHost::frontend_mut(self).unmap_layer(&surface);
-                $crate::FrontendHost::redraw_needed(self);
+                $crate::changed(self);
             }
         }
 
@@ -1425,12 +1574,16 @@ macro_rules! delegate_frontend {
                     WlrLayerShellState::new_with_filter::<Self, _>(display_handle, $crate::is_shell_client);
                 let shm_state = ShmState::new::<Self>(display_handle, vec![]);
                 let mut seat_state = SeatState::new();
-                let (seat, pointer) = if config.pointer {
-                    let mut seat = seat_state.new_wl_seat(display_handle, "seinas-seat");
-                    let pointer = seat.add_pointer();
-                    (Some(seat), Some(pointer))
-                } else {
-                    (None, None)
+                // seat は、ポインターかキーボードを扱う構成でだけ公開する。
+                let mut seat = (config.pointer || config.keyboard.is_some())
+                    .then(|| seat_state.new_wl_seat(display_handle, "seinas-seat"));
+                let pointer = seat
+                    .as_mut()
+                    .filter(|_| config.pointer)
+                    .map(|seat| seat.add_pointer());
+                let keyboard = match (seat.as_mut(), &config.keyboard) {
+                    (Some(seat), Some(keyboard)) => $crate::add_keyboard(seat, keyboard),
+                    _ => None,
                 };
                 let output = $crate::new_output(config.width, config.height);
                 output.create_global::<Self>(display_handle);
@@ -1447,6 +1600,8 @@ macro_rules! delegate_frontend {
                     seat_state,
                     seat,
                     pointer,
+                    keyboard,
+                    shortcuts: $crate::Shortcuts::default(),
                     output,
                     size: $crate::geometry::Size::new(config.width, config.height),
                     usable: $crate::geometry::Rect::from_size($crate::geometry::Size::new(
@@ -1480,6 +1635,33 @@ macro_rules! delegate_frontend {
         $crate::smithay::delegate_seat!($ty);
         $crate::smithay::delegate_output!($ty);
     };
+}
+
+/// seat `seat` に、`config` の keymap でキーボードを足す。[`delegate_frontend!`] が使う。
+///
+/// keymap を作れなければ(xkb のファイルが無いなど)、ログに出してNoneを返す(キーボードの無い構成として動く)。
+pub fn add_keyboard<D: SeatHandler + 'static>(
+    seat: &mut Seat<D>,
+    config: &KeyboardConfig,
+) -> Option<KeyboardHandle<D>> {
+    let xkb = XkbConfig {
+        layout: &config.layout,
+        model: &config.model,
+        ..XkbConfig::default()
+    };
+    match seat.add_keyboard(xkb, config.repeat_delay, config.repeat_rate) {
+        Ok(keyboard) => {
+            info!(
+                "keyboard: layout {:?}, model {:?}",
+                config.layout, config.model
+            );
+            Some(keyboard)
+        }
+        Err(e) => {
+            warn!("no keyboard: the keymap could not be made: {e:?}");
+            None
+        }
+    }
 }
 
 /// 画面(wl_output)を、`width` × `height` 画素の1つの表示モードで作る。[`delegate_frontend!`] が使う。

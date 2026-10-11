@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Cのライブラリを入れる
-        run: sudo apt-get update && sudo apt-get install -y libpixman-1-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libpixman-1-dev libxkbcommon-dev xkb-data
       - name: Rustを入れる(rust-toolchain.tomlの版)
         run: rustup show active-toolchain || rustup toolchain install
       - name: 整形
@@ -59,7 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: ビルドの道具を入れる
-        run: sudo apt-get update && sudo apt-get install -y musl-tools meson ninja-build bison
+        run: sudo apt-get update && sudo apt-get install -y musl-tools meson ninja-build bison xkb-data
       - name: Rustを入れる(rust-toolchain.tomlの版)
         run: rustup show active-toolchain || rustup toolchain install
       # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。

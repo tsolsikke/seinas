@@ -85,9 +85,11 @@ pub struct Wire {
     decoration: Option<u32>,
     /// コンポジタが公開しているグローバル(番号と、インターフェースの名前)。
     globals: Vec<(u32, String)>,
-    /// 席(wl_seat)とポインター(wl_pointer)の番号。[`Wire::watch_pointer`] を呼ぶまではNone。
+    /// seat(wl_seat)とポインター(wl_pointer)の番号。[`Wire::watch_seat`] を呼ぶまではNone。
     seat: Option<u32>,
     pointer: Option<u32>,
+    /// キーボード(wl_keyboard)の番号。[`Wire::watch_seat`] で使い始めるまではNone。
+    keyboard: Option<u32>,
     /// コンポジタから、閉じるように頼まれたか(xdg_toplevel.close)。
     pub close_requested: bool,
     /// layer surface(zwlr_layer_surface_v1)の番号。layer surface を作ったときだけ。
@@ -246,26 +248,34 @@ impl Wire {
         Ok(id)
     }
 
-    /// 席のポインターを使い始める。この後、ポインターの知らせが届くようになる。
-    ///
-    /// コンポジタが席を公開していなければ、失敗する。
-    pub fn watch_pointer(&mut self) -> Result<(), String> {
+    /// seat のポインター(`pointer`)とキーボード(`keyboard`)を使い始める。この後、それぞれのイベントが届く
+    /// ようになる。コンポジタが seat を公開していなければ、失敗する。
+    pub fn watch_seat(&mut self, pointer: bool, keyboard: bool) -> Result<(), String> {
         let name = self
             .globals
             .iter()
             .find(|(_, interface)| interface == "wl_seat")
             .map(|(name, _)| *name)
             .ok_or("the compositor does not offer wl_seat")?;
-        let (seat, pointer) = (self.new_id(), self.new_id());
+        let seat = self.new_id();
         let mut bind = name.to_le_bytes().to_vec();
         bind.extend(string("wl_seat"));
         bind.extend(1u32.to_le_bytes());
         bind.extend(seat.to_le_bytes());
         self.send(&message(REGISTRY, 0, &bind))?;
-        // wl_seat.get_pointer(新しい番号)
-        self.send(&message(seat, 0, &pointer.to_le_bytes()))?;
         self.seat = Some(seat);
-        self.pointer = Some(pointer);
+        if pointer {
+            // wl_seat.get_pointer(新しい番号)
+            let id = self.new_id();
+            self.send(&message(seat, 0, &id.to_le_bytes()))?;
+            self.pointer = Some(id);
+        }
+        if keyboard {
+            // wl_seat.get_keyboard(新しい番号)
+            let id = self.new_id();
+            self.send(&message(seat, 1, &id.to_le_bytes()))?;
+            self.keyboard = Some(id);
+        }
         Ok(())
     }
 
@@ -460,6 +470,28 @@ impl Wire {
                 }
                 Ok(())
             }
+            // wl_keyboard のイベント。keymap の fd は読まない(大きさだけを書く)。
+            (object, opcode) if Some(object) == self.keyboard => {
+                let at = |index: usize| event.u32_at(index * 4).unwrap_or(0);
+                match opcode {
+                    0 => self.say(&format!("keymap {}", at(1))),
+                    1 => self.say("keyboard enter"),
+                    2 => self.say("keyboard leave"),
+                    3 => {
+                        let state = if at(3) == 1 { "pressed" } else { "released" };
+                        self.say(&format!("key {} {state}", at(2)));
+                    }
+                    4 => self.say(&format!(
+                        "modifiers {} {} {} {}",
+                        at(1),
+                        at(2),
+                        at(3),
+                        at(4)
+                    )),
+                    _ => {}
+                }
+                Ok(())
+            }
             // zxdg_toplevel_decoration_v1.configure(飾りを、どちらの側で描くか)
             (object, 0) if Some(object) == self.decoration => {
                 if self.print_configures {
@@ -547,6 +579,7 @@ pub fn connect() -> Result<Wire, String> {
         globals: Vec::new(),
         seat: None,
         pointer: None,
+        keyboard: None,
         close_requested: false,
         layer_surface: None,
         layer_size: None,
