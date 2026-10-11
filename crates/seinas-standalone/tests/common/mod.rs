@@ -282,11 +282,16 @@ impl Compositor {
 
     /// [`Compositor::start`] と同じだが、fake screen の大きさを `width` × `height` にする。
     pub fn start_sized(name: &str, width: usize, height: usize) -> Self {
-        Self::start_full(name, &font_dir(), false, (width, height))
+        Self::start_full(name, &font_dir(), false, (width, height), &[])
+    }
+
+    /// [`Compositor::start_with_input`] と同じだが、引数 `args` も付ける(`--ping-timeout 300` など)。
+    pub fn start_with_input_and(name: &str, args: &[&str]) -> Self {
+        Self::start_full(name, &font_dir(), true, (WIDTH, HEIGHT), args)
     }
 
     fn start_with(name: &str, fonts: &Path, test_input: bool) -> Self {
-        Self::start_full(name, fonts, test_input, (WIDTH, HEIGHT))
+        Self::start_full(name, fonts, test_input, (WIDTH, HEIGHT), &[])
     }
 
     fn start_full(
@@ -294,6 +299,7 @@ impl Compositor {
         fonts: &Path,
         test_input: bool,
         (width, height): (usize, usize),
+        args: &[&str],
     ) -> Self {
         // ソケットのパスには長さの上限(約100文字)があるので、短い場所に置く。
         let dir = std::env::temp_dir().join(format!("seinas-{name}-{}", std::process::id()));
@@ -314,6 +320,7 @@ impl Compositor {
                 .arg(&socket)
                 .arg("--fonts")
                 .arg(fonts)
+                .args(args)
                 // 外から入った指定に左右されないようにする(利用者のフォントの設定のファイルも読まない)。
                 .env_remove("SEINAS_FONTS")
                 .env("XDG_CONFIG_HOME", &dir)

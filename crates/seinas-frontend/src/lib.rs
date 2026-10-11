@@ -11,7 +11,12 @@
 //!
 //! 受け口を持たない構成(共通の描画だけ)では、このクレートごと使わない。
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 pub use smithay;
 
@@ -19,6 +24,7 @@ mod decoration;
 mod foreign_toplevel;
 pub mod geometry;
 mod interaction;
+mod ping;
 mod resize;
 mod shortcuts;
 mod stack;
@@ -28,14 +34,15 @@ pub use decoration::{
     clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
     paint_title_bar, title_text, TitleButton, TitleButtons, TitleLook, ACTIVE_BAR, ACTIVE_TITLE,
     CLOSE_BUTTON_SIZE, HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON,
-    INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, TITLE_BAR_HEIGHT, TITLE_BUTTON_SIZE,
-    TITLE_PADDING, TITLE_SIZE,
+    INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, NOT_RESPONDING, TITLE_BAR_HEIGHT,
+    TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use interaction::{
     part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
     DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
 };
+pub use ping::{Pings, DEFAULT_PING_TIMEOUT};
 pub use resize::{
     anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
     MIN_CONTENT_SIZE, RESIZE_BORDER,
@@ -91,8 +98,8 @@ use smithay::{
         shell::{
             wlr_layer::{Layer, LayerSurface, LayerSurfaceData, WlrLayerShellState},
             xdg::{
-                decoration::XdgDecorationState, SurfaceCachedState, ToplevelSurface,
-                XdgShellState, XdgToplevelSurfaceData,
+                decoration::XdgDecorationState, ShellClient, SurfaceCachedState,
+                ToplevelSurface, XdgShellState, XdgToplevelSurfaceData,
             },
         },
         foreign_toplevel_list::ForeignToplevelListHandler,
@@ -131,6 +138,9 @@ pub struct Config {
     pub font_dir: PathBuf,
     /// フォントの設定のファイル(`--font-config`)。Noneなら、既定の場所(ADR 0003)。
     pub font_config: Option<PathBuf>,
+    /// 閉じるように頼んだクライアントの pong を待つ時間。過ぎたら応答なしにする(既定は
+    /// [`DEFAULT_PING_TIMEOUT`])。
+    pub ping_timeout: Duration,
 }
 
 /// キーボードの keymap(xkb の名前)と、押し続けたときの繰り返しの設定。
@@ -217,6 +227,8 @@ pub struct Frontend<D: SeatHandler> {
     pub title_bars: HashMap<ObjectId, TitleBar>,
     /// ポインターでの操作(動かす、閉じる、サイズ変更)の状態。
     pub interaction: Interaction,
+    /// 閉じるように頼んだクライアントへの ping の答えを待つ一覧と、応答なしの印。
+    pub pings: Pings<ShellClient>,
     /// 最大化の予告の枠(上・下・左・右の 4 本)。
     pub maximize_marks: [SolidColorBuffer; 4],
     /// サイズ変更の最中か、その最後の大きさがまだ届いていないウィンドウ。左か上の辺を動かしたときに、
@@ -370,6 +382,7 @@ impl<D: FrontendHost> Frontend<D> {
             .remove(|window| window.wl_surface() == toplevel.wl_surface());
         self.title_bars.remove(&toplevel.wl_surface().id());
         self.forget_closed_candidates();
+        self.pings.forget(|client| !client.alive());
         self.update_activation();
     }
 
@@ -699,12 +712,29 @@ impl<D: FrontendHost> Frontend<D> {
             .map(|window| window.id)
     }
 
-    /// ウィンドウ `id` のクライアントに、閉じるように頼む(foreign-toplevel の close)。応じるかどうかは、
-    /// クライアントしだい。
-    pub fn request_close(&self, id: WindowId) {
-        if let Some(window) = self.windows.get(id) {
-            window.item.send_close();
+    /// ウィンドウ `id` のクライアントに、閉じるように頼む(閉じるボタンと、foreign-toplevel の close)。応じるか
+    /// どうかは、クライアントしだい。
+    ///
+    /// あわせて、そのクライアントへ ping を送り、pong を待ち始める(すでに待っていれば、送り直さない)。決まった
+    /// 時間の中に返らなければ、[`check_pings`] が応答なしの印を付ける。
+    pub fn request_close(&mut self, id: WindowId) {
+        let Some(window) = self.windows.get(id) else {
+            return;
+        };
+        window.item.send_close();
+        let client = window.item.client();
+        if self.pings.is_waiting(&client) {
+            return;
         }
+        match client.send_ping(SERIAL_COUNTER.next_serial()) {
+            Ok(()) => self.pings.sent(client, Instant::now()),
+            Err(e) => warn!("cannot ping a client: {e:?}"),
+        }
+    }
+
+    /// ウィンドウ `toplevel` のクライアントに、応答なしの印が付いているか。
+    pub fn is_unresponsive(&self, toplevel: &ToplevelSurface) -> bool {
+        self.pings.is_unresponsive(&toplevel.client())
     }
 
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウの中身。その画面と、中身の左上の位置を返す。
@@ -763,6 +793,7 @@ impl<D: FrontendHost> Frontend<D> {
                     buttons: measure.buttons(&window.item),
                     maximized: window.is_maximized(),
                     hot: self.interaction.hot_button(window.id),
+                    unresponsive: self.pings.is_unresponsive(&window.item.client()),
                 };
                 let bar = self
                     .title_bars
@@ -989,6 +1020,7 @@ where
     }
     match outcome.command {
         // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
+        // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
         Some((id, Command::Close)) => frontend.request_close(id),
         Some((id, Command::Minimize)) => {
             frontend.minimize(id);
@@ -1181,6 +1213,27 @@ where
 pub fn changed<D: FrontendHost>(state: &mut D) {
     sync_keyboard_focus(state);
     state.redraw_needed();
+}
+
+/// 閉じるように頼んだクライアントの pong の期限を、時刻 `now` で確かめる。期限を過ぎたクライアントに応答なしの
+/// 印を付け、再描画を頼む。バックエンドが、イベントループを回るたびに呼ぶ(次の期限は
+/// `frontend().pings.next_deadline()`)。
+pub fn check_pings<D: FrontendHost>(state: &mut D, now: Instant) {
+    let frontend = state.frontend_mut();
+    if frontend.pings.expire(now) {
+        let timeout = frontend.pings.timeout().as_millis();
+        warn!("a client did not answer a ping in {timeout} ms; its windows are marked as not responding");
+        state.redraw_needed();
+    }
+}
+
+/// 応答なしかを見ていたクライアント `client` から、pong が返った。印を付けていたら外し、再描画を頼む。
+/// [`delegate_frontend!`] が使う。
+pub fn client_pong<D: FrontendHost>(state: &mut D, client: ShellClient) {
+    if state.frontend_mut().pings.ponged(&client) {
+        info!("a client that did not respond answered the ping; the mark is removed");
+        state.redraw_needed();
+    }
 }
 
 /// キーボードのフォーカスを、activated のウィンドウ(最小化していないうちの、いちばん手前で、絵を出したもの)に
@@ -1572,6 +1625,9 @@ macro_rules! delegate_frontend {
             fn xdg_shell_state(&mut self) -> &mut $crate::smithay::wayland::shell::xdg::XdgShellState {
                 &mut $crate::FrontendHost::frontend_mut(self).xdg_shell_state
             }
+            fn client_pong(&mut self, client: $crate::smithay::wayland::shell::xdg::ShellClient) {
+                $crate::client_pong(self, client);
+            }
             fn new_toplevel(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 let frontend = $crate::FrontendHost::frontend_mut(self);
                 // 中身に使える大きさ(画面から、題名の帯のぶんを引いたもの)を伝える。
@@ -1796,6 +1852,7 @@ macro_rules! delegate_frontend {
                     text: $crate::load_fonts(&config.font_dir, config.font_config.as_deref()),
                     title_bars: Default::default(),
                     interaction: Default::default(),
+                    pings: $crate::Pings::new(config.ping_timeout),
                     maximize_marks: Default::default(),
                     resize_anchors: Default::default(),
                 }

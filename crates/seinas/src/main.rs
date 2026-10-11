@@ -31,7 +31,8 @@ use std::{
 };
 
 use seinas_frontend::{
-    font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost, KeyboardConfig,
+    check_pings, font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost,
+    KeyboardConfig,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -167,6 +168,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             keyboard: Some(KeyboardConfig::default()),
             font_dir: font_dir(fonts),
             font_config,
+            ping_timeout: seinas_frontend::DEFAULT_PING_TIMEOUT,
         },
     );
     let painter = Painter::new(WIDTH, HEIGHT)?;
@@ -232,6 +234,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         if state.needs_redraw {
             state.draw(&qh);
         }
+        // 閉じるように頼んだクライアントの pong の期限を確かめる(ループは 16 ミリ秒ごとに回る)。
+        check_pings(&mut state, Instant::now());
         if std::mem::take(&mut state.reap_needed) {
             reap_dead_clients(&mut display.borrow_mut(), &mut state);
         }

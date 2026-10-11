@@ -50,6 +50,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--fonts DIR` | フォントの置き場(ウィンドウの題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(題名の文字が出ないだけ) |
 
 | `--test-input` | 試験のための入力の口を開く(下の「試験のための入力の口」)。ふだんの起動では、付けない |
+| `--ping-timeout MS` | 閉じるように頼んだクライアントの pong を待つ時間(ミリ秒。既定は 5000)。過ぎたら応答なしにする(`window-placement.md` の「応答なし」)。テストで短くするためのもの |
 
 - ソケットの場所を指定したときは、`XDG_RUNTIME_DIR` は要りません。
 - ソケットの隣に、同じ名前に `.lock` を付けた鍵のファイルを作ります。

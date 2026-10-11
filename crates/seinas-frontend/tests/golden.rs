@@ -20,6 +20,7 @@ fn close_only(hot: bool) -> TitleLook {
         buttons: TitleButtons::CLOSE_ONLY,
         maximized: false,
         hot: hot.then_some(TitleButton::Close),
+        unresponsive: false,
     }
 }
 
@@ -79,6 +80,7 @@ fn main() {
         buttons: TitleButtons::ALL,
         maximized,
         hot,
+        unresponsive: false,
     };
     run.image(
         "c8-all-buttons",
@@ -111,9 +113,30 @@ fn main() {
                 },
                 maximized: false,
                 hot: Some(TitleButton::Minimize),
+                unresponsive: false,
             },
         ),
     );
+
+    // C11: 応答なしのウィンドウ(フォントの要るもの)。長いタイトルでも、後ろの「(応答なし)」は切らずに出し、
+    // 閉じるボタンの地の色を変える。
+    run.with_fonts("c11-not-responding-long-title", |run, fonts: &Path| {
+        let painter = painter.get_or_insert_with(|| TextPainter::load(&FontFiles::in_dir(fonts)).0);
+        run.image(
+            "c11-not-responding-long-title",
+            Tolerance::EXACT,
+            bar(
+                painter,
+                "とても長いタイトルのウィンドウです。どこまでも続きます",
+                200,
+                true,
+                TitleLook {
+                    unresponsive: true,
+                    ..close_only(false)
+                },
+            ),
+        );
+    });
 
     run.finish();
 }

@@ -55,9 +55,9 @@ use std::{
 };
 
 use seinas_frontend::{
-    font_dir, geometry::PointF, keyboard_input, pointer_input, reap_dead_clients,
+    check_pings, font_dir, geometry::PointF, keyboard_input, pointer_input, reap_dead_clients,
     set_locked_modifiers, BuildFrontend, Config, Frontend, FrontendHost, KeyboardConfig,
-    PointerInput, LEFT_BUTTON,
+    PointerInput, DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -82,7 +82,7 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 const RIGHT_BUTTON: u32 = 0x111;
 
 const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input]";
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS]";
 
 struct Options {
     device: PathBuf,
@@ -93,6 +93,8 @@ struct Options {
     fonts: Option<PathBuf>,
     font_config: Option<PathBuf>,
     test_input: bool,
+    /// 閉じるように頼んだクライアントの pong を待つ時間(テストで短くするため)。
+    ping_timeout: Duration,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -107,6 +109,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         fonts: None,
         font_config: None,
         test_input: false,
+        ping_timeout: DEFAULT_PING_TIMEOUT,
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -127,6 +130,13 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             "--font-config" => options.font_config = Some(PathBuf::from(value("--font-config")?)),
             "--test-input" => options.test_input = true,
+            "--ping-timeout" => {
+                let text = value("--ping-timeout")?;
+                let ms = text
+                    .parse()
+                    .map_err(|_| format!("invalid --ping-timeout value: {text}"))?;
+                options.ping_timeout = Duration::from_millis(ms);
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -318,6 +328,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             keyboard: options.test_input.then(KeyboardConfig::jp106),
             font_dir: font_dir(options.fonts),
             font_config: options.font_config.clone(),
+            ping_timeout: options.ping_timeout,
         },
     );
     let painter = Painter::new(width, height)?;
@@ -414,14 +425,26 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         if state.needs_redraw && state.until_next_frame().is_zero() {
             state.draw()?;
         }
+        // 閉じるように頼んだクライアントの pong の期限を確かめる。
+        check_pings(&mut state, Instant::now());
         if std::mem::take(&mut state.reap_needed) {
             reap_dead_clients(&mut display.borrow_mut(), &mut state);
         }
         if let Err(e) = state.frontend.display_handle.flush_clients() {
             error!("failed to flush the clients: {e}");
         }
-        // 描き直しが残っていれば、次に描いてよい時刻まで待つ。無ければ、何か起きるまで待つ。
-        let timeout = state.needs_redraw.then(|| state.until_next_frame());
+        // 再描画が残っていれば、次に描いてよい時刻まで待つ。無ければ、何か起きるまで待つ。pong の期限が
+        // あれば、そこまでで起きる。
+        let redraw = state.needs_redraw.then(|| state.until_next_frame());
+        let ping = state
+            .frontend
+            .pings
+            .next_deadline()
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let timeout = match (redraw, ping) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
         event_loop.dispatch(timeout, &mut state)?;
     }
 }

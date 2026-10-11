@@ -347,7 +347,7 @@ impl<D: FrontendHost> Dispatch<ZwlrForeignToplevelHandleV1, HandleData, D>
                     crate::changed(state);
                 }
             }
-            Request::Close => state.frontend().request_close(data.window),
+            Request::Close => state.frontend_mut().request_close(data.window),
             Request::SetRectangle {
                 surface,
                 x,

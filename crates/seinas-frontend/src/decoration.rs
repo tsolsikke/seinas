@@ -42,6 +42,11 @@ pub const INACTIVE_TITLE: [u8; 3] = [0xc8, 0xcc, 0xd4];
 /// ポインターを乗せたときの、閉じるボタンの地と印の色。
 pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
 pub const HOT_CLOSE_MARK: [u8; 3] = [0xff, 0xff, 0xff];
+/// 応答なしのウィンドウの、閉じるボタンの地の色(印は [`HOT_CLOSE_MARK`])。ポインターを乗せたときは
+/// [`HOT_CLOSE_BUTTON`] にする。
+pub const UNRESPONSIVE_CLOSE_BUTTON: [u8; 3] = [0x8a, 0x1f, 0x14];
+/// 応答なしのウィンドウで、タイトルの後に付ける文字。
+pub const NOT_RESPONDING: &str = "(応答なし)";
 /// ポインターを乗せたときの、最小化と最大化のボタンの地の色(activated のウィンドウと、そうでないもの)。
 pub const HOT_ACTIVE_BUTTON: [u8; 3] = [0x46, 0x82, 0xc4];
 pub const HOT_INACTIVE_BUTTON: [u8; 3] = [0x5c, 0x63, 0x70];
@@ -118,6 +123,8 @@ pub struct TitleLook {
     pub maximized: bool,
     /// ポインターが乗っているボタン(押している間は、押したボタンの上にあるとき)。
     pub hot: Option<TitleButton>,
+    /// 応答なしか(タイトルの後に [`NOT_RESPONDING`] を付け、閉じるボタンの地の色を変える)。
+    pub unresponsive: bool,
 }
 
 /// 帯を含めた、ウィンドウの外形の大きさ。`content` は、クライアントが描く中身の大きさ。
@@ -213,20 +220,42 @@ pub fn paint_title_bar(
     };
     let width = width.max(1);
     let mut pixels = [bar[2], bar[1], bar[0], 0xff].repeat((width * TITLE_BAR_HEIGHT) as usize);
-    painter.draw_line(
-        &mut Canvas::new(&mut pixels, width as usize, TITLE_BAR_HEIGHT as usize),
+    let line = |x: i32, max_width: i32| Line {
+        size: TITLE_SIZE,
+        color: title,
+        x,
+        top: 0,
+        height: TITLE_BAR_HEIGHT,
+        max_width,
+    };
+    let room = width - look.buttons.width() - TITLE_PADDING * 2;
+    let canvas_size = (width as usize, TITLE_BAR_HEIGHT as usize);
+    // 応答なしなら、タイトルの後に印の文字を付ける。タイトルが長くても印が見えるよう、印の幅を先に測って、
+    // タイトルに使える幅から引く。
+    let suffix = look.unresponsive.then(|| {
+        let mut scratch = vec![0; canvas_size.0 * canvas_size.1 * 4];
+        let canvas = &mut Canvas::new(&mut scratch, canvas_size.0, canvas_size.1);
+        painter
+            .draw_line(canvas, NOT_RESPONDING, line(0, room))
+            .width
+    });
+    let drawn = painter.draw_line(
+        &mut Canvas::new(&mut pixels, canvas_size.0, canvas_size.1),
         text,
-        Line {
-            size: TITLE_SIZE,
-            color: title,
-            x: TITLE_PADDING,
-            top: 0,
-            height: TITLE_BAR_HEIGHT,
-            max_width: width - look.buttons.width() - TITLE_PADDING * 2,
-        },
+        line(TITLE_PADDING, room - suffix.unwrap_or(0)),
     );
+    if suffix.is_some() {
+        let x = TITLE_PADDING + drawn.width;
+        painter.draw_line(
+            &mut Canvas::new(&mut pixels, canvas_size.0, canvas_size.1),
+            NOT_RESPONDING,
+            line(x, room - drawn.width),
+        );
+    }
     let (ground, mark) = if look.hot == Some(TitleButton::Close) {
         (Some(HOT_CLOSE_BUTTON), HOT_CLOSE_MARK)
+    } else if look.unresponsive {
+        (Some(UNRESPONSIVE_CLOSE_BUTTON), HOT_CLOSE_MARK)
     } else {
         (None, title)
     };
@@ -499,12 +528,34 @@ mod tests {
     }
 
     #[test]
+    fn a_window_that_does_not_respond_has_a_dark_red_close_button() {
+        let mut painter = TextPainter::without_fonts();
+        let look = TitleLook {
+            buttons: TitleButtons::CLOSE_ONLY,
+            unresponsive: true,
+            ..TitleLook::default()
+        };
+        // 閉じるボタン(176〜200)の地は暗い赤、印は白。ポインターを乗せると、ふつうの赤。
+        let pixels = paint_title_bar(&mut painter, "", 200, false, look);
+        assert_eq!(pixel(&pixels, 200, 176, 0), UNRESPONSIVE_CLOSE_BUTTON);
+        assert_eq!(pixel(&pixels, 200, 183, 7), HOT_CLOSE_MARK);
+        assert_eq!(pixel(&pixels, 200, 175, 0), INACTIVE_BAR);
+        let hot = TitleLook {
+            hot: Some(TitleButton::Close),
+            ..look
+        };
+        let pixels = paint_title_bar(&mut painter, "", 200, false, hot);
+        assert_eq!(pixel(&pixels, 200, 176, 0), HOT_CLOSE_BUTTON);
+    }
+
+    #[test]
     fn the_buttons_are_drawn_without_fonts() {
         let mut painter = TextPainter::without_fonts();
         let look = TitleLook {
             buttons: TitleButtons::ALL,
             maximized: false,
             hot: Some(TitleButton::Minimize),
+            unresponsive: false,
         };
         let pixels = paint_title_bar(&mut painter, "", 200, true, look);
         // 最小化(128〜152)の地は、ポインターが乗っている色。「−」は y 11 と 12、x 135〜144。
