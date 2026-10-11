@@ -45,6 +45,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--fake WIDTHxHEIGHT` | 装置を開かず、その大きさの偽の画面へ描く |
 | `--dump FILE` | 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く(`--fake` のときだけ) |
 | `--socket PATH` | クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0` |
+| `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`text-rendering.md` の「利用者が選んだフォント」) |
 | `--shell-socket PATH` | シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットのパスに `-shell` を付けたもの(`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。ここからつないだクライアントにだけ、layer-shell とウィンドウの一覧(foreign-toplevel)を見せる |
 | `--fonts DIR` | フォントの置き場(ウィンドウの題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(題名の文字が出ないだけ) |
 

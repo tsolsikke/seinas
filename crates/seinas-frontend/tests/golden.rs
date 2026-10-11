@@ -4,11 +4,9 @@
 
 use std::path::Path;
 
-use seinas_frontend::{
-    load_fonts, paint_title_bar, TitleButton, TitleButtons, TitleLook, TITLE_BAR_HEIGHT,
-};
+use seinas_frontend::{paint_title_bar, TitleButton, TitleButtons, TitleLook, TITLE_BAR_HEIGHT};
 use seinas_golden::{Image, Runner, Tolerance};
-use seinas_text::TextPainter;
+use seinas_text::{FontFiles, TextPainter};
 
 /// タイトルバーを描いて、RGB の画像にする。
 fn bar(painter: &mut TextPainter, title: &str, width: i32, active: bool, look: TitleLook) -> Image {
@@ -46,8 +44,12 @@ fn main() {
     for (name, title, width, active, hot) in cases {
         run.with_fonts(name, |run, fonts: &Path| {
             let painter = painter.get_or_insert_with(|| {
-                let painter = load_fonts(fonts);
-                assert!(painter.can_draw(), "the fonts could not be loaded");
+                // 利用者の設定のファイルに左右されないよう、同梱のフォントだけを直に読む。
+                let (painter, problems) = TextPainter::load(&FontFiles::in_dir(fonts));
+                assert!(
+                    problems.is_empty(),
+                    "the fonts could not be loaded: {problems:?}"
+                );
                 painter
             });
             run.image(

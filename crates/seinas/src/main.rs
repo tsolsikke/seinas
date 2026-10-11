@@ -115,20 +115,28 @@ impl FrontendHost for Seinas {
 
 seinas_frontend::delegate_frontend!(Seinas);
 
-/// 引数を読む。受け付けるのは `--fonts DIR`(フォントの置き場)だけ。
-fn parse_fonts(mut args: impl Iterator<Item = String>) -> Result<Option<PathBuf>, String> {
-    let mut fonts = None;
+/// 引数を読む。受け付けるのは `--fonts DIR`(同梱のフォントの置き場)と `--font-config PATH`
+/// (フォントの設定のファイル)だけ。
+fn parse_fonts(
+    mut args: impl Iterator<Item = String>,
+) -> Result<(Option<PathBuf>, Option<PathBuf>), String> {
+    let (mut fonts, mut config) = (None, None);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--fonts" => fonts = Some(PathBuf::from(args.next().ok_or("--fonts needs a value")?)),
+            "--font-config" => {
+                config = Some(PathBuf::from(
+                    args.next().ok_or("--font-config needs a value")?,
+                ))
+            }
             other => {
                 return Err(format!(
-                    "unknown argument: {other} (usage: seinas [--fonts DIR])"
+                    "unknown argument: {other} (usage: seinas [--fonts DIR] [--font-config PATH])"
                 ))
             }
         }
     }
-    Ok(fonts)
+    Ok((fonts, config))
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -136,7 +144,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    let fonts = parse_fonts(std::env::args().skip(1))?;
+    let (fonts, font_config) = parse_fonts(std::env::args().skip(1))?;
 
     let mut event_loop: EventLoop<Seinas> = EventLoop::try_new()?;
 
@@ -158,6 +166,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             // keymap は、親の keymap が届いたら、それに置き換える(parent.rs)。届くまでは xkbcommon の既定。
             keyboard: Some(KeyboardConfig::default()),
             font_dir: font_dir(fonts),
+            font_config,
         },
     );
     let painter = Painter::new(WIDTH, HEIGHT)?;

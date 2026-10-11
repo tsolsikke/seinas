@@ -314,8 +314,9 @@ impl Compositor {
                 .arg(&socket)
                 .arg("--fonts")
                 .arg(fonts)
-                // 外から入った指定に左右されないようにする。
+                // 外から入った指定に左右されないようにする(利用者のフォントの設定のファイルも読まない)。
                 .env_remove("SEINAS_FONTS")
+                .env("XDG_CONFIG_HOME", &dir)
                 .stderr(log)
                 .spawn()
                 .expect("start seinas-standalone"),
@@ -407,6 +408,7 @@ impl Compositor {
                 .arg(font_dir())
                 .env("WAYLAND_DISPLAY", socket)
                 .env_remove("SEINAS_FONTS")
+                .env("XDG_CONFIG_HOME", &self.dir)
                 .stderr(log)
                 .spawn()
                 .expect("start seinas-taskbar"),

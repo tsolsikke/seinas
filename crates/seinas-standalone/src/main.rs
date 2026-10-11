@@ -80,8 +80,8 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// 右のボタンの番号(Linuxの入力の決まり)。
 const RIGHT_BUTTON: u32 = 0x111;
 
-const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--test-input]";
+const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH]
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input]";
 
 struct Options {
     device: PathBuf,
@@ -90,6 +90,7 @@ struct Options {
     socket: Option<PathBuf>,
     shell_socket: Option<PathBuf>,
     fonts: Option<PathBuf>,
+    font_config: Option<PathBuf>,
     test_input: bool,
 }
 
@@ -103,6 +104,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         socket: std::env::var_os(SOCKET_ENV).map(PathBuf::from),
         shell_socket: None,
         fonts: None,
+        font_config: None,
         test_input: false,
     };
     let mut args = args;
@@ -122,6 +124,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
                 options.shell_socket = Some(PathBuf::from(value("--shell-socket")?))
             }
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
+            "--font-config" => options.font_config = Some(PathBuf::from(value("--font-config")?)),
             "--test-input" => options.test_input = true,
             other => return Err(format!("unknown argument: {other}")),
         }
@@ -304,6 +307,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             // 親のいない構成なので、keymap は日本語の配列(jp106)。
             keyboard: options.test_input.then(KeyboardConfig::jp106),
             font_dir: font_dir(options.fonts),
+            font_config: options.font_config.clone(),
         },
     );
     let painter = Painter::new(width, height)?;

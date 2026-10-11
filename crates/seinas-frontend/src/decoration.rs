@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use seinas_text::{Canvas, FontFiles, Line, TextPainter, DEFAULT_SIZE};
+use seinas_text::{Canvas, FontSetup, Line, TextPainter, DEFAULT_SIZE};
 use tracing::{info, warn};
 
 use crate::geometry::{Point, Rect, Size};
@@ -167,21 +167,30 @@ pub fn title_text<'a>(title: Option<&'a str>, app_id: Option<&'a str>) -> &'a st
         .unwrap_or("")
 }
 
-/// `dir` の下のフォントを読む。読めないフォントがあっても止まらず、原因をログに出す。
+/// 同梱のフォントの置き場 `dir` と、設定のファイル `config`(Noneなら既定の場所)で、フォントを読む
+/// (ADR 0003)。読めないフォントや、設定の読めない行があっても止まらず、原因をログに出す。
 ///
 /// 1つも読めなければ、題名の文字は出ない(帯だけを描く)。
-pub fn load_fonts(dir: &Path) -> TextPainter {
-    let (painter, problems) = TextPainter::load(&FontFiles::in_dir(dir));
-    for problem in &problems {
-        warn!("{problem}");
+pub fn load_fonts(dir: &Path, config: Option<&Path>) -> TextPainter {
+    let setup = FontSetup {
+        bundled_dir: dir.to_owned(),
+        config_file: config.map(Path::to_owned),
+    };
+    let (painter, messages) = TextPainter::load_setup(&setup);
+    for message in &messages {
+        warn!("{message}");
     }
     if !painter.can_draw() {
         warn!(
             "no font could be loaded from {}; window titles will not be shown",
             dir.display()
         );
-    } else if problems.is_empty() {
-        info!("fonts loaded from {}", dir.display());
+    } else {
+        info!(
+            "fonts: {} (bundled fonts in {})",
+            painter.describe(),
+            dir.display()
+        );
     }
     painter
 }

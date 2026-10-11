@@ -14,6 +14,7 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 | 引数 | 中身 |
 | --- | --- |
 | `--fonts DIR` | フォントの置き場。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(コンポジタと同じ) |
+| `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`docs/text-rendering.md` の「利用者が選んだフォント」)。コンポジタと同じファイルを読む |
 | `--utc-offset ±HH:MM` | 時計の時差。無ければ環境変数 `TZ` の簡単な形、それも無ければ `+09:00`(下の「時計」) |
 
 ## 見た目と並べ方

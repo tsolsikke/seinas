@@ -6,7 +6,8 @@
 //!
 //! 引数:
 //!
-//! - `--fonts DIR`:フォントの置き場(無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`)。
+//! - `--fonts DIR`:同梱のフォントの置き場(無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`)。
+//! - `--font-config PATH`:フォントの設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`。ADR 0003)。
 //! - `--utc-offset ±HH:MM`:時計の時差(無ければ環境変数 `TZ` の簡単な形、それも無ければ +09:00)。
 //!
 //! 決まりの説明は `docs/taskbar.md` にある。
@@ -17,7 +18,7 @@ use seinas_taskbar::{
     action_for, button_at, clock_text, offset_from_tz, paint, parse_utc_offset, until_next_minute,
     wall_clock, Action, Entry, DEFAULT_UTC_OFFSET, HEIGHT,
 };
-use seinas_text::{FontFiles, TextPainter};
+use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_registry,
@@ -471,6 +472,8 @@ impl Dispatch2<ZwlrForeignToplevelHandleV1, Taskbar> for HandleData {
 /// 起動のときの指定。
 struct Options {
     fonts: PathBuf,
+    /// フォントの設定のファイル(`--font-config`)。Noneなら、既定の場所(ADR 0003)。
+    font_config: Option<PathBuf>,
     offset: i32,
 }
 
@@ -480,12 +483,14 @@ fn parse_options(
     tz: Option<String>,
 ) -> Result<Options, String> {
     let mut fonts = None;
+    let mut font_config = None;
     let mut offset = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().cloned().ok_or(format!("{arg} needs a value"));
         match arg.as_str() {
             "--fonts" => fonts = Some(PathBuf::from(value()?)),
+            "--font-config" => font_config = Some(PathBuf::from(value()?)),
             "--utc-offset" => {
                 let text = value()?;
                 offset = Some(
@@ -500,6 +505,7 @@ fn parse_options(
         fonts: fonts
             .or_else(|| fonts_env.map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from(DEFAULT_FONT_DIR)),
+        font_config,
         offset: offset
             .or_else(|| tz.as_deref().and_then(offset_from_tz))
             .unwrap_or(DEFAULT_UTC_OFFSET),
@@ -513,9 +519,12 @@ fn run() -> Result<(), Box<dyn Error>> {
         std::env::var(FONTS_ENV).ok(),
         std::env::var("TZ").ok(),
     )?;
-    let (text, problems) = TextPainter::load(&FontFiles::in_dir(&options.fonts));
-    for problem in problems {
-        eprintln!("seinas-taskbar: {problem}");
+    let (text, messages) = TextPainter::load_setup(&FontSetup {
+        bundled_dir: options.fonts.clone(),
+        config_file: options.font_config.clone(),
+    });
+    for message in messages {
+        eprintln!("seinas-taskbar: {message}");
     }
 
     let conn = Connection::connect_to_env()

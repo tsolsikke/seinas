@@ -124,6 +124,8 @@ pub struct Config {
     pub keyboard: Option<KeyboardConfig>,
     /// フォントの置き場。題名を描くのに使う。読めなくても動く(題名の文字が出ないだけ)。
     pub font_dir: PathBuf,
+    /// フォントの設定のファイル(`--font-config`)。Noneなら、既定の場所(ADR 0003)。
+    pub font_config: Option<PathBuf>,
 }
 
 /// キーボードの keymap(xkb の名前)と、押し続けたときの繰り返しの設定。
@@ -1609,7 +1611,7 @@ macro_rules! delegate_frontend {
                         config.height,
                     )),
                     windows: $crate::Stack::default(),
-                    text: $crate::load_fonts(&config.font_dir),
+                    text: $crate::load_fonts(&config.font_dir, config.font_config.as_deref()),
                     title_bars: Default::default(),
                     interaction: Default::default(),
                     resize_anchors: Default::default(),
