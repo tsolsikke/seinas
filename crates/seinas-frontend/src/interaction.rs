@@ -18,6 +18,14 @@ pub const LEFT_BUTTON: u32 = 0x110;
 /// 帯を押してから、これだけ(画素)動くまでは、ウィンドウを動かさない。手前に出すだけのつもりで
 /// 押したときに、ずれないようにする。
 pub const DRAG_SLACK: f64 = 4.0;
+/// 最大化しているウィンドウのタイトルバーを押してから、これだけ(ピクセル)動いたら、元の大きさに戻して動かし
+/// 始める。[`DRAG_SLACK`] の 2 倍にしてある。
+///
+/// ダブルクリックの 2 回目は、1 回目の押下から [`DRAG_SLACK`] の中で押す決まりなので、ダブルクリックの
+/// つもりの手の揺れ(1 回目の押下から離すまでの、4 ピクセル程度のずれ)では、ウィンドウが元の大きさに戻らない
+/// ようにする。元に戻すと、ウィンドウの大きさと位置が大きく変わるので、ふつうの移動より、はっきり動かした
+/// ときだけにする。
+pub const RESTORE_DRAG_SLACK: f64 = 2.0 * DRAG_SLACK;
 /// ダブルクリックとみなす、2 回の押下の間の時間(ミリ秒)。2 回目は、1 回目から [`DRAG_SLACK`] の中で押すこと。
 pub const DOUBLE_CLICK_MS: u32 = 500;
 
@@ -120,6 +128,10 @@ pub enum Command {
     Minimize,
     /// 最大化か、最大化していれば元に戻す。
     ToggleMaximize,
+    /// 最大化を戻し、外枠の左上を `location` に置く(最大化しているウィンドウのタイトルバーをドラッグした)。
+    Restore {
+        location: Point,
+    },
 }
 
 /// ボタンを押している間の状態。
@@ -135,7 +147,7 @@ enum Grab {
         origin: Point,
         /// もう動かし始めたか([`DRAG_SLACK`] を超えたか)。
         moving: bool,
-        /// 動かせるか。最大化しているウィンドウと、ダブルクリックの 2 回目では、動かさない。
+        /// 動かせるか。ダブルクリックの 2 回目では、動かさない。
         movable: bool,
     },
     /// タイトルバーのボタンを押している。
@@ -349,16 +361,56 @@ impl Interaction {
                 movable,
             } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
-                let Some(width) = stack
-                    .get(window)
-                    .and_then(|entry| measure.outer_size(&entry.item))
-                    .map(|size| size.w)
+                let Some((outer, maximized, restore, buttons)) =
+                    stack.get(window).and_then(|entry| {
+                        Some((
+                            measure.outer_size(&entry.item)?,
+                            entry.is_maximized(),
+                            entry.restore,
+                            measure.buttons(&entry.item),
+                        ))
+                    })
                 else {
                     // 掴んでいたウィンドウが去った。ボタンを離すまで、何もしない。
                     return outcome;
                 };
                 let (dx, dy) = (point.x - press.x, point.y - press.y);
-                let moving = movable && (moving || dx.hypot(dy) >= DRAG_SLACK);
+                let slack = if maximized {
+                    RESTORE_DRAG_SLACK
+                } else {
+                    DRAG_SLACK
+                };
+                let starts = movable && !moving && dx.hypot(dy) >= slack;
+                if starts {
+                    // 動かし始めたら、ダブルクリックにはしない。
+                    self.last_bar_press = None;
+                }
+                if starts && maximized {
+                    // 元の大きさに戻し、ポインターが、元の大きさのタイトルバーの、横の同じ割合の所に来るように置く。
+                    let width = restore
+                        .and_then(|restore| restore.content)
+                        .map_or(outer.w, |size| size.w);
+                    let ratio = ((press.x - origin.x as f64) / outer.w as f64).clamp(0.0, 1.0);
+                    // ボタンの上には来ないようにする。
+                    let last = (width - buttons.width() - 1).max(0) as f64;
+                    let offset = (ratio * width as f64).clamp(0.0, last);
+                    let wanted = (
+                        (point.x - offset).round() as i32,
+                        (point.y - (press.y - origin.y as f64)).round() as i32,
+                    );
+                    let location = clamp_outer_location(wanted.into(), width, area);
+                    self.grab = Grab::Bar {
+                        window,
+                        press: point,
+                        origin: location,
+                        moving: true,
+                        movable,
+                    };
+                    outcome.command = Some((window, Command::Restore { location }));
+                    outcome.redraw = true;
+                    return outcome;
+                }
+                let moving = moving || starts;
                 self.grab = Grab::Bar {
                     window,
                     press,
@@ -366,11 +418,9 @@ impl Interaction {
                     moving,
                     movable,
                 };
-                if moving {
-                    // 動かし始めたら、ダブルクリックにはしない。
-                    self.last_bar_press = None;
+                if moving && !maximized {
                     let wanted = (origin.x + dx.round() as i32, origin.y + dy.round() as i32);
-                    let location = clamp_outer_location(wanted.into(), width, area);
+                    let location = clamp_outer_location(wanted.into(), outer.w, area);
                     outcome.redraw = stack.move_to(window, location);
                 }
                 outcome
@@ -470,13 +520,13 @@ impl Interaction {
                 } else {
                     self.last_bar_press = Some((window, point, time));
                 }
-                let maximized = stack.get(window).is_some_and(|entry| entry.is_maximized());
+                // 最大化しているウィンドウも、grab できる(動かすと、元の大きさに戻る)。
                 self.grab = Grab::Bar {
                     window,
                     press: point,
                     origin,
                     moving: false,
-                    movable: !double && !maximized,
+                    movable: !double,
                 };
                 Deliver::Nobody
             }
@@ -1301,17 +1351,79 @@ mod tests {
     }
 
     #[test]
-    fn a_maximized_window_is_not_moved_or_resized() {
+    fn dragging_the_bar_of_a_maximized_window_restores_it_under_the_pointer() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        let area = Rect::from_size(SCREEN.into());
+        // 元の大きさは 160x120(外枠の幅 160。右の端の 72 がボタン)。最大化している間の外枠の幅は 320。
+        world.stack.maximize(b, area, Some((160, 120).into()));
+        // 横の 1/4 の所を押す。8 ピクセルより手前では、動かない。
+        world.press(80.0, 10.0, LEFT_BUTTON);
+        let near = world.motion(87.0, 10.0);
+        assert_eq!((near.command, near.redraw), (None, false));
+        assert!(!world.interaction.is_moving());
+        // 8 ピクセル動かすと、元の大きさに戻す。ポインターは、元の大きさのタイトルバーの 1/4(40)の所に来る。
+        let restore = world.motion(88.0, 10.0);
+        assert_eq!(
+            restore.command,
+            Some((
+                b,
+                Command::Restore {
+                    location: (48, 0).into()
+                }
+            ))
+        );
+        assert!(world.interaction.is_moving());
+        // 戻すのは呼ぶ側(フロントエンド)が行う。その後は、ふつうに動く。
+        world.stack.unmaximize(b, area);
+        world.stack.move_to(b, (48, 0).into());
+        world.motion(98.0, 30.0);
+        assert_eq!(world.place("full-b"), ((58, 20), None));
+        assert_eq!(world.release(98.0, 30.0, LEFT_BUTTON).command, None);
+
+        // ボタンの近く(横の 3/4)を押しても、戻したときに、ポインターはボタンの上に来ない(160 - 72 - 1 = 87)。
+        world.stack.maximize(b, area, Some((160, 120).into()));
+        world.press(240.0, 10.0, LEFT_BUTTON);
+        let restore = world.motion(250.0, 10.0);
+        assert_eq!(
+            restore.command,
+            Some((
+                b,
+                Command::Restore {
+                    location: (163, 0).into()
+                }
+            ))
+        );
+        world.release(250.0, 10.0, LEFT_BUTTON);
+    }
+
+    #[test]
+    fn a_maximized_window_keeps_its_clicks_and_double_clicks() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        let area = Rect::from_size(SCREEN.into());
+        world.stack.maximize(b, area, Some((160, 120).into()));
+        // しきい値の手前で離せば、何も起きない。
+        world.press_at(80.0, 10.0, LEFT_BUTTON, 1000);
+        world.motion(85.0, 13.0);
+        let release = world.release(85.0, 13.0, LEFT_BUTTON);
+        assert_eq!(release.command, None);
+        assert_eq!(world.place("full-b").0, (0, 0));
+        // ダブルクリックは、今までどおり元に戻す(2 回目の押下では、動かさない)。
+        assert_eq!(
+            world.press_at(82.0, 11.0, LEFT_BUTTON, 1300).command,
+            Some((b, Command::ToggleMaximize))
+        );
+        assert_eq!(world.motion(150.0, 100.0).command, None);
+        world.release(150.0, 100.0, LEFT_BUTTON);
+    }
+
+    #[test]
+    fn a_maximized_window_is_not_resized() {
         let mut world = two_with_buttons();
         let b = world.id("full-b");
         let area = Rect::new((0, 40).into(), (640, 440).into());
         world.stack.maximize(b, area, None);
-        // タイトルバーを動かしても、動かない。
-        world.press(100.0, 50.0, LEFT_BUTTON);
-        world.motion(300.0, 300.0);
-        assert!(!world.interaction.is_moving());
-        assert_eq!(world.place("full-b").0, (0, 40));
-        world.release(300.0, 300.0, LEFT_BUTTON);
         // 外枠のすぐ外(上の y 36)にも、サイズ変更の境界は無い(後ろの full-a のコンテンツに当たる)。
         assert_eq!(world.motion(100.0, 36.0).deliver, Deliver::ToClient);
         assert_eq!(world.interaction.cursor(), Cursor::Default);

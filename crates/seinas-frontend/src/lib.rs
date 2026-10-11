@@ -966,6 +966,11 @@ where
                 .is_some_and(|window| window.is_maximized());
             frontend.set_maximized(id, !maximized);
         }
+        // 最大化しているウィンドウのタイトルバーをドラッグした。元の大きさに戻し、ポインターの下へ置く。
+        Some((id, Command::Restore { location })) if frontend.set_maximized(id, false) => {
+            frontend.windows.move_to(id, location);
+        }
+        Some((_, Command::Restore { .. })) => {}
         None => {}
     }
     let focus = match outcome.deliver {
@@ -1040,7 +1045,7 @@ pub fn toplevel_request<D: FrontendHost>(
             changed
         }
         Command::Minimize => frontend.minimize(id),
-        Command::Close => false,
+        Command::Close | Command::Restore { .. } => false,
     };
     if changed {
         self::changed(state);

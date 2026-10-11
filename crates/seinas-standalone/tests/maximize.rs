@@ -2,7 +2,7 @@
 //!
 //! 決まり(`docs/window-placement.md`):
 //! - タイトルバーの最大化のボタンとダブルクリックで、最大化と元に戻すを切り替える。最大化は、使える範囲いっぱい。
-//! - 最大化しているウィンドウは、タイトルバーで動かせず、サイズ変更の境界も無い。使える範囲が変わったら、
+//! - 最大化しているウィンドウには、サイズ変更の境界が無い(タイトルバーのドラッグで戻すことは、`tests/drag_maximize.rs`)。使える範囲が変わったら、
 //!   新しい範囲の大きさを伝え直す。
 //! - 最小化のボタンは、foreign-toplevel の manager を bind しているシェルの部品があるときだけ出る。最小化した
 //!   ウィンドウは描かれず、シェルの部品から戻す。シェルの部品が無くなったら、最小化しているウィンドウは戻る。
@@ -103,11 +103,7 @@ fn the_maximize_button_and_a_double_click_toggle_maximize() {
     seinas.wait_for_screen("the maximized window", |shot| {
         shows_window(shot, (0, 0), (WIDTH, HEIGHT - BAR))
     });
-    // 最大化している間は、タイトルバーを動かしても、ウィンドウは動かない。
-    seinas.pointer("motion 300 12");
-    seinas.pointer("press");
-    seinas.pointer("motion 400 200");
-    seinas.pointer("release");
+    // ダブルクリックで、元に戻る(最大化しているウィンドウのドラッグは、`tests/drag_maximize.rs`)。
     click(&mut seinas, 60, 12);
     click(&mut seinas, 60, 12);
     assert_eq!(
