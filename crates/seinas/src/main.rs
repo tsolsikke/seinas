@@ -30,7 +30,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use seinas_frontend::{font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost};
+use seinas_frontend::{
+    font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost, KeyboardConfig,
+};
 use seinas_render::Painter;
 use smithay::reexports::{
     calloop::{generic::Generic, EventLoop, Interest, Mode, PostAction},
@@ -153,7 +155,8 @@ fn main() -> Result<(), Box<dyn Error>> {
             width: WIDTH,
             height: HEIGHT,
             pointer: true,
-            keyboard: None,
+            // keymap は、親の keymap が届いたら、それに置き換える(parent.rs)。届くまでは xkbcommon の既定。
+            keyboard: Some(KeyboardConfig::default()),
             font_dir: font_dir(fonts),
         },
     );

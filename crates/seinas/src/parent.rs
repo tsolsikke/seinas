@@ -6,11 +6,15 @@
 
 use std::error::Error;
 
-use seinas_frontend::{geometry::PointF, pointer_input, Cursor, Edges, FrontendHost, PointerInput};
+use seinas_frontend::{
+    geometry::PointF, keyboard_input, pointer_input, release_all_keys, set_keymap, Cursor, Edges,
+    FrontendHost, PointerInput,
+};
 use seinas_render::{FrameView, PixelFormat};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
     delegate_dispatch2, delegate_registry,
+    dispatch2::Dispatch2,
     output::{OutputHandler, OutputState},
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -35,8 +39,8 @@ use smithay_client_toolkit::{
 use tracing::{info, warn};
 use wayland_client::{
     globals::GlobalList,
-    protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, QueueHandle,
+    protocol::{wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    Connection, QueueHandle, WEnum,
 };
 
 use crate::Seinas;
@@ -52,6 +56,8 @@ pub struct Parent {
     window: Window,
     buffer: Option<Buffer>,
     pointer: Option<ThemedPointer>,
+    /// 親のキーボード。キーと keymap を、子へ渡す。
+    keyboard: Option<wl_keyboard::WlKeyboard>,
     /// 最後に親へ出したカーソルの形。ポインターが入ってきたら、出し直す(None にする)。
     cursor: Option<Cursor>,
     width: i32,
@@ -90,6 +96,7 @@ impl Parent {
             window,
             buffer: None,
             pointer: None,
+            keyboard: None,
             cursor: None,
             width,
             height,
@@ -242,6 +249,9 @@ impl SeatHandler for Seinas {
         seat: wl_seat::WlSeat,
         capability: Capability,
     ) {
+        if capability == Capability::Keyboard && self.parent.keyboard.is_none() {
+            self.parent.keyboard = Some(seat.get_keyboard(qh, ParentKeyboard));
+        }
         if capability == Capability::Pointer && self.parent.pointer.is_none() {
             // カーソルの絵は、親のカーソルのテーマ(XCURSOR_THEME、XCURSOR_SIZE。無ければ既定)から読む。
             let surface = self.parent.compositor.create_surface(qh);
@@ -267,6 +277,13 @@ impl SeatHandler for Seinas {
         if capability == Capability::Pointer {
             // 捨てると、親のポインターも離す。
             self.parent.pointer = None;
+        }
+        if capability == Capability::Keyboard {
+            if let Some(keyboard) = self.parent.keyboard.take() {
+                keyboard.release();
+            }
+            let time = self.start.elapsed().as_millis() as u32;
+            release_all_keys(self, time);
         }
     }
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
@@ -351,6 +368,68 @@ fn cursor_icon(cursor: Cursor) -> CursorIcon {
             _ => CursorIcon::Default,
         },
     }
+}
+
+/// 親のキーボードのデータ。親から届くキーと keymap を、子(Seinas の seat)へ渡す。
+struct ParentKeyboard;
+
+impl Dispatch2<wl_keyboard::WlKeyboard, Seinas> for ParentKeyboard {
+    fn event(
+        &self,
+        state: &mut Seinas,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &Connection,
+        _: &QueueHandle<Seinas>,
+    ) {
+        let time = state.start.elapsed().as_millis() as u32;
+        match event {
+            // 親の keymap を、そのまま子のクライアントへ配る。
+            wl_keyboard::Event::Keymap {
+                format: WEnum::Value(wl_keyboard::KeymapFormat::XkbV1),
+                fd,
+                size,
+            } => match read_keymap(fd, size as usize) {
+                Ok(keymap) => {
+                    if set_keymap(state, keymap) {
+                        info!("using the keymap of the parent ({size} bytes)");
+                    }
+                }
+                Err(e) => warn!("cannot read the keymap of the parent: {e}"),
+            },
+            wl_keyboard::Event::Key {
+                key,
+                state: WEnum::Value(key_state),
+                ..
+            } => {
+                let pressed = key_state == wl_keyboard::KeyState::Pressed;
+                keyboard_input(state, key, pressed, time);
+            }
+            // 親のフォーカスが外れたら、押されているキーを離したことにする(子で繰り返しが続かないように)。
+            wl_keyboard::Event::Leave { .. } => release_all_keys(state, time),
+            wl_keyboard::Event::RepeatInfo { rate, delay } => {
+                if let Some(keyboard) = &state.frontend().keyboard {
+                    keyboard.change_repeat_info(rate, delay);
+                }
+            }
+            // 修飾キーの状態は、子の側で、キーから求める。
+            _ => {}
+        }
+    }
+}
+
+/// 親が渡した keymap の fd から、`size` バイトを読む(終わりの NUL は除く)。
+///
+/// fd の読む位置を動かさないよう、位置を指定して読む(親が、同じ fd をほかにも渡していることがある)。
+fn read_keymap(fd: std::os::fd::OwnedFd, size: usize) -> std::io::Result<String> {
+    use std::os::unix::fs::FileExt;
+    let file = std::fs::File::from(fd);
+    let mut bytes = vec![0; size];
+    file.read_exact_at(&mut bytes, 0)?;
+    while bytes.last() == Some(&0) {
+        bytes.pop();
+    }
+    String::from_utf8(bytes).map_err(std::io::Error::other)
 }
 
 impl ShmHandler for Seinas {
