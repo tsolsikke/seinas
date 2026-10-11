@@ -11,3 +11,15 @@ b-ascii-16px 306 false 0 0
 b-kana-16px 137 false 0 0
 b-kanji-16px 134 false 0 0
 b-fallback-16px 73 false 1 1
+b-confusable-14px 114 false 0 0
+b-yen-backslash-14px 61 false 0 0
+b-dakuten-14px 70 false 0 0
+b-box-drawing-14px 117 false 2 0
+b-halfwidth-kana-14px 75 false 0 0
+b-kanji-level2-14px 108 false 0 0
+b-confusable-16px 130 false 0 0
+b-yen-backslash-16px 69 false 0 0
+b-dakuten-16px 80 false 0 0
+b-box-drawing-16px 134 false 2 0
+b-halfwidth-kana-16px 86 false 0 0
+b-kanji-level2-16px 123 false 0 0
