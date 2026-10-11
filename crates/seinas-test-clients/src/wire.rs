@@ -189,6 +189,56 @@ impl Wire {
         }
     }
 
+    /// グローバルの一覧を受け取って覚える。この後の新しい番号は、4 から順に [`Wire::bind`] などで配る。
+    ///
+    /// ウィンドウも layer surface も作らないクライアント(一覧を受け取るだけのもの)が使う。
+    pub fn list_globals(&mut self) -> Result<(), String> {
+        self.send(&message(WL_DISPLAY, 1, &REGISTRY.to_le_bytes()))?;
+        self.send(&message(WL_DISPLAY, 0, &SYNC.to_le_bytes()))?;
+        let mut globals: Vec<(u32, String)> = Vec::new();
+        loop {
+            let Some(event) = self.next_event()? else {
+                return Err("the compositor closed the connection".to_owned());
+            };
+            if let Some(error) = protocol_error(&event) {
+                return Err(format!("protocol error while listing the globals: {error}"));
+            }
+            match (event.object, event.opcode) {
+                (SYNC, _) => break,
+                (REGISTRY, 0) => {
+                    let name = event.u32_at(0).ok_or("a broken global")?;
+                    let length = event.u32_at(4).ok_or("a broken global")? as usize;
+                    let interface = event
+                        .body
+                        .get(8..8 + length.saturating_sub(1))
+                        .ok_or("a broken global")?;
+                    globals.push((name, String::from_utf8_lossy(interface).into_owned()));
+                }
+                _ => {}
+            }
+        }
+        self.globals = globals;
+        self.next_id = SYNC + 1;
+        Ok(())
+    }
+
+    /// グローバル `interface` を、バージョン `version` で bind する。返すのは、新しいオブジェクトの番号。
+    pub fn bind(&mut self, interface: &str, version: u32) -> Result<u32, String> {
+        let name = self
+            .globals
+            .iter()
+            .find(|(_, i)| i == interface)
+            .map(|(name, _)| *name)
+            .ok_or_else(|| format!("the compositor does not offer {interface}"))?;
+        let id = self.new_id();
+        let mut body = name.to_le_bytes().to_vec();
+        body.extend(string(interface));
+        body.extend(version.to_le_bytes());
+        body.extend(id.to_le_bytes());
+        self.send(&message(REGISTRY, 0, &body))?;
+        Ok(id)
+    }
+
     /// 席のポインターを使い始める。この後、ポインターの知らせが届くようになる。
     ///
     /// コンポジタが席を公開していなければ、失敗する。

@@ -173,7 +173,7 @@ ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall
 - 読み込み、arch_prctl、set_tid_address、mmap・munmap・mprotect(MAP_FIXED・PROT_NONE を含む)
 - rt_sigaction の登録、sigaltstack、getrandom、read・write、/dev/fb0 の open・ioctl・mmap
 - futex の WAKE(zeyes-min の FUTEX_WAKE_PRIVATE は、これで足りる見込み)
-- 確かめておくとよいもの:brk、poll(events=0、timeout 0)、rt_sigprocmask、fstat、close、exit_group、getrandom の GRND_INSECURE(flag 4)、open の O_LARGEFILE・O_CLOEXEC
+- 確かめておくとよいもの:brk、poll(events=0、timeout 0)、rt_sigprocmask、fstat、close、exit_group、getrandom の GRND_INSECURE(flag 4)と flags 0(ウィンドウの一覧の識別子。「変更ごとの差分の記録」)、open の O_LARGEFILE・O_CLOEXEC
 
 ### 新しく要るもの
 
@@ -225,3 +225,4 @@ ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall
 | --- | --- | --- |
 | 2026-10-11 | 既定のフォントの確認、golden の追加、配布物へのフォントの同梱 | なし。M3 の構成のバイナリ(seinas-standalone、zeyes-min)の SHA-256 が変わっていない(1d29536e…、f40cff4e…)。フォントを読む syscall(open・fstat・read・close)は、上の「ファイル(フォント)」のとおり |
 | 2026-10-11 | layer-shell の受け口と、シェルの部品のためのソケット | コンポジタの syscall の種類は増えない(37 種類のまま)。ソケットが 1 つ増えるぶん、socket・bind・listen・flock が 1 回ずつ、ロックファイルの open と stat が増える(socket 2、bind 2、listen 2、flock 2)。fd は、起動した直後で 12(標準入出力とログを含む。シェルのソケットとそのロックファイルの 2 つが、前より増えた分。前の数は測っていない)、layer surface のクライアントがつながると +2(接続と、pool の memfd)。プロセスの本数は変わらない(layer surface のクライアントは、試験用のクライアントで、fd は 5) |
+| 2026-10-11 | ウィンドウの一覧と操作のプロトコル(foreign-toplevel) | コンポジタの syscall の種類は増えない(37 種類のまま)。最初にウィンドウを一覧に載せるときに、getrandom が 2 回増える(長さ 0・flags 0 の問い合わせと、32 バイト・flags 0)。ext の一覧の識別子を作るのに、Smithay が rand のスレッドごとの乱数の種を取るため。一覧を bind するクライアントがいなくても起きる。ZeikOS では、GRND_INSECURE に加えて flags 0 の getrandom も要る。fd は、起動した直後 12(変わらない)、一覧を受け取るクライアントがつながると +1(接続だけ。pool は無い)。プロセスの本数は変わらない(一覧を受け取るクライアントは、テスト用のクライアントで、fd は 4) |

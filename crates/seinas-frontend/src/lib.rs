@@ -16,6 +16,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 pub use smithay;
 
 mod decoration;
+mod foreign_toplevel;
 pub mod geometry;
 mod interaction;
 mod stack;
@@ -26,6 +27,7 @@ pub use decoration::{
     HOT_CLOSE_MARK, INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, TITLE_BAR_HEIGHT, TITLE_PADDING,
     TITLE_SIZE,
 };
+pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use interaction::{part_at, Deliver, Interaction, Outcome, Part, DRAG_SLACK, LEFT_BUTTON};
 pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, WindowId, CASCADE_STEP};
 pub use title_bar::TitleBar;
@@ -53,10 +55,11 @@ use smithay::{
         decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode as DecorationMode,
         shell::server::xdg_toplevel,
     },
+    reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1,
     reexports::wayland_server::{
         backend::{ClientData, ClientId, DisconnectReason, ObjectId},
         protocol::wl_surface::WlSurface,
-        Client, Display, DisplayHandle, Resource,
+        Client, Dispatch, Display, DisplayHandle, Resource,
     },
     utils::{
         Logical, Point as SmithayPoint, Rectangle, Serial, Size as SmithaySize, SERIAL_COUNTER,
@@ -73,6 +76,7 @@ use smithay::{
                 XdgToplevelSurfaceData,
             },
         },
+        foreign_toplevel_list::ForeignToplevelListHandler,
         shm::ShmState,
     },
 };
@@ -121,6 +125,8 @@ pub struct Frontend<D: SeatHandler> {
     pub xdg_decoration_state: XdgDecorationState,
     /// layer-shell。global は、シェルの部品(シェルのソケットからつないだクライアント)にだけ見せる。
     pub layer_shell_state: WlrLayerShellState,
+    /// ウィンドウの一覧と操作(foreign-toplevel)。global は、シェルの部品にだけ見せる。
+    pub foreign_toplevels: ForeignToplevelState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<D>,
     /// 席は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
@@ -145,7 +151,15 @@ pub struct Frontend<D: SeatHandler> {
 }
 
 /// コンポジタの状態の型が、受け口を使うために実装するもの。
-pub trait FrontendHost: SeatHandler + Sized {
+///
+/// `Dispatch` と `ForeignToplevelListHandler` は、[`delegate_frontend!`] が実装する。
+pub trait FrontendHost:
+    SeatHandler
+    + Dispatch<ZwlrForeignToplevelHandleV1, HandleData>
+    + ForeignToplevelListHandler
+    + Sized
+    + 'static
+{
     /// 受け口の置き場所。
     fn frontend(&self) -> &Frontend<Self>;
     fn frontend_mut(&mut self) -> &mut Frontend<Self>;
@@ -158,7 +172,7 @@ pub trait BuildFrontend: SeatHandler + Sized {
     fn build_frontend(display_handle: &DisplayHandle, config: Config) -> Frontend<Self>;
 }
 
-impl<D: SeatHandler> Frontend<D> {
+impl<D: FrontendHost> Frontend<D> {
     /// ふだんのソケットからつないできたクライアントを受け入れる。
     pub fn accept(&mut self, stream: std::os::unix::net::UnixStream) {
         self.insert_client(stream, false);
@@ -268,7 +282,8 @@ impl<D: SeatHandler> Frontend<D> {
     }
 
     /// いちばん手前のウィンドウにだけ、activatedの状態を付ける。変わったウィンドウには、configureで知らせる。
-    fn update_activation(&self) {
+    /// ウィンドウの一覧(foreign-toplevel)も合わせる。
+    fn update_activation(&mut self) {
         for (window, active) in self.windows.iter_with_activation() {
             let toplevel = &window.item;
             toplevel.with_pending_state(|state| {
@@ -282,6 +297,62 @@ impl<D: SeatHandler> Frontend<D> {
             if toplevel.is_initial_configure_sent() {
                 toplevel.send_pending_configure();
             }
+        }
+        self.update_foreign_toplevels();
+    }
+
+    /// ウィンドウの一覧(foreign-toplevel)を、いまのウィンドウに合わせる。一覧に載せるのは、絵を出した
+    /// ウィンドウだけ。タイトル・app_id・activated かどうかが変わったら、シェルの部品へ送る。
+    pub fn update_foreign_toplevels(&mut self) {
+        let now = self
+            .windows
+            .iter_with_activation()
+            .filter(|(window, _)| window_size(&window.item).is_some())
+            .map(|(window, activated)| {
+                let (title, app_id) = toplevel_names(&window.item);
+                Listing {
+                    window: window.id,
+                    title,
+                    app_id,
+                    activated,
+                }
+            })
+            .collect();
+        self.foreign_toplevels
+            .update::<D>(&self.display_handle, &self.output, now);
+    }
+
+    /// `surface` がウィンドウで、絵を出した・外したことで一覧に載るかどうかが変わったら、一覧を合わせる。
+    pub fn commit_window(&mut self, surface: &WlSurface) {
+        let changed = self
+            .windows
+            .iter()
+            .find(|window| window.item.wl_surface() == surface)
+            .is_some_and(|window| {
+                window_size(&window.item).is_some() != self.foreign_toplevels.is_listed(window.id)
+            });
+        if changed {
+            self.update_foreign_toplevels();
+        }
+    }
+
+    /// ウィンドウ `id` を raise して activated にする(foreign-toplevel の activate)。スタックが変わったらtrue。
+    pub fn activate(&mut self, id: WindowId) -> bool {
+        let Some(index) = self.windows.position(id) else {
+            return false;
+        };
+        if !self.windows.raise(index) {
+            return false;
+        }
+        self.update_activation();
+        true
+    }
+
+    /// ウィンドウ `id` のクライアントに、閉じるように頼む(foreign-toplevel の close)。応じるかどうかは、
+    /// クライアントしだい。
+    pub fn request_close(&self, id: WindowId) {
+        if let Some(window) = self.windows.get(id) {
+            window.item.send_close();
         }
     }
 
@@ -659,6 +730,23 @@ fn rect_from(rect: Rectangle<i32, Logical>) -> Rect {
     )
 }
 
+/// クライアントが付けたタイトルと app_id。付けていなければ空。
+fn toplevel_names(toplevel: &ToplevelSurface) -> (String, String) {
+    with_states(toplevel.wl_surface(), |states| {
+        let data = states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .map(|data| data.lock().expect("the toplevel data"));
+        match &data {
+            Some(data) => (
+                data.title.clone().unwrap_or_default(),
+                data.app_id.clone().unwrap_or_default(),
+            ),
+            None => Default::default(),
+        }
+    })
+}
+
 /// 題名の帯に出す文字。クライアントが付けた題名、無ければapp_id、それも無ければ空。
 fn toplevel_title(toplevel: &ToplevelSurface) -> String {
     with_states(toplevel.wl_surface(), |states| {
@@ -753,7 +841,10 @@ macro_rules! delegate_frontend {
                 surface: &$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
             ) {
                 $crate::smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
-                $crate::FrontendHost::frontend_mut(self).commit_layer(surface);
+                let frontend = $crate::FrontendHost::frontend_mut(self);
+                if !frontend.commit_layer(surface) {
+                    frontend.commit_window(surface);
+                }
                 $crate::FrontendHost::redraw_needed(self);
             }
         }
@@ -794,9 +885,11 @@ macro_rules! delegate_frontend {
                 $crate::client_move_request(self, &surface, serial);
             }
             fn title_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::FrontendHost::frontend_mut(self).update_foreign_toplevels();
                 $crate::FrontendHost::redraw_needed(self);
             }
             fn app_id_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::FrontendHost::frontend_mut(self).update_foreign_toplevels();
                 $crate::FrontendHost::redraw_needed(self);
             }
             fn toplevel_destroyed(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
@@ -884,7 +977,25 @@ macro_rules! delegate_frontend {
             }
         }
 
-        impl $crate::smithay::wayland::output::OutputHandler for $ty {}
+        impl $crate::smithay::wayland::output::OutputHandler for $ty {
+            fn output_bound(
+                &mut self,
+                _output: $crate::smithay::output::Output,
+                wl_output: $crate::smithay::reexports::wayland_server::protocol::wl_output::WlOutput,
+            ) {
+                $crate::FrontendHost::frontend(self)
+                    .foreign_toplevels
+                    .output_bound(&wl_output);
+            }
+        }
+
+        impl $crate::smithay::wayland::foreign_toplevel_list::ForeignToplevelListHandler for $ty {
+            fn foreign_toplevel_list_state(
+                &mut self,
+            ) -> &mut $crate::smithay::wayland::foreign_toplevel_list::ForeignToplevelListState {
+                &mut $crate::FrontendHost::frontend_mut(self).foreign_toplevels.list
+            }
+        }
 
         impl $crate::BuildFrontend for $ty {
             fn build_frontend(
@@ -924,12 +1035,15 @@ macro_rules! delegate_frontend {
                 };
                 let output = $crate::new_output(config.width, config.height);
                 output.create_global::<Self>(display_handle);
+                // ウィンドウの一覧と操作も、シェルの部品にだけ見せる(ADR 0002)。
+                let foreign_toplevels = $crate::ForeignToplevelState::new::<Self>(display_handle);
                 $crate::Frontend {
                     display_handle: display_handle.clone(),
                     compositor_state,
                     xdg_shell_state,
                     xdg_decoration_state,
                     layer_shell_state,
+                    foreign_toplevels,
                     shm_state,
                     seat_state,
                     seat,
@@ -953,6 +1067,16 @@ macro_rules! delegate_frontend {
         $crate::smithay::delegate_xdg_shell!($ty);
         $crate::smithay::delegate_xdg_decoration!($ty);
         $crate::smithay::delegate_layer_shell!($ty);
+        $crate::smithay::delegate_foreign_toplevel_list!($ty);
+        $crate::smithay::reexports::wayland_server::delegate_global_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: ()
+        ] => $crate::ForeignToplevelState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_manager_v1::ZwlrForeignToplevelManagerV1: ()
+        ] => $crate::ForeignToplevelState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1: $crate::HandleData
+        ] => $crate::ForeignToplevelState);
         $crate::smithay::delegate_seat!($ty);
         $crate::smithay::delegate_output!($ty);
     };

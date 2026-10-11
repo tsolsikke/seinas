@@ -21,12 +21,15 @@
 //!   ポインターの知らせを書く、動かしてほしいと頼む、閉じる頼みに応じない、という指定もある。くわしくは `window.rs`。
 //! - `layer`: layer surface(wlr-layer-shell)を 1 つ出す。シェルの部品のためのソケットへつなぐこと。
 //!   層・anchor・大きさ・exclusive zone・margin・色を引数で決める。くわしくは `layer.rs`。
+//! - `toplevels`: ウィンドウの一覧(foreign-toplevel)を受け取って書き出し、標準入力から届いた頼み
+//!   (activate、close など)を送る。シェルの部品のためのソケットへつなぐこと。くわしくは `toplevels.rs`。
 //!
 //! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
 //! `window` は、閉じるように頼まれて終わったときも、終了コード0で終わる。
 
 mod layer;
 mod shrink;
+mod toplevels;
 mod window;
 mod wire;
 
@@ -162,12 +165,14 @@ fn main() -> ExitCode {
         eprintln!("       test-client shrink [--step]");
         eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration] [--pointer] [--move-on-press] [--ignore-close] [--size WxH] [--color RRGGBB]");
         eprintln!("       test-client layer [--layer NAME] [--anchor LIST] [--size WxH] [--exclusive N] [--margin T,R,B,L] [--color RRGGBB] [--namespace NAME]");
+        eprintln!("       test-client toplevels [--ext|--ext-only] [--output-after]");
         return ExitCode::from(2);
     };
     let result = match kind.as_str() {
         "shrink" => shrink::run(args.iter().any(|arg| arg == "--step")),
         "window" => window::run(&args[1..]),
         "layer" => layer::run(&args[1..]),
+        "toplevels" => toplevels::run(&args[1..]),
         _ => run(kind),
     };
     match result {

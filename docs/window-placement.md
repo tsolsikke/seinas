@@ -54,7 +54,22 @@
 
 - ボタンを押していない間は、top と overlay の layer surface が、ウィンドウより先にポインターのイベントを受け取ります。その上でボタンを押しても、下のウィンドウは raise されず、ドラッグや close ボタンも働きません。
 - ウィンドウの上でない所では、bottom と background の layer surface が、ポインターのイベントを受け取ります。
-- キーボードの入力(`keyboard_interactivity`)は、まだ扱っていません。
+- キーボードの入力(`keyboard_interactivity`)は、まだ扱っていません(どの値でも、キーボードの入力を渡しません)。メニュー(トーチ)を作るときに扱います。
+
+## ウィンドウの一覧と操作(foreign-toplevel)
+
+タスクバーなどのシェルの部品に、ウィンドウの一覧と、ウィンドウを操作するプロトコルを見せます(`docs/adr/0002-shell-components.md`)。
+
+- 公開するのは、wlr-foreign-toplevel-management(`zwlr_foreign_toplevel_manager_v1`、バージョン 3)と、ext-foreign-toplevel-list(`ext_foreign_toplevel_list_v1`、バージョン 1。読むだけの一覧)の 2 つです。どちらの global も、layer-shell と同じく、シェルの部品のためのソケットからつないだクライアントにだけ見えます。
+- 一覧に載るのは、絵を出した(map した)ウィンドウだけです。一覧の順は map した順で、スタックの順とは別です。絵を外したウィンドウは、一覧から外れます(closed)。
+- 送る内容は、タイトル・app_id(付けていなければ送らない)、output(output_enter。output は 1 つで、wl_output を後から bind したクライアントには、そのときに送る)、状態です。状態は、いちばん手前のウィンドウに付く activated だけです(最大化・最小化・全画面は、まだ持っていません)。タイトル・app_id・状態が変わるたびに、変わったものと done を送ります。ウィンドウが去ったら closed を送ります。
+- 頼みの扱い:
+  - activate:そのウィンドウを raise して、activated にします(クリックで raise したときと同じ)。seat の指定は見ません。
+  - close:クライアントに、閉じるように頼みます(閉じるボタンと同じ)。応じるかどうかは、クライアントしだいです。
+  - set_maximized・unset_maximized・set_minimized・unset_minimized・set_fullscreen・unset_fullscreen:受けますが、今は何もしません(状態も変えません。ログに 1 行出します)。最大化と最小化は、ウィンドウの最大化・最小化を入れるときに扱います。
+  - set_rectangle:受け取って覚えるだけです(最小化のアニメーションの行き先に使えますが、今は使いません)。幅か高さが負なら、プロトコルのエラー(invalid_rectangle)で切ります。
+  - stop:finished を送り、それからは新しいウィンドウを送りません。前から持っている handle には、変化を送り続けます。
+- 閉じたウィンドウの handle への頼みは、何もしません。
 
 ## 重ね方
 
@@ -205,6 +220,7 @@ zeyes-minは従わず、いつも320x240で描きます(外形は320x264)。
   試験用のクライアントは、`--pointer` でポインターの知らせを書き出し、`--move-on-press` で移動を頼み、`--ignore-close` で閉じる頼みに応じなくなります。
 - layer surface と使える範囲は、`crates/seinas-standalone/tests/layers.rs` が確かめます(ふだんのソケットに layer-shell が見えないこと、exclusive zone で使える範囲が狭まり、元に戻ること、configure の大きさ、ドラッグの限り、top の layer surface の上でのボタンがウィンドウを raise しないこと)。layer surface は、試験用のクライアント(`test-client layer`)で出します。
 - 層の重なりの描画は、正解データ(`crates/seinas-standalone/tests/golden_layers.rs`)と比べます(`docs/golden.md`)。
+- ウィンドウの一覧と操作は、`crates/seinas-standalone/tests/foreign_toplevels.rs` が、テスト用のクライアント(`test-client toplevels`)の出力とピクセルで確かめます(ふだんのソケットに 2 つの global が見えないこと、一覧の内容と変化、bind する前からあるウィンドウ、wl_output を後から bind したときの output_enter、activate で raise されること、close の頼み、最大化などの頼みで何も変わらないこと、負の rectangle のエラー、stop)。
 - スロットの計算と、使える範囲が変わったときのウィンドウの移り方は、`crates/seinas-frontend` のユニットテスト(`src/stack.rs`)で確かめています。
 - これらの試験は、`tools/fetch-fonts.sh` が置いたフォントを使います。先に、このスクリプトを実行しておいてください。
 
