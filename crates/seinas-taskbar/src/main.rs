@@ -619,14 +619,14 @@ mod tests {
     }
 
     #[test]
-    fn the_offset_comes_from_the_argument_then_tz_then_japan() {
+    fn the_offset_comes_from_the_argument_then_tz_then_the_default() {
         let offset = |list: &[&str], tz: Option<&str>| {
             parse_options(&args(list), None, tz.map(str::to_owned)).map(|o| o.offset)
         };
-        assert_eq!(offset(&[], None), Ok(9 * 3600));
+        assert_eq!(offset(&[], None), Ok(DEFAULT_UTC_OFFSET));
         assert_eq!(offset(&[], Some("UTC0")), Ok(0));
         // 読めない TZ(データベースの名前など)は、既定に戻る。
-        assert_eq!(offset(&[], Some("Asia/Tokyo")), Ok(9 * 3600));
+        assert_eq!(offset(&[], Some("Asia/Tokyo")), Ok(DEFAULT_UTC_OFFSET));
         assert_eq!(
             offset(&["--utc-offset", "-05:00"], Some("UTC0")),
             Ok(-5 * 3600)

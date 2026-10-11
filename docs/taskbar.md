@@ -43,6 +43,7 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 - 時刻は、壁の時計(`clock_gettime(CLOCK_REALTIME)`)から読みます。std の `SystemTime::now` は、失敗すると panic するので使いません。
 - 時刻が取れないときは、`--:--` を出します。取れないときとは、`clock_gettime` が失敗したときと、2020-01-01 より前を指しているとき(合わせられていない壁の時計)です。ZeikOS には、まだ壁の時計が無いので、今はこの表示になる見込みです。
 - 時差は、`--utc-offset` があればそれ、無ければ環境変数 `TZ` の、夏時間の無い簡単な形(`JST-9`、`UTC0`、`<+09>-9` など)、それも無ければ `+09:00` です。タイムゾーンのデータベース(`/usr/share/zoneinfo`)は読みません(ZeikOS に無いため)。`Asia/Tokyo` のような名前は読めないので、`+09:00` になります。
+- 既定の時差は +09:00 で、`crates/seinas-taskbar/src/lib.rs` の定数 `DEFAULT_UTC_OFFSET` の 1 か所で決めています。WSL には TZ が無いことが多く、UTC にすると、入れ子で見たときに 9 時間ずれるためです。
 - 分が変わった少し後(5 ミリ秒後)に起きて、再描画します。時刻が取れないときは、60 秒ごとに読み直します。起きるのには、イベントループ(calloop)のタイマーを使います(timerfd が 1 つ)。
 
 ## ZeikOS の上で動かすときの前提
