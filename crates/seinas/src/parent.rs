@@ -1,11 +1,12 @@
 //! 裏側: 親のWayland(WSLgなど)への提出。親に対してはクライアントとして振る舞う(SCTK)。
 //!
 //! 共通の描画が作った絵を、親のwl_shmのバッファへ写して出す。親から届いたポインターの動きは、
-//! 受け口を通して子へ渡す。
+//! フロントエンドを通して子へ渡す。カーソルの形(サイズ変更の境界の上など)は、フロントエンドが決め、親のカーソルの
+//! テーマ(xcursor)の絵で出す。
 
 use std::error::Error;
 
-use seinas_frontend::{geometry::PointF, pointer_input, PointerInput};
+use seinas_frontend::{geometry::PointF, pointer_input, Cursor, Edges, FrontendHost, PointerInput};
 use seinas_render::{FrameView, PixelFormat};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState, FrameCallbackData},
@@ -14,7 +15,9 @@ use smithay_client_toolkit::{
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
     seat::{
-        pointer::{PointerEvent, PointerEventKind, PointerHandler},
+        pointer::{
+            CursorIcon, PointerEvent, PointerEventKind, PointerHandler, ThemeSpec, ThemedPointer,
+        },
         Capability, SeatHandler, SeatState,
     },
     shell::{
@@ -40,6 +43,7 @@ use crate::Seinas;
 
 /// 親に対するクライアント側の状態。
 pub struct Parent {
+    compositor: CompositorState,
     registry_state: RegistryState,
     seat_state: SeatState,
     output_state: OutputState,
@@ -47,7 +51,9 @@ pub struct Parent {
     pool: SlotPool,
     window: Window,
     buffer: Option<Buffer>,
-    pointer: Option<wl_pointer::WlPointer>,
+    pointer: Option<ThemedPointer>,
+    /// 最後に親へ出したカーソルの形。ポインターが入ってきたら、出し直す(None にする)。
+    cursor: Option<Cursor>,
     width: i32,
     height: i32,
     configured: bool,
@@ -75,6 +81,7 @@ impl Parent {
         // バッファ2枚ぶん。親が1枚を使っている間に、もう1枚へ描けるようにする。
         let pool = SlotPool::new((width * height * 4 * 2) as usize, &shm)?;
         Ok(Parent {
+            compositor,
             registry_state: RegistryState::new(globals),
             seat_state: SeatState::new(globals, qh),
             output_state: OutputState::new(globals, qh),
@@ -83,6 +90,7 @@ impl Parent {
             window,
             buffer: None,
             pointer: None,
+            cursor: None,
             width,
             height,
             configured: false,
@@ -235,7 +243,15 @@ impl SeatHandler for Seinas {
         capability: Capability,
     ) {
         if capability == Capability::Pointer && self.parent.pointer.is_none() {
-            match self.parent.seat_state.get_pointer(qh, &seat) {
+            // カーソルの絵は、親のカーソルのテーマ(XCURSOR_THEME、XCURSOR_SIZE。無ければ既定)から読む。
+            let surface = self.parent.compositor.create_surface(qh);
+            match self.parent.seat_state.get_pointer_with_theme::<_, ()>(
+                qh,
+                &seat,
+                self.parent.shm.wl_shm(),
+                surface,
+                ThemeSpec::default(),
+            ) {
                 Ok(pointer) => self.parent.pointer = Some(pointer),
                 Err(e) => warn!("failed to get the parent pointer: {e}"),
             }
@@ -249,9 +265,8 @@ impl SeatHandler for Seinas {
         capability: Capability,
     ) {
         if capability == Capability::Pointer {
-            if let Some(pointer) = self.parent.pointer.take() {
-                pointer.release();
-            }
+            // 捨てると、親のポインターも離す。
+            self.parent.pointer = None;
         }
     }
     fn remove_seat(&mut self, _: &Connection, _: &QueueHandle<Self>, _: wl_seat::WlSeat) {}
@@ -261,7 +276,7 @@ impl PointerHandler for Seinas {
     /// 親から届いたポインターの動きを、子へ渡す。
     fn pointer_frame(
         &mut self,
-        _: &Connection,
+        conn: &Connection,
         _: &QueueHandle<Self>,
         _: &wl_pointer::WlPointer,
         events: &[PointerEvent],
@@ -270,6 +285,10 @@ impl PointerHandler for Seinas {
         for event in events {
             if &event.surface != self.parent.window.wl_surface() {
                 continue;
+            }
+            if let Enter { .. } = event.kind {
+                // 入ってきたときは、親のカーソルの形が決まっていないので、出し直す。
+                self.parent.cursor = None;
             }
             let location = PointF::from(event.position);
             let input = match event.kind {
@@ -291,6 +310,46 @@ impl PointerHandler for Seinas {
             let time = self.start.elapsed().as_millis() as u32;
             pointer_input(self, input, time);
         }
+        self.update_cursor(conn);
+    }
+}
+
+impl Seinas {
+    /// フロントエンドが決めたカーソルの形が変わっていたら、親のカーソルを変える。
+    fn update_cursor(&mut self, conn: &Connection) {
+        let cursor = self.frontend().cursor();
+        if self.parent.cursor == Some(cursor) {
+            return;
+        }
+        let Some(pointer) = &self.parent.pointer else {
+            return;
+        };
+        match pointer.set_cursor(conn, cursor_icon(cursor)) {
+            Ok(()) => self.parent.cursor = Some(cursor),
+            // テーマが無いときなど。何度も出さないよう、出したことにしておく。
+            Err(e) => {
+                warn!("failed to set the parent cursor: {e}");
+                self.parent.cursor = Some(cursor);
+            }
+        }
+    }
+}
+
+/// カーソルの形を、カーソルのテーマの名前にする。
+fn cursor_icon(cursor: Cursor) -> CursorIcon {
+    match cursor {
+        Cursor::Default => CursorIcon::Default,
+        Cursor::Resize(edges) => match edges {
+            Edges::TOP => CursorIcon::NResize,
+            Edges::BOTTOM => CursorIcon::SResize,
+            Edges::LEFT => CursorIcon::WResize,
+            Edges::RIGHT => CursorIcon::EResize,
+            Edges::TOP_LEFT => CursorIcon::NwResize,
+            Edges::TOP_RIGHT => CursorIcon::NeResize,
+            Edges::BOTTOM_LEFT => CursorIcon::SwResize,
+            Edges::BOTTOM_RIGHT => CursorIcon::SeResize,
+            _ => CursorIcon::Default,
+        },
     }
 }
 

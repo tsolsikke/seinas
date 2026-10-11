@@ -14,6 +14,12 @@
 //! - `--ignore-close`: 閉じるように頼まれても、終わらない(応じないクライアントのまね)。
 //! - `--size WxH`: コンテンツの大きさ(既定は 200x150)。
 //! - `--color RRGGBB`: コンテンツの色(既定は ff8000、橙)。
+//! - `--follow-size`: configure で届く大きさが変わったら、その大きさで再描画する(既定は、大きさを変えない)。
+//!   最初の configure の大きさには従わない(`--size` の大きさで出す)。
+//! - `--min-size WxH`、`--max-size WxH`: コンテンツの最小と最大の大きさを、コンポジタに伝える。
+//! - `--resize-on-press EDGE`: コンテンツの上でボタンが押されたら、辺 `EDGE`(top・bottom・left・right・
+//!   top-left・top-right・bottom-left・bottom-right)でサイズ変更してほしいと頼む(xdg_toplevel の resize)。
+//!   `--pointer` も付けたことになる。
 //!
 //! 標準入力から `title TEXT` の行が届くと、題名を `TEXT` に変える。
 //!
@@ -25,6 +31,7 @@
 //!   届くたびに1行(`--decoration` を付けたとき)。クライアントの側なら `client-side`。
 //! - `window: wm_capabilities []`: コンポジタができることの並び(xdg_toplevel.wm_capabilities)が届くたびに1行。
 //! - `window: drawn`: 最初の絵をコンポジタが描いたとき(frameコールバックが届いたとき)に1回。
+//! - `window: resized WxH`: `--follow-size` で、新しい大きさの絵を commit したとき。
 //! - `window: pointer enter X Y`、`window: pointer leave`、`window: pointer motion X Y`、
 //!   `window: pointer button 0x110 pressed`(または `released`): ポインターの知らせ(`--pointer` を付けたとき)。
 //!   位置は、中身の左上を原点にした画素。
@@ -36,7 +43,9 @@ use std::{
     sync::mpsc,
 };
 
-use crate::wire::{connect, open_window_with, protocol_error, Polled, WindowSetup};
+use crate::wire::{
+    commit_buffer_with, connect, open_window_with, protocol_error, Polled, WindowSetup, XDG_SURFACE,
+};
 
 /// ウィンドウの大きさと色(橙)。
 const WIDTH: i32 = 200;
@@ -52,6 +61,8 @@ struct Options {
     ignore_close: bool,
     size: Option<(u32, u32)>,
     pixel: Option<[u8; 4]>,
+    follow_size: bool,
+    resize_on_press: Option<u32>,
 }
 
 /// 引数を読む。
@@ -69,6 +80,24 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--ignore-close" => options.ignore_close = true,
             "--size" => options.size = Some(crate::layer::parse_size(&value()?)?),
             "--color" => options.pixel = Some(crate::layer::parse_color(&value()?)?),
+            "--follow-size" => options.follow_size = true,
+            "--min-size" => options.setup.min_size = Some(crate::layer::parse_size(&value()?)?),
+            "--max-size" => options.setup.max_size = Some(crate::layer::parse_size(&value()?)?),
+            "--resize-on-press" => {
+                // xdg_toplevel の resize_edge の値。
+                let edges = match value()?.as_str() {
+                    "top" => 1,
+                    "bottom" => 2,
+                    "left" => 4,
+                    "top-left" => 5,
+                    "bottom-left" => 6,
+                    "right" => 8,
+                    "top-right" => 9,
+                    "bottom-right" => 10,
+                    other => return Err(format!("unknown edge: {other}")),
+                };
+                (options.pointer, options.resize_on_press) = (true, Some(edges));
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -86,7 +115,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
         .map(|(w, h)| (w as i32, h as i32))
         .unwrap_or((WIDTH, HEIGHT));
     let pixel = options.pixel.unwrap_or(PIXEL);
-    let _pool = open_window_with(&mut wire, width, height, pixel, &options.setup)?;
+    let pool = open_window_with(&mut wire, width, height, pixel, &options.setup)?;
+    // 再描画したときの pool も、持ち続ける(前のバッファを、コンポジタがまだ使っているかもしれないため)。
+    let mut pools = vec![pool];
+    let mut drawn = (width, height);
+    // 最後に従うかどうかを決めた、configure の大きさ。
+    let mut seen = wire.toplevel_size;
     if options.pointer {
         wire.watch_pointer()?;
     }
@@ -115,6 +149,29 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     (options.move_on_press, wire.button_press_serial(&event))
                 {
                     wire.request_move(serial)?;
+                }
+                if let (Some(edges), Some(serial)) =
+                    (options.resize_on_press, wire.button_press_serial(&event))
+                {
+                    wire.request_resize(serial, edges)?;
+                }
+                // xdg_surface.configure(configure のまとまりの終わり)で、届いた大きさに再描画する。
+                let configured = (event.object, event.opcode) == (XDG_SURFACE, 0);
+                let changed = configured && wire.toplevel_size != seen;
+                if changed {
+                    seen = wire.toplevel_size;
+                }
+                let wanted = seen.map(|(w, h)| (w as i32, h as i32));
+                if let (true, true, Some((w, h))) = (options.follow_size, changed, wanted) {
+                    if w > 0 && h > 0 && (w, h) != drawn {
+                        let (buffer, pool) = wire.new_buffer(w, h, pixel)?;
+                        pools.push(pool);
+                        let callback = wire.new_id();
+                        commit_buffer_with(&mut wire, buffer, w, h, callback)?;
+                        drawn = (w, h);
+                        println!("window: resized {w}x{h}");
+                        let _ = std::io::stdout().flush();
+                    }
                 }
                 if wire.close_requested && !options.ignore_close {
                     return Ok(true);

@@ -44,6 +44,9 @@ pub struct WindowSetup {
     pub app_id: Option<String>,
     /// 飾りの描き方を、xdg-decoration(zxdg_decoration_manager_v1)で尋ねるか。
     pub decoration: bool,
+    /// コンテンツの最小と最大の大きさ(xdg_toplevel.set_min_size、set_max_size)。Noneなら送らない。
+    pub min_size: Option<(u32, u32)>,
+    pub max_size: Option<(u32, u32)>,
 }
 
 /// 次のイベントを少しだけ待った結果。
@@ -91,6 +94,8 @@ pub struct Wire {
     layer_surface: Option<u32>,
     /// layer surface に届いた、いちばん新しい configure の大きさ。
     pub layer_size: Option<(u32, u32)>,
+    /// xdg_toplevel.configure で届いた、いちばん新しい大きさ(0x0 は「クライアントに任せる」)。
+    pub toplevel_size: Option<(u32, u32)>,
 }
 
 impl Wire {
@@ -279,6 +284,51 @@ impl Wire {
         ))
     }
 
+    /// 通し番号が `serial` のボタンを押したまま、辺 `edges`(xdg_toplevel の resize_edge の値)で
+    /// サイズ変更してほしいと頼む(xdg_toplevel.resize)。
+    pub fn request_resize(&mut self, serial: u32, edges: u32) -> Result<(), String> {
+        let seat = self.seat.ok_or("the pointer is not watched")?;
+        self.send(&message(
+            TOPLEVEL,
+            6,
+            &[
+                seat.to_le_bytes(),
+                serial.to_le_bytes(),
+                edges.to_le_bytes(),
+            ]
+            .concat(),
+        ))
+    }
+
+    /// `width` × `height` の、色が `pixel` の新しいバッファ(と、そのための pool)を作る。返すのは、
+    /// バッファの番号と pool(memfd。捨てると閉じる)。
+    pub fn new_buffer(
+        &mut self,
+        width: i32,
+        height: i32,
+        pixel: [u8; 4],
+    ) -> Result<(u32, File), String> {
+        let stride = width * 4;
+        let pool_file = make_pool(width, height, pixel)?;
+        let pool = self.new_id();
+        self.send_with_fd(
+            &message(
+                SHM,
+                0,
+                &[pool.to_le_bytes(), (stride * height).to_le_bytes()].concat(),
+            ),
+            pool_file.as_raw_fd(),
+        )?;
+        let buffer = self.new_id();
+        let mut create_buffer = buffer.to_le_bytes().to_vec();
+        for value in [0, width, height, stride] {
+            create_buffer.extend(value.to_le_bytes());
+        }
+        create_buffer.extend(FORMAT_XRGB8888.to_le_bytes());
+        self.send(&message(pool, 0, &create_buffer))?;
+        Ok((buffer, pool_file))
+    }
+
     /// 題名を付ける(xdg_toplevel.set_title)。commitすると、コンポジタに伝わる。
     pub fn set_title(&mut self, title: &str) -> Result<(), String> {
         self.send(&message(TOPLEVEL, 2, &string(title)))
@@ -356,6 +406,8 @@ impl Wire {
             (XDG_SURFACE, 0) => self.send(&message(XDG_SURFACE, 4, &event.body[..4])),
             // xdg_toplevel.configure(幅、高さ、状態の並び)
             (TOPLEVEL, 0) => {
+                self.toplevel_size =
+                    Some((event.u32_at(0).unwrap_or(0), event.u32_at(4).unwrap_or(0)));
                 if self.print_configures {
                     println!("window: configure {}", describe_configure(event));
                     let _ = std::io::stdout().flush();
@@ -493,6 +545,7 @@ pub fn connect() -> Result<Wire, String> {
         close_requested: false,
         layer_surface: None,
         layer_size: None,
+        toplevel_size: None,
     })
 }
 
@@ -507,7 +560,7 @@ pub fn commit_buffer(
 }
 
 /// [`commit_buffer`] と同じだが、付けるバッファの番号を `buffer` にする。
-fn commit_buffer_with(
+pub fn commit_buffer_with(
     wire: &mut Wire,
     buffer: u32,
     width: i32,
@@ -597,6 +650,15 @@ pub fn open_window_with(
     }
     if let Some(app_id) = &setup.app_id {
         wire.send(&message(TOPLEVEL, 3, &string(app_id)))?;
+    }
+    for (size, opcode) in [(setup.max_size, 7), (setup.min_size, 8)] {
+        if let Some((w, h)) = size {
+            wire.send(&message(
+                TOPLEVEL,
+                opcode,
+                &[w.to_le_bytes(), h.to_le_bytes()].concat(),
+            ))?;
+        }
     }
     wire.commit()?;
     wire.wait_for("the first configure", |e| {

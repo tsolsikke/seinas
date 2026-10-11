@@ -19,6 +19,7 @@ mod decoration;
 mod foreign_toplevel;
 pub mod geometry;
 mod interaction;
+mod resize;
 mod stack;
 mod title_bar;
 pub use decoration::{
@@ -28,7 +29,13 @@ pub use decoration::{
     TITLE_SIZE,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
-pub use interaction::{part_at, Deliver, Interaction, Outcome, Part, DRAG_SLACK, LEFT_BUTTON};
+pub use interaction::{
+    part_at, Configure, Cursor, Deliver, Interaction, Outcome, Part, DRAG_SLACK, LEFT_BUTTON,
+};
+pub use resize::{
+    anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
+    MIN_CONTENT_SIZE, RESIZE_BORDER,
+};
 pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, WindowId, CASCADE_STEP};
 pub use title_bar::TitleBar;
 
@@ -72,8 +79,8 @@ use smithay::{
         shell::{
             wlr_layer::{Layer, LayerSurface, LayerSurfaceData, WlrLayerShellState},
             xdg::{
-                decoration::XdgDecorationState, ToplevelSurface, XdgShellState,
-                XdgToplevelSurfaceData,
+                decoration::XdgDecorationState, SurfaceCachedState, ToplevelSurface,
+                XdgShellState, XdgToplevelSurfaceData,
             },
         },
         foreign_toplevel_list::ForeignToplevelListHandler,
@@ -146,8 +153,11 @@ pub struct Frontend<D: SeatHandler> {
     pub text: TextPainter,
     /// 作った題名の帯の絵。ウィンドウ(の画面)ごとに覚えておく。
     pub title_bars: HashMap<ObjectId, TitleBar>,
-    /// ポインターでの操作(動かす、閉じる)の状態。
+    /// ポインターでの操作(動かす、閉じる、サイズ変更)の状態。
     pub interaction: Interaction,
+    /// サイズ変更の最中か、その最後の大きさがまだ届いていないウィンドウ。左か上の辺を動かしたときに、
+    /// 反対の辺の位置を保つのに使う。
+    pub resize_anchors: HashMap<WindowId, ResizeStart>,
 }
 
 /// コンポジタの状態の型が、受け口を使うために実装するもの。
@@ -275,6 +285,13 @@ impl<D: FrontendHost> Frontend<D> {
     ///
     /// 去ったのがいちばん手前なら、その下にあったものが「選ばれている」ものになる。
     pub fn remove_window(&mut self, toplevel: &ToplevelSurface) {
+        if let Some(window) = self
+            .windows
+            .iter()
+            .find(|window| window.item.wl_surface() == toplevel.wl_surface())
+        {
+            self.resize_anchors.remove(&window.id);
+        }
         self.windows
             .remove(|window| window.wl_surface() == toplevel.wl_surface());
         self.title_bars.remove(&toplevel.wl_surface().id());
@@ -322,8 +339,10 @@ impl<D: FrontendHost> Frontend<D> {
             .update::<D>(&self.display_handle, &self.output, now);
     }
 
-    /// `surface` がウィンドウで、絵を出した・外したことで一覧に載るかどうかが変わったら、一覧を合わせる。
+    /// `surface` がウィンドウなら、commit に合わせる。サイズ変更で左か上の辺を動かしているときは、反対の辺の
+    /// 位置を保つように動かす。絵を出した・外したことで一覧に載るかどうかが変わったら、一覧を合わせる。
     pub fn commit_window(&mut self, surface: &WlSurface) {
+        self.follow_resize(surface);
         let changed = self
             .windows
             .iter()
@@ -334,6 +353,71 @@ impl<D: FrontendHost> Frontend<D> {
         if changed {
             self.update_foreign_toplevels();
         }
+    }
+
+    /// サイズ変更の最中のウィンドウ `surface` の、新しい大きさに合わせて位置を直す。
+    fn follow_resize(&mut self, surface: &WlSurface) {
+        let Some((id, content, resizing)) = self
+            .windows
+            .iter()
+            .find(|window| window.item.wl_surface() == surface)
+            .map(|window| {
+                let resizing = window
+                    .item
+                    .current_state()
+                    .states
+                    .contains(xdg_toplevel::State::Resizing);
+                (window.id, content_size(&window.item), resizing)
+            })
+        else {
+            return;
+        };
+        let Some(start) = self.resize_anchors.get(&id).copied() else {
+            return;
+        };
+        if let Some(content) = content {
+            self.windows.move_to(id, anchored_location(start, content));
+        }
+        // 最後の configure(resizing の無いもの)に応じた commit で、終わりにする。
+        let grabbed = self
+            .interaction
+            .resizing()
+            .is_some_and(|(window, _)| window == id);
+        if !grabbed && !resizing {
+            self.resize_anchors.remove(&id);
+        }
+    }
+
+    /// サイズ変更の大きさを、クライアントへ configure で伝える。
+    fn send_resize_configure(&mut self, configure: Configure) {
+        let Some(window) = self.windows.get(configure.window) else {
+            return;
+        };
+        window.item.with_pending_state(|state| {
+            state.size = Some((configure.size.w, configure.size.h).into());
+            if configure.resizing {
+                state.states.set(xdg_toplevel::State::Resizing);
+            } else {
+                state.states.unset(xdg_toplevel::State::Resizing);
+            }
+        });
+        window.item.send_pending_configure();
+    }
+
+    /// ポインターの操作の結果のうち、サイズ変更のものを行う。
+    fn apply_resize(&mut self, configure: Option<Configure>) {
+        if let Some((window, start)) = self.interaction.resizing() {
+            self.resize_anchors.entry(window).or_insert(start);
+        }
+        if let Some(configure) = configure {
+            self.send_resize_configure(configure);
+        }
+    }
+
+    /// いまのポインターの形(サイズ変更の境界の上か、サイズ変更の最中は、その向き)。バックエンドが、カーソルの
+    /// 絵を選ぶのに使う。
+    pub fn cursor(&self) -> Cursor {
+        self.interaction.cursor()
     }
 
     /// ウィンドウ `id` を raise して activated にする(foreign-toplevel の activate)。スタックが変わったらtrue。
@@ -560,9 +644,13 @@ where
         } if over_layer_above(frontend, location) => (location, Outcome::to_client()),
         PointerInput::Motion(location) => (
             location,
-            frontend
-                .interaction
-                .motion(&mut frontend.windows, area, location, window_size),
+            frontend.interaction.motion(
+                &mut frontend.windows,
+                area,
+                location,
+                window_size,
+                window_limits,
+            ),
         ),
         PointerInput::Leave => (
             point_from(pointer.current_location()),
@@ -574,9 +662,13 @@ where
             pressed: true,
         } => (
             location,
-            frontend
-                .interaction
-                .press(&mut frontend.windows, location, button, window_size),
+            frontend.interaction.press(
+                &mut frontend.windows,
+                location,
+                button,
+                window_size,
+                window_limits,
+            ),
         ),
         PointerInput::Button {
             location,
@@ -584,11 +676,16 @@ where
             pressed: false,
         } => (
             location,
-            frontend
-                .interaction
-                .release(&mut frontend.windows, location, button, window_size),
+            frontend.interaction.release(
+                &mut frontend.windows,
+                location,
+                button,
+                window_size,
+                window_limits,
+            ),
         ),
     };
+    frontend.apply_resize(outcome.configure);
     if outcome.raised {
         frontend.update_activation();
     }
@@ -653,25 +750,7 @@ where
     D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
 {
     let frontend = state.frontend_mut();
-    let Some(pointer) = frontend.pointer.clone() else {
-        return;
-    };
-    // 押されているボタンが、このウィンドウの上で押されたものか。押した点も、ここで分かる。
-    let press = pointer
-        .grab_start_data()
-        .filter(|_| pointer.has_grab(serial))
-        .filter(|start| {
-            start.focus.as_ref().is_some_and(|(surface, _)| {
-                surface.id().same_client_as(&toplevel.wl_surface().id())
-            })
-        })
-        .map(|start| point_from(start.location));
-    let window = frontend
-        .windows
-        .iter()
-        .find(|window| window.item.wl_surface() == toplevel.wl_surface())
-        .map(|window| window.id);
-    let (Some(press), Some(window)) = (press, window) else {
+    let Some((pointer, window, press)) = client_press(frontend, toplevel, serial) else {
         return;
     };
     let area = frontend.usable;
@@ -684,8 +763,78 @@ where
     ) {
         return;
     }
+    take_pointer_from_client(state, &pointer, serial);
+}
+
+/// クライアントが、自分のウィンドウの辺 `edges` でサイズ変更してほしいと頼んできた(xdg_toplevel の
+/// resize)。[`delegate_frontend!`] が使う。
+///
+/// 受ける条件は [`client_move_request`] と同じ。サイズ変更できないウィンドウ(最大化しているものなど)と、
+/// 辺の指定が無いものは、受けない。
+pub fn client_resize_request<D>(
+    state: &mut D,
+    toplevel: &ToplevelSurface,
+    serial: Serial,
+    edges: xdg_toplevel::ResizeEdge,
+) where
+    D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
+{
+    let frontend = state.frontend_mut();
+    let Some((pointer, window, press)) = client_press(frontend, toplevel, serial) else {
+        return;
+    };
+    let area = frontend.usable;
+    let Some(outcome) = frontend.interaction.begin_client_resize(
+        &mut frontend.windows,
+        area,
+        window,
+        edges_from(edges),
+        press,
+        window_size,
+        window_limits,
+    ) else {
+        return;
+    };
+    frontend.apply_resize(outcome.configure);
+    take_pointer_from_client(state, &pointer, serial);
+}
+
+/// `serial` が、`toplevel` のクライアントの上でいま押されているボタンのものなら、ポインターと、その
+/// ウィンドウと、押した点。
+fn client_press<D>(
+    frontend: &Frontend<D>,
+    toplevel: &ToplevelSurface,
+    serial: Serial,
+) -> Option<(PointerHandle<D>, WindowId, PointF)>
+where
+    D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
+{
+    let pointer = frontend.pointer.clone()?;
+    // 押されているボタンが、このウィンドウの上で押されたものか。押した点も、ここで分かる。
+    let press = pointer
+        .grab_start_data()
+        .filter(|_| pointer.has_grab(serial))
+        .filter(|start| {
+            start.focus.as_ref().is_some_and(|(surface, _)| {
+                surface.id().same_client_as(&toplevel.wl_surface().id())
+            })
+        })
+        .map(|start| point_from(start.location))?;
+    let window = frontend
+        .windows
+        .iter()
+        .find(|window| window.item.wl_surface() == toplevel.wl_surface())?
+        .id;
+    Some((pointer, window, press))
+}
+
+/// クライアントから頼まれた移動・サイズ変更を受けた後、ボタンを離すまでのポインターのイベントを、
+/// クライアントから外す(Seinas が使う)。
+fn take_pointer_from_client<D>(state: &mut D, pointer: &PointerHandle<D>, serial: Serial)
+where
+    D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
+{
     state.redraw_needed();
-    // ここから先、ボタンを離すまでのポインターの知らせは、Seinasが使う。クライアントからは外す。
     let location = pointer.current_location();
     pointer.unset_grab(state, serial, 0);
     pointer.motion(
@@ -705,6 +854,29 @@ fn content_size(toplevel: &ToplevelSurface) -> Option<Size> {
     let size: SmithaySize<i32, Logical> =
         with_renderer_surface_state(toplevel.wl_surface(), |state| state.surface_size())??;
     Some(Size::new(size.w, size.h))
+}
+
+/// クライアントが決めた最小と最大の大きさ。最大化・全画面のウィンドウは、サイズ変更できないのでNone。
+fn window_limits(toplevel: &ToplevelSurface) -> Option<SizeLimits> {
+    let states = toplevel.current_state().states;
+    if states.contains(xdg_toplevel::State::Maximized)
+        || states.contains(xdg_toplevel::State::Fullscreen)
+    {
+        return None;
+    }
+    let cached = with_states(toplevel.wl_surface(), |states| {
+        *states.cached_state.get::<SurfaceCachedState>().current()
+    });
+    Some(SizeLimits {
+        min: Size::new(cached.min_size.w, cached.min_size.h),
+        max: Size::new(cached.max_size.w, cached.max_size.h),
+    })
+}
+
+/// xdg_toplevel の辺の指定を、Seinas の型にする。
+fn edges_from(edges: xdg_toplevel::ResizeEdge) -> Edges {
+    let bits = u32::from(edges);
+    Edges::new(bits & 1 != 0, bits & 2 != 0, bits & 4 != 0, bits & 8 != 0)
 }
 
 /// タイトルバーを含めた、ウィンドウの外枠の大きさ。まだ絵を出していなければNone。
@@ -884,6 +1056,15 @@ macro_rules! delegate_frontend {
             ) {
                 $crate::client_move_request(self, &surface, serial);
             }
+            fn resize_request(
+                &mut self,
+                surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface,
+                _seat: $crate::smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
+                serial: $crate::smithay::utils::Serial,
+                edges: $crate::smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::ResizeEdge,
+            ) {
+                $crate::client_resize_request(self, &surface, serial, edges);
+            }
             fn title_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::frontend_mut(self).update_foreign_toplevels();
                 $crate::FrontendHost::redraw_needed(self);
@@ -1058,6 +1239,7 @@ macro_rules! delegate_frontend {
                     text: $crate::load_fonts(&config.font_dir),
                     title_bars: Default::default(),
                     interaction: Default::default(),
+                    resize_anchors: Default::default(),
                 }
             }
         }

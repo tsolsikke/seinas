@@ -1,6 +1,7 @@
-//! ポインターでのウィンドウの操作(動かす、閉じる)の決まり。
+//! ポインターでのウィンドウの操作(動かす、閉じる、サイズ変更)の決まり。
 //!
-//! ボタンを押した所が、ウィンドウのどの部分か(中身、題名の帯、閉じるボタン)で、することを決める。
+//! ボタンを押した所が、ウィンドウのどの部分か(コンテンツ、タイトルバー、閉じるボタン、外枠の外のサイズ変更の境界)で、
+//! することを決める。
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! 決まりの説明は `docs/window-placement.md` にある。
 
@@ -8,6 +9,7 @@ use crate::geometry::{Point, PointF, Rect, Size};
 
 use crate::{
     decoration::{clamp_outer_location, CLOSE_BUTTON_SIZE, TITLE_BAR_HEIGHT},
+    resize::{edges_at, resized_content, Edges, ResizeStart, SizeLimits},
     stack::{Stack, WindowId},
 };
 
@@ -43,6 +45,54 @@ pub fn part_at(location: Point, outer: Size, point: PointF) -> Option<Part> {
     })
 }
 
+/// 点の下にあるもの。いちばん手前のウィンドウから順に、外枠の中か、外枠の外のサイズ変更の境界かを見る。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Part(Part),
+    Edges(Edges),
+}
+
+/// 点 `point` の下にある、いちばん手前のウィンドウ(手前からの順、番号、外枠の左上)と、その中のもの。
+///
+/// `limits_of` がNoneを返すウィンドウ(最大化しているものなど)には、サイズ変更の境界が無い。
+fn target_at<T>(
+    stack: &Stack<T>,
+    point: PointF,
+    outer_size_of: impl Fn(&T) -> Option<Size>,
+    limits_of: impl Fn(&T) -> Option<SizeLimits>,
+) -> Option<(usize, WindowId, Point, Target)> {
+    stack.iter().enumerate().find_map(|(index, entry)| {
+        let outer = outer_size_of(&entry.item)?;
+        let target = match part_at(entry.location, outer, point) {
+            Some(part) => Target::Part(part),
+            None => {
+                limits_of(&entry.item)?;
+                Target::Edges(edges_at(Rect::new(entry.location, outer), point)?)
+            }
+        };
+        Some((index, entry.id, entry.location, target))
+    })
+}
+
+/// ポインターの形。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cursor {
+    /// ふつうの矢印。
+    Default,
+    /// サイズ変更(動かす辺の向き)。
+    Resize(Edges),
+}
+
+/// クライアントへ送る configure(サイズ変更の大きさ)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Configure {
+    pub window: WindowId,
+    /// コンテンツの大きさ。
+    pub size: Size,
+    /// サイズ変更の最中か(xdg_toplevel の resizing の状態)。
+    pub resizing: bool,
+}
+
 /// ボタンを押している間の状態。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Grab {
@@ -62,6 +112,13 @@ enum Grab {
         window: WindowId,
         /// いま、ポインターがそのボタンの上にあるか。上で離したときにだけ、閉じる。
         inside: bool,
+    },
+    /// サイズ変更の境界を押している。
+    Resize {
+        window: WindowId,
+        start: ResizeStart,
+        /// 最後に configure で伝えた、コンテンツの大きさ。
+        size: Size,
     },
     /// 中身(か、何も無い所)を押している。ポインターの知らせは、クライアントへ渡す。
     Client {
@@ -88,6 +145,8 @@ pub struct Outcome {
     pub raised: bool,
     /// 閉じるように頼むウィンドウ。
     pub close: Option<WindowId>,
+    /// クライアントへ送る configure(サイズ変更)。
+    pub configure: Option<Configure>,
     pub deliver: Deliver,
 }
 
@@ -102,6 +161,7 @@ impl Outcome {
             redraw: false,
             raised: false,
             close: None,
+            configure: None,
             deliver,
         }
     }
@@ -113,6 +173,8 @@ pub struct Interaction {
     grab: Grab,
     /// ボタンを押していないときに、ポインターが閉じるボタンの上にあるウィンドウ。
     hover: Option<WindowId>,
+    /// ボタンを押していないときに、ポインターがサイズ変更の境界の上にあれば、その辺。
+    hover_edges: Option<Edges>,
     /// 最後に見たポインターの位置。
     last: PointF,
 }
@@ -122,6 +184,7 @@ impl Default for Interaction {
         Interaction {
             grab: Grab::None,
             hover: None,
+            hover_edges: None,
             last: (0.0, 0.0).into(),
         }
     }
@@ -153,21 +216,70 @@ impl Interaction {
         matches!(self.grab, Grab::Bar { moving: true, .. })
     }
 
+    /// サイズ変更の最中なら、そのウィンドウと、始めたときの様子。
+    pub fn resizing(&self) -> Option<(WindowId, ResizeStart)> {
+        match self.grab {
+            Grab::Resize { window, start, .. } => Some((window, start)),
+            _ => None,
+        }
+    }
+
+    /// いまのポインターの形。サイズ変更の境界の上か、サイズ変更の最中は、その辺の向き。
+    pub fn cursor(&self) -> Cursor {
+        match self.grab {
+            Grab::Resize { start, .. } => Cursor::Resize(start.edges),
+            Grab::None => self.hover_edges.map_or(Cursor::Default, Cursor::Resize),
+            _ => Cursor::Default,
+        }
+    }
+
     /// ポインターが `point` へ動いた。
     ///
     /// `outer_size_of` は、ウィンドウの外形の大きさを返す(まだ絵を出していなければNone)。
+    /// `limits_of` は、クライアントが決めた最小と最大の大きさを返す(サイズ変更できないウィンドウはNone)。
     pub fn motion<T>(
         &mut self,
         stack: &mut Stack<T>,
         area: Rect,
         point: PointF,
         outer_size_of: impl Fn(&T) -> Option<Size>,
+        limits_of: impl Fn(&T) -> Option<SizeLimits>,
     ) -> Outcome {
         self.last = point;
         match self.grab {
             Grab::None => {
                 let mut outcome = Outcome::new(Deliver::ToClient);
-                outcome.redraw = self.update_hover(stack, point, outer_size_of);
+                outcome.redraw = self.update_hover(stack, point, outer_size_of, limits_of);
+                // サイズ変更の境界の上では、その下のウィンドウには渡さない。
+                if self.hover_edges.is_some() {
+                    outcome.deliver = Deliver::Nobody;
+                }
+                outcome
+            }
+            Grab::Resize {
+                window,
+                start,
+                size,
+            } => {
+                let mut outcome = Outcome::new(Deliver::Nobody);
+                let Some(limits) = stack.get(window).and_then(|entry| limits_of(&entry.item))
+                else {
+                    // grab していたウィンドウが去ったか、サイズ変更できなくなった。離すまで、何もしない。
+                    return outcome;
+                };
+                let wanted = resized_content(start, point, limits, area);
+                if wanted != size {
+                    self.grab = Grab::Resize {
+                        window,
+                        start,
+                        size: wanted,
+                    };
+                    outcome.configure = Some(Configure {
+                        window,
+                        size: wanted,
+                        resizing: true,
+                    });
+                }
                 outcome
             }
             Grab::Client { .. } => Outcome::new(Deliver::ToClient),
@@ -203,7 +315,8 @@ impl Interaction {
             }
             Grab::Close { window, inside } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
-                let now = close_button_under(stack, point, outer_size_of) == Some(window);
+                let now =
+                    close_button_under(stack, point, outer_size_of, limits_of) == Some(window);
                 self.grab = Grab::Close {
                     window,
                     inside: now,
@@ -217,6 +330,7 @@ impl Interaction {
     /// ポインターが画面の外へ出た。押しているボタンは、離すまで掴んだままにする。
     pub fn leave(&mut self) -> Outcome {
         let mut outcome = Outcome::new(Deliver::Nobody);
+        self.hover_edges = None;
         outcome.redraw = self.hover.take().is_some() && self.grab == Grab::None;
         outcome
     }
@@ -228,23 +342,22 @@ impl Interaction {
         point: PointF,
         button: u32,
         outer_size_of: impl Fn(&T) -> Option<Size>,
+        limits_of: impl Fn(&T) -> Option<SizeLimits>,
     ) -> Outcome {
         self.last = point;
         match &mut self.grab {
-            // 帯や閉じるボタンを掴んでいる間の、ほかのボタンは、使わない。
-            Grab::Bar { .. } | Grab::Close { .. } => return Outcome::new(Deliver::Nobody),
+            // タイトルバーや閉じるボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
+            Grab::Bar { .. } | Grab::Close { .. } | Grab::Resize { .. } => {
+                return Outcome::new(Deliver::Nobody)
+            }
             Grab::Client { buttons } => {
                 *buttons += 1;
                 return Outcome::new(Deliver::ToClient);
             }
             Grab::None => {}
         }
-        let hit = stack.index_at(point, &outer_size_of).and_then(|index| {
-            let entry = stack.iter().nth(index)?;
-            let part = part_at(entry.location, outer_size_of(&entry.item)?, point)?;
-            Some((index, entry.id, entry.location, part))
-        });
-        let Some((index, window, origin, part)) = hit else {
+        let hit = target_at(stack, point, &outer_size_of, &limits_of);
+        let Some((index, window, origin, target)) = hit else {
             // どのウィンドウの上でもない。
             self.grab = Grab::Client { buttons: 1 };
             return Outcome::new(Deliver::ToClient);
@@ -252,12 +365,31 @@ impl Interaction {
         // どのボタンでも、どの部分でも、押したウィンドウを手前に出す。
         let raised = stack.raise(index);
         let was_hot = self.close_button_is_hot(window);
-        let deliver = match part {
-            Part::Content => {
+        let deliver = match target {
+            Target::Edges(edges) if button == LEFT_BUTTON => {
+                let content = outer_size_of(&stack.get(window).expect("the window").item)
+                    .map(|outer| Size::new(outer.w, outer.h - TITLE_BAR_HEIGHT))
+                    .expect("a window that was hit has a size");
+                let start = ResizeStart {
+                    edges,
+                    press: point,
+                    location: origin,
+                    content,
+                };
+                self.grab = Grab::Resize {
+                    window,
+                    start,
+                    size: content,
+                };
+                Deliver::Nobody
+            }
+            // サイズ変更の境界の上の、左でないボタンは、raise するだけ。
+            Target::Edges(_) => Deliver::Nobody,
+            Target::Part(Part::Content) => {
                 self.grab = Grab::Client { buttons: 1 };
                 Deliver::ToClient
             }
-            Part::Bar if button == LEFT_BUTTON => {
+            Target::Part(Part::Bar) if button == LEFT_BUTTON => {
                 self.grab = Grab::Bar {
                     window,
                     press: point,
@@ -266,7 +398,7 @@ impl Interaction {
                 };
                 Deliver::Nobody
             }
-            Part::CloseButton if button == LEFT_BUTTON => {
+            Target::Part(Part::CloseButton) if button == LEFT_BUTTON => {
                 self.grab = Grab::Close {
                     window,
                     inside: true,
@@ -274,13 +406,15 @@ impl Interaction {
                 Deliver::Nobody
             }
             // 帯の上の、左でないボタンは、手前に出すだけ。
-            Part::Bar | Part::CloseButton => Deliver::Nobody,
+            Target::Part(Part::Bar | Part::CloseButton) => Deliver::Nobody,
         };
         self.hover = None;
+        self.hover_edges = None;
         Outcome {
             redraw: raised || was_hot != self.close_button_is_hot(window),
             raised,
             close: None,
+            configure: None,
             deliver,
         }
     }
@@ -292,6 +426,7 @@ impl Interaction {
         point: PointF,
         button: u32,
         outer_size_of: impl Fn(&T) -> Option<Size>,
+        limits_of: impl Fn(&T) -> Option<SizeLimits>,
     ) -> Outcome {
         self.last = point;
         let mut outcome = match &mut self.grab {
@@ -304,16 +439,28 @@ impl Interaction {
                 }
                 Outcome::new(Deliver::ToClient)
             }
-            // 帯や閉じるボタンを掴んでいる間の、ほかのボタンは、使わない。
-            Grab::Bar { .. } | Grab::Close { .. } if button != LEFT_BUTTON => {
+            // タイトルバーや閉じるボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
+            Grab::Bar { .. } | Grab::Close { .. } | Grab::Resize { .. }
+                if button != LEFT_BUTTON =>
+            {
                 return Outcome::new(Deliver::Nobody)
             }
             Grab::Bar { .. } => Outcome::new(Deliver::Nobody),
+            Grab::Resize { window, size, .. } => {
+                // 最後の大きさを、resizing の状態を外して伝える。
+                let mut outcome = Outcome::new(Deliver::Nobody);
+                outcome.configure = Some(Configure {
+                    window: *window,
+                    size: *size,
+                    resizing: false,
+                });
+                outcome
+            }
             Grab::Close { window, .. } => {
                 let window = *window;
                 let mut outcome = Outcome::new(Deliver::Nobody);
                 // ボタンの上で離したときにだけ、閉じる。外へ出して離すと、取り消し。
-                if close_button_under(stack, point, &outer_size_of) == Some(window) {
+                if close_button_under(stack, point, &outer_size_of, &limits_of) == Some(window) {
                     outcome.close = Some(window);
                 }
                 outcome.redraw = true;
@@ -321,7 +468,7 @@ impl Interaction {
             }
         };
         self.grab = Grab::None;
-        outcome.redraw |= self.update_hover(stack, point, outer_size_of);
+        outcome.redraw |= self.update_hover(stack, point, outer_size_of, limits_of);
         outcome
     }
 
@@ -348,32 +495,83 @@ impl Interaction {
             origin: entry.location,
             moving: true,
         };
-        self.motion(stack, area, self.last, outer_size_of);
+        self.motion(stack, area, self.last, outer_size_of, |_| None);
         true
     }
 
-    /// ボタンを押していないときの、閉じるボタンの上にあるかどうかを更新する。変わったらtrue。
+    /// クライアントが、自分のウィンドウ `window` の辺 `edges` でサイズ変更してほしいと頼んできた
+    /// (xdg_toplevel.resize)。受けたら、そのボタンを離すまで、サイズ変更の境界を grab したときと同じに扱い、
+    /// 頼みが届くまでの間にポインターが動いたぶんの configure を返す。受けなければNone。
+    ///
+    /// 受ける条件は [`Interaction::begin_client_move`] と同じで、加えて、サイズ変更できるウィンドウである
+    /// こと。`press` は、そのボタンを押した点。
+    #[allow(clippy::too_many_arguments)]
+    pub fn begin_client_resize<T>(
+        &mut self,
+        stack: &mut Stack<T>,
+        area: Rect,
+        window: WindowId,
+        edges: Edges,
+        press: PointF,
+        outer_size_of: impl Fn(&T) -> Option<Size>,
+        limits_of: impl Fn(&T) -> Option<SizeLimits>,
+    ) -> Option<Outcome> {
+        let (Grab::Client { .. }, Some(entry)) = (self.grab, stack.get(window)) else {
+            return None;
+        };
+        if edges.is_empty() {
+            return None;
+        }
+        limits_of(&entry.item)?;
+        let outer = outer_size_of(&entry.item)?;
+        let content = Size::new(outer.w, outer.h - TITLE_BAR_HEIGHT);
+        self.grab = Grab::Resize {
+            window,
+            start: ResizeStart {
+                edges,
+                press,
+                location: entry.location,
+                content,
+            },
+            size: content,
+        };
+        Some(self.motion(stack, area, self.last, outer_size_of, limits_of))
+    }
+
+    /// ボタンを押していないときの、閉じるボタンとサイズ変更の境界の上にあるかどうかを更新する。
+    /// 閉じるボタンの上かどうかが変わったらtrue(再描画が要る)。
     fn update_hover<T>(
         &mut self,
         stack: &Stack<T>,
         point: PointF,
         outer_size_of: impl Fn(&T) -> Option<Size>,
+        limits_of: impl Fn(&T) -> Option<SizeLimits>,
     ) -> bool {
-        let hover = close_button_under(stack, point, outer_size_of);
+        let target = target_at(stack, point, outer_size_of, limits_of);
+        let hover = match target {
+            Some((_, window, _, Target::Part(Part::CloseButton))) => Some(window),
+            _ => None,
+        };
+        self.hover_edges = match target {
+            Some((_, _, _, Target::Edges(edges))) => Some(edges),
+            _ => None,
+        };
         std::mem::replace(&mut self.hover, hover) != hover
     }
 }
 
-/// 点 `point` が、見えている閉じるボタンの上にあれば、そのウィンドウ。
+/// 点 `point` が、見えている閉じるボタンの上にあれば、そのウィンドウ。手前のウィンドウのサイズ変更の境界に
+/// 隠れている所は、見えていないものとして扱う。
 fn close_button_under<T>(
     stack: &Stack<T>,
     point: PointF,
     outer_size_of: impl Fn(&T) -> Option<Size>,
+    limits_of: impl Fn(&T) -> Option<SizeLimits>,
 ) -> Option<WindowId> {
-    let index = stack.index_at(point, &outer_size_of)?;
-    let entry = stack.iter().nth(index)?;
-    let part = part_at(entry.location, outer_size_of(&entry.item)?, point)?;
-    (part == Part::CloseButton).then_some(entry.id)
+    match target_at(stack, point, outer_size_of, limits_of)? {
+        (_, window, _, Target::Part(Part::CloseButton)) => Some(window),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -387,6 +585,11 @@ mod tests {
 
     fn size(_: &&str) -> Option<Size> {
         Some(OUTER.into())
+    }
+
+    /// 「fixed」という名前のウィンドウだけは、サイズ変更できない(最大化しているもののまね)。
+    fn limits(name: &&str) -> Option<SizeLimits> {
+        (*name != "fixed").then(SizeLimits::default)
     }
 
     fn at(x: f64, y: f64) -> PointF {
@@ -417,17 +620,18 @@ mod tests {
                 Rect::from_size(SCREEN.into()),
                 at(x, y),
                 size,
+                limits,
             )
         }
 
         fn press(&mut self, x: f64, y: f64, button: u32) -> Outcome {
             self.interaction
-                .press(&mut self.stack, at(x, y), button, size)
+                .press(&mut self.stack, at(x, y), button, size, limits)
         }
 
         fn release(&mut self, x: f64, y: f64, button: u32) -> Outcome {
             self.interaction
-                .release(&mut self.stack, at(x, y), button, size)
+                .release(&mut self.stack, at(x, y), button, size, limits)
         }
 
         fn begin_client_move(&mut self, window: WindowId, x: f64, y: f64) -> bool {
@@ -512,7 +716,7 @@ mod tests {
             Deliver::Nobody
         );
         assert!(!world.interaction.is_moving());
-        assert_eq!(world.motion(300.0, 300.0).deliver, Deliver::ToClient);
+        assert_eq!(world.motion(300.0, 200.0).deliver, Deliver::ToClient);
         assert_eq!(world.place("b"), ((33, 33), None));
         // 動かしていないaは、そのまま。
         assert_eq!(world.place("a"), ((0, 0), Some(0)));
@@ -774,5 +978,146 @@ mod tests {
         world.press(340.0, 40.0, LEFT_BUTTON);
         world.stack.remove(|name| *name == "b");
         assert_eq!(world.release(340.0, 40.0, LEFT_BUTTON).close, None);
+    }
+
+    #[test]
+    fn the_band_outside_the_frame_resizes_the_window() {
+        let mut world = World::two();
+        let (a, b) = (world.id("a"), world.id("b"));
+        // bの下の辺の外側(外枠は y 32〜296)。ポインターの形が変わり、だれにも渡さない。
+        let hovered = world.motion(200.0, 300.0);
+        assert_eq!(hovered.deliver, Deliver::Nobody);
+        assert_eq!(world.interaction.cursor(), Cursor::Resize(Edges::BOTTOM));
+        // 境界の外へ出ると、元に戻る。
+        assert_eq!(world.motion(400.0, 400.0).deliver, Deliver::ToClient);
+        assert_eq!(world.interaction.cursor(), Cursor::Default);
+
+        // 奥のaの右の辺の外側を押すと、aが raise され、サイズ変更が始まる。
+        let pressed = world.press(324.0, 20.0, LEFT_BUTTON);
+        assert!(pressed.raised);
+        assert_eq!(pressed.deliver, Deliver::Nobody);
+        assert_eq!(pressed.configure, None);
+        assert_eq!(world.order(), ["a", "b"]);
+        assert_eq!(world.interaction.cursor(), Cursor::Resize(Edges::RIGHT));
+        assert_eq!(world.interaction.resizing().map(|(w, _)| w), Some(a));
+
+        // 動かすと、resizing の状態つきで、新しいコンテンツの大きさを伝える。同じ大きさなら、送らない。
+        let moved = world.motion(344.0, 20.0);
+        assert_eq!(moved.deliver, Deliver::Nobody);
+        assert_eq!(
+            moved.configure,
+            Some(Configure {
+                window: a,
+                size: Size::new(340, 240),
+                resizing: true
+            })
+        );
+        assert_eq!(world.motion(344.0, 25.0).configure, None);
+        // 位置は、ここでは変えない(右の辺なので、左上は動かない)。
+        assert_eq!(world.place("a"), ((0, 0), Some(0)));
+
+        // 離すと、最後の大きさを resizing の状態を外して伝え、終わる。
+        let released = world.release(344.0, 25.0, LEFT_BUTTON);
+        assert_eq!(
+            released.configure,
+            Some(Configure {
+                window: a,
+                size: Size::new(340, 240),
+                resizing: false
+            })
+        );
+        assert_eq!(world.interaction.resizing(), None);
+
+        // 左でないボタンでは、raise するだけ。
+        let right = world.press(200.0, 300.0, RIGHT_BUTTON);
+        assert!(right.raised);
+        assert_eq!(world.order(), ["b", "a"]);
+        assert_eq!(world.interaction.resizing(), None);
+        world.release(200.0, 300.0, RIGHT_BUTTON);
+        assert_eq!(world.id("b"), b);
+    }
+
+    #[test]
+    fn a_window_that_cannot_be_resized_has_no_band() {
+        let mut stack = Stack::default();
+        stack.add("fixed", Rect::from_size(SCREEN.into()));
+        let mut world = World {
+            stack,
+            interaction: Interaction::default(),
+        };
+        // 外枠(y 0〜264)のすぐ下でも、ポインターの形は変わらず、クライアントへ渡す。
+        assert_eq!(world.motion(100.0, 268.0).deliver, Deliver::ToClient);
+        assert_eq!(world.interaction.cursor(), Cursor::Default);
+        assert_eq!(
+            world.press(100.0, 268.0, LEFT_BUTTON).deliver,
+            Deliver::ToClient
+        );
+        assert_eq!(world.interaction.resizing(), None);
+    }
+
+    #[test]
+    fn a_client_can_ask_to_resize_while_its_button_is_pressed() {
+        let mut world = World::two();
+        let b = world.id("b");
+        let area = Rect::from_size(SCREEN.into());
+        // ボタンを押していないときの頼みは、受けない。
+        assert!(world
+            .interaction
+            .begin_client_resize(
+                &mut world.stack,
+                area,
+                b,
+                Edges::BOTTOM_RIGHT,
+                at(200.0, 200.0),
+                size,
+                limits
+            )
+            .is_none());
+        // bのコンテンツを押している間なら、受ける。辺の指定が無いものは、受けない。
+        world.press(200.0, 200.0, LEFT_BUTTON);
+        assert!(world
+            .interaction
+            .begin_client_resize(
+                &mut world.stack,
+                area,
+                b,
+                Edges::default(),
+                at(200.0, 200.0),
+                size,
+                limits
+            )
+            .is_none());
+        let begun = world
+            .interaction
+            .begin_client_resize(
+                &mut world.stack,
+                area,
+                b,
+                Edges::BOTTOM_RIGHT,
+                at(200.0, 200.0),
+                size,
+                limits,
+            )
+            .expect("the resize begins");
+        assert_eq!(begun.configure, None);
+        assert_eq!(
+            world.interaction.cursor(),
+            Cursor::Resize(Edges::BOTTOM_RIGHT)
+        );
+        assert_eq!(
+            world.motion(210.0, 220.0).configure,
+            Some(Configure {
+                window: b,
+                size: Size::new(330, 260),
+                resizing: true
+            })
+        );
+        assert_eq!(
+            world
+                .release(210.0, 220.0, LEFT_BUTTON)
+                .configure
+                .map(|c| c.resizing),
+            Some(false)
+        );
     }
 }
