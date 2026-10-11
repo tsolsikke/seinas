@@ -15,7 +15,10 @@
 //!   `window: keymap 大きさ`)。
 //! - `--move-on-press`: 中身の上でボタンが押されたら、ウィンドウを動かしてほしいと頼む(xdg_toplevelのmove)。
 //!   `--pointer` も付けたことになる。
-//! - `--ignore-close`: 閉じるように頼まれても、終わらない(応じないクライアントのまね)。
+//! - `--ignore-close`: 閉じるように頼まれても、終わらない(閉じるのに応じないが、ping には pong を返すクライアントの
+//!   まね。保存するかを尋ねているアプリなど)。
+//! - `--ignore-ping`: xdg_wm_base の ping に pong を返さず、閉じるように頼まれても終わらない(固まったクライアントの
+//!   まね)。ping が届くと `window: ping` を書く。標準入力の `pong` の行で、返していない ping に pong を返す。
 //! - `--size WxH`: コンテンツの大きさ(既定は 200x150)。
 //! - `--color RRGGBB`: コンテンツの色(既定は ff8000、橙)。
 //! - `--follow-size`: configure で届く大きさか、maximized の状態が変わったら、届いた大きさで再描画する(既定は、
@@ -26,7 +29,8 @@
 //!   `--pointer` も付けたことになる。
 //!
 //! 標準入力から `title TEXT` の行が届くと、タイトルを `TEXT` に変える。`maximize`、`unmaximize`、`minimize` の行が
-//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`sync` の行が届くと、それまでの
+//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`pong` の行は、`--ignore-ping` で
+//! 返していない ping に pong を返し、`window: ponged` を書く。`sync` の行が届くと、それまでの
 //! 頼みをコンポジタが処理し終えたときに `window: synced` を書く。
 //!
 //! 標準出力には、次の行を書く。
@@ -66,6 +70,7 @@ struct Options {
     keyboard: bool,
     move_on_press: bool,
     ignore_close: bool,
+    ignore_ping: bool,
     size: Option<(u32, u32)>,
     pixel: Option<[u8; 4]>,
     follow_size: bool,
@@ -86,6 +91,7 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--keyboard" => options.keyboard = true,
             "--move-on-press" => (options.pointer, options.move_on_press) = (true, true),
             "--ignore-close" => options.ignore_close = true,
+            "--ignore-ping" => (options.ignore_close, options.ignore_ping) = (true, true),
             "--size" => options.size = Some(crate::layer::parse_size(&value()?)?),
             "--color" => options.pixel = Some(crate::layer::parse_color(&value()?)?),
             "--follow-size" => options.follow_size = true,
@@ -134,6 +140,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     if options.pointer || options.keyboard {
         wire.watch_seat(options.pointer, options.keyboard)?;
     }
+    wire.ignore_ping = options.ignore_ping;
     println!("window: drawn");
     let _ = std::io::stdout().flush();
 
@@ -210,6 +217,10 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             };
             if let Some(opcode) = opcode {
                 wire.send(&crate::message(crate::wire::TOPLEVEL, opcode, &[]))?;
+            }
+            if command == "pong" && wire.pong()? {
+                println!("window: ponged");
+                let _ = std::io::stdout().flush();
             }
             if command == "sync" {
                 // wl_display.sync:それまでの頼みをコンポジタが処理し終えたら、callback が届く。

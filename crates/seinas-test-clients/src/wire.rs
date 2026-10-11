@@ -92,6 +92,10 @@ pub struct Wire {
     keyboard: Option<u32>,
     /// コンポジタから、閉じるように頼まれたか(xdg_toplevel.close)。
     pub close_requested: bool,
+    /// xdg_wm_base の ping に、自分では pong を返さないか(固まったクライアントのまね)。返さなかった ping の
+    /// serial は `unanswered_ping` に残し、[`Wire::pong`] で返す。
+    pub ignore_ping: bool,
+    pub unanswered_ping: Option<u32>,
     /// layer surface(zwlr_layer_surface_v1)の番号。layer surface を作ったときだけ。
     layer_surface: Option<u32>,
     /// layer surface に届いた、いちばん新しい configure の大きさ。
@@ -383,6 +387,15 @@ impl Wire {
         }
     }
 
+    /// 返さなかった ping に、いま pong を返す。返したらtrue(返していない ping が無ければfalse)。
+    pub fn pong(&mut self) -> Result<bool, String> {
+        let Some(serial) = self.unanswered_ping.take() else {
+            return Ok(false);
+        };
+        self.send(&message(WM_BASE, 3, &serial.to_le_bytes()))?;
+        Ok(true)
+    }
+
     /// 返事の要るイベント(ping、configure)に返事をする。届いた知らせの中身も、求められていれば書く。
     pub fn answer(&mut self, event: &Event) -> Result<(), String> {
         if let Some(layer) = self.layer_surface {
@@ -412,7 +425,12 @@ impl Wire {
             };
         }
         match (event.object, event.opcode) {
-            // xdg_wm_base.ping → pong
+            // xdg_wm_base.ping → pong(返さない形では、`window: ping` を書いて、serial を残す)
+            (WM_BASE, 0) if self.ignore_ping => {
+                self.unanswered_ping = event.u32_at(0);
+                self.say("ping");
+                Ok(())
+            }
             (WM_BASE, 0) => self.send(&message(WM_BASE, 3, &event.body[..4])),
             // xdg_surface.configure → ack_configure
             (XDG_SURFACE, 0) => self.send(&message(XDG_SURFACE, 4, &event.body[..4])),
@@ -591,6 +609,8 @@ pub fn connect() -> Result<Wire, String> {
         pointer: None,
         keyboard: None,
         close_requested: false,
+        ignore_ping: false,
+        unanswered_ping: None,
         layer_surface: None,
         layer_size: None,
         toplevel_size: None,
