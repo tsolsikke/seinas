@@ -166,6 +166,8 @@ ZeikOS に何が要るかを見積もるための材料で、Seinas の振る舞
 
 ## M3 で ZeikOS に要るもの
 
+(2026-10-11 の追記:今の構成で要るものを ZeikOS のソースと突き合わせた結果は、`docs/zeikos-requirements.md` にまとめました。この節は、2026-10-07 の見積もりのまま残します。)
+
 ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall 命令、静的 PIE の読み込みと auxv、TLS、mmap・munmap・mprotect、起動に要る小さなシステムコール、/dev/fb0)を前提にした見積もりです。
 
 ### M1・M2 で入っているはずのもの

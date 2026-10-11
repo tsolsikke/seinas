@@ -26,6 +26,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
 | `docs/release.md` | seinas-fbdevをGitHubのreleaseとして配る手順 |
 | `docs/m3-syscalls.md` | ZeikOS の M3 の準備として、seinas-standalone と zeyes-min を strace した記録 |
+| `docs/zeikos-requirements.md` | ZeikOS で Seinas を動かすのに要るもの(syscall と旗、fd、置くファイル、スレッド、プロセスの起こし方)と、ZeikOS の今の対応の突き合わせ |
 | `docs/adr/0001-replaceable-boundaries.md` | ADR: 外部ライブラリを、後で置き換えられる境界で使う決まりと、今の境界の棚卸し |
 | `docs/adr/0002-shell-components.md` | ADR: タスクバー・メニュー・デスクトップを、コンポジタの外の別のプログラムにする(layer-shell、foreign-toplevel、シェルのソケット) |
 | `docs/adr/0003-font-selection.md` | ADR: 利用者が選んだフォントで描けるようにする(置き場、一覧、役ごとの選び方、設定のファイル、mmap での読み込み) |
