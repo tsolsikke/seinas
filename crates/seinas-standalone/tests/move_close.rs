@@ -72,8 +72,8 @@ fn dragging_the_title_bar_moves_the_window() {
     // 帯を押して、3画素だけ動かして離す: 動かない(4画素の遊び)。
     drag(&mut seinas, (100, 10), (103, 10));
     // 帯を押して、(50, 50)だけ動かす: ウィンドウも、ちょうど同じだけ動く。上の操作で少しでも
-    // ずれていれば、ここで位置が合わなくなる。
-    drag(&mut seinas, (100, 10), (150, 60));
+    // ずれていれば、ここで位置が合わなくなる。押す所は、ダブルクリックにならないよう、前の所から離す。
+    drag(&mut seinas, (110, 10), (160, 60));
     seinas.wait_for_screen("the window moved by (50, 50)", |shot| {
         shows_window(shot, 50, 50, ACTIVE_BAR) && shot.pixel(2, 2) == BACKGROUND
     });
@@ -144,16 +144,17 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
             && shot.pixel(left, top - 1) == BACKGROUND
     });
 
-    // 左上へ: 帯の上の端は、画面の上の端で止まる。横は、帯の右の48画素(閉じるボタンを含む)が残る。
+    // 左上へ: タイトルバーの上の端は、画面の上の端で止まる。横は、タイトルバーの右の 120 ピクセル(48 と、
+    // ボタン 3 つ分の 72)が残る。
     motion(&mut seinas, -5000, -5000);
     seinas.wait_for_screen("the bar kept at the top left", |shot| {
-        shot.pixel(47, 0) == ACTIVE_BAR
-            && shot.pixel(48, 0) == BACKGROUND
-            && shot.pixel(47, BAR - 1) == ACTIVE_BAR
-            // 中身も、右の48画素だけが見えている。
-            && shot.pixel(47, BAR) == ORANGE
-            && shot.pixel(48, BAR) == BACKGROUND
-            && shot.pixel(47, BAR + WINDOW_HEIGHT - 1) == ORANGE
+        shot.pixel(119, 0) == ACTIVE_BAR
+            && shot.pixel(120, 0) == BACKGROUND
+            && shot.pixel(119, BAR - 1) == ACTIVE_BAR
+            // コンテンツも、右の 120 ピクセルだけが見えている。
+            && shot.pixel(119, BAR) == ORANGE
+            && shot.pixel(120, BAR) == BACKGROUND
+            && shot.pixel(119, BAR + WINDOW_HEIGHT - 1) == ORANGE
     });
 
     // ポインターを戻すと、限りから離れて、また付いてくる。
@@ -166,12 +167,13 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
     // 外へ出した後でも、残った帯を掴んで、引き戻せる。
     drag(&mut seinas, (300, 110), (-5000, 110));
     seinas.wait_for_screen("the window pushed to the left edge", |shot| {
-        shot.pixel(47, 100) == ACTIVE_BAR && shot.pixel(48, 100) == BACKGROUND
+        shot.pixel(119, 100) == ACTIVE_BAR && shot.pixel(120, 100) == BACKGROUND
     });
-    // 残っているのは、帯の右の48画素。その左の半分(閉じるボタンでない所)を掴む。
+    // 残っているのは、タイトルバーの右の 120 ピクセル(左は -80)。その左の 72 ピクセル(ボタンでない所)を
+    // grab する。
     drag(&mut seinas, (10, 110), (310, 210));
     seinas.wait_for_screen("the window pulled back", |shot| {
-        shows_window(shot, 148, 200, ACTIVE_BAR)
+        shows_window(shot, 220, 200, ACTIVE_BAR)
     });
     assert!(seinas.process.is_running());
 }

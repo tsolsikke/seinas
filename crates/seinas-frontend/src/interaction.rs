@@ -1,14 +1,14 @@
-//! ポインターでのウィンドウの操作(動かす、閉じる、サイズ変更)の決まり。
+//! ポインターでのウィンドウの操作(動かす、閉じる、最大化、最小化、サイズ変更)の決まり。
 //!
-//! ボタンを押した所が、ウィンドウのどの部分か(コンテンツ、タイトルバー、閉じるボタン、外枠の外のサイズ変更の境界)で、
-//! することを決める。
+//! ボタンを押した所が、ウィンドウのどの部分か(コンテンツ、タイトルバー、タイトルバーのボタン、外枠の外の
+//! サイズ変更の境界)で、することを決める。
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! 決まりの説明は `docs/window-placement.md` にある。
 
 use crate::geometry::{Point, PointF, Rect, Size};
 
 use crate::{
-    decoration::{clamp_outer_location, CLOSE_BUTTON_SIZE, TITLE_BAR_HEIGHT},
+    decoration::{clamp_outer_location, TitleButton, TitleButtons, TITLE_BAR_HEIGHT},
     resize::{edges_at, resized_content, Edges, ResizeStart, SizeLimits},
     stack::{Stack, WindowId},
 };
@@ -18,31 +18,43 @@ pub const LEFT_BUTTON: u32 = 0x110;
 /// 帯を押してから、これだけ(画素)動くまでは、ウィンドウを動かさない。手前に出すだけのつもりで
 /// 押したときに、ずれないようにする。
 pub const DRAG_SLACK: f64 = 4.0;
+/// ダブルクリックとみなす、2 回の押下の間の時間(ミリ秒)。2 回目は、1 回目から [`DRAG_SLACK`] の中で押すこと。
+pub const DOUBLE_CLICK_MS: u32 = 500;
 
 /// ウィンドウの中の部分。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
     /// クライアントが描く中身。
     Content,
-    /// 題名の帯(閉じるボタンを除く)。
+    /// タイトルバー(ボタンを除く)。
     Bar,
-    /// 閉じるボタン。
-    CloseButton,
+    /// タイトルバーのボタン。
+    Button(TitleButton),
 }
 
-/// 外形の左上が `location`、外形の大きさが `outer` のウィンドウの中で、点 `point` がどの部分か。
-/// ウィンドウの外ならNone。
-pub fn part_at(location: Point, outer: Size, point: PointF) -> Option<Part> {
+/// 外枠の左上が `location`、外枠の大きさが `outer`、タイトルバーのボタンが `buttons` のウィンドウの中で、
+/// 点 `point` がどの部分か。ウィンドウの外ならNone。
+pub fn part_at(location: Point, outer: Size, buttons: TitleButtons, point: PointF) -> Option<Part> {
     if !Rect::new(location, outer).contains(point) {
         return None;
     }
-    Some(if point.y >= (location.y + TITLE_BAR_HEIGHT) as f64 {
-        Part::Content
-    } else if point.x >= (location.x + outer.w - CLOSE_BUTTON_SIZE) as f64 {
-        Part::CloseButton
-    } else {
-        Part::Bar
+    if point.y >= (location.y + TITLE_BAR_HEIGHT) as f64 {
+        return Some(Part::Content);
+    }
+    Some(match buttons.at(outer.w, point.x - location.x as f64) {
+        Some(button) => Part::Button(button),
+        None => Part::Bar,
     })
+}
+
+/// ウィンドウの測り方。操作の決まりが、ウィンドウ(`T`)について知りたいこと。
+pub trait Measure<T> {
+    /// 外枠の大きさ。まだ絵を出していなければNone(ポインターが当たらない)。
+    fn outer_size(&self, item: &T) -> Option<Size>;
+    /// クライアントが決めた、最小と最大の大きさ。サイズ変更できないウィンドウはNone。
+    fn limits(&self, item: &T) -> Option<SizeLimits>;
+    /// タイトルバーに出すボタン。
+    fn buttons(&self, item: &T) -> TitleButtons;
 }
 
 /// 点の下にあるもの。いちばん手前のウィンドウから順に、外枠の中か、外枠の外のサイズ変更の境界かを見る。
@@ -54,19 +66,26 @@ enum Target {
 
 /// 点 `point` の下にある、いちばん手前のウィンドウ(手前からの順、番号、外枠の左上)と、その中のもの。
 ///
-/// `limits_of` がNoneを返すウィンドウ(最大化しているものなど)には、サイズ変更の境界が無い。
+/// 最小化しているウィンドウには当たらない。最大化しているウィンドウと、`limits` がNoneのウィンドウには、
+/// サイズ変更の境界が無い。
 fn target_at<T>(
     stack: &Stack<T>,
     point: PointF,
-    outer_size_of: impl Fn(&T) -> Option<Size>,
-    limits_of: impl Fn(&T) -> Option<SizeLimits>,
+    measure: &impl Measure<T>,
 ) -> Option<(usize, WindowId, Point, Target)> {
     stack.iter().enumerate().find_map(|(index, entry)| {
-        let outer = outer_size_of(&entry.item)?;
-        let target = match part_at(entry.location, outer, point) {
+        if entry.minimized {
+            return None;
+        }
+        let outer = measure.outer_size(&entry.item)?;
+        let buttons = measure.buttons(&entry.item);
+        let target = match part_at(entry.location, outer, buttons, point) {
             Some(part) => Target::Part(part),
             None => {
-                limits_of(&entry.item)?;
+                if entry.is_maximized() {
+                    return None;
+                }
+                measure.limits(&entry.item)?;
                 Target::Edges(edges_at(Rect::new(entry.location, outer), point)?)
             }
         };
@@ -93,6 +112,16 @@ pub struct Configure {
     pub resizing: bool,
 }
 
+/// ウィンドウに対してすること(タイトルバーのボタンと、ダブルクリック)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// クライアントに、閉じるように頼む。
+    Close,
+    Minimize,
+    /// 最大化か、最大化していれば元に戻す。
+    ToggleMaximize,
+}
+
 /// ボタンを押している間の状態。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Grab {
@@ -106,11 +135,14 @@ enum Grab {
         origin: Point,
         /// もう動かし始めたか([`DRAG_SLACK`] を超えたか)。
         moving: bool,
+        /// 動かせるか。最大化しているウィンドウと、ダブルクリックの 2 回目では、動かさない。
+        movable: bool,
     },
-    /// 閉じるボタンを押している。
-    Close {
+    /// タイトルバーのボタンを押している。
+    Button {
         window: WindowId,
-        /// いま、ポインターがそのボタンの上にあるか。上で離したときにだけ、閉じる。
+        button: TitleButton,
+        /// いま、ポインターがそのボタンの上にあるか。上で離したときにだけ、働く。
         inside: bool,
     },
     /// サイズ変更の境界を押している。
@@ -143,8 +175,8 @@ pub struct Outcome {
     pub redraw: bool,
     /// 重なる順が変わったか(選ばれているウィンドウが変わったかもしれない)。
     pub raised: bool,
-    /// 閉じるように頼むウィンドウ。
-    pub close: Option<WindowId>,
+    /// ウィンドウに対してすること(閉じるように頼む、最小化、最大化と元に戻す)。
+    pub command: Option<(WindowId, Command)>,
     /// クライアントへ送る configure(サイズ変更)。
     pub configure: Option<Configure>,
     pub deliver: Deliver,
@@ -160,9 +192,17 @@ impl Outcome {
         Outcome {
             redraw: false,
             raised: false,
-            close: None,
+            command: None,
             configure: None,
             deliver,
+        }
+    }
+
+    /// 閉じるように頼むウィンドウ。
+    pub fn close(&self) -> Option<WindowId> {
+        match self.command {
+            Some((window, Command::Close)) => Some(window),
+            _ => None,
         }
     }
 }
@@ -171,12 +211,14 @@ impl Outcome {
 #[derive(Debug)]
 pub struct Interaction {
     grab: Grab,
-    /// ボタンを押していないときに、ポインターが閉じるボタンの上にあるウィンドウ。
-    hover: Option<WindowId>,
+    /// ボタンを押していないときに、ポインターが乗っているタイトルバーのボタン。
+    hover: Option<(WindowId, TitleButton)>,
     /// ボタンを押していないときに、ポインターがサイズ変更の境界の上にあれば、その辺。
     hover_edges: Option<Edges>,
     /// 最後に見たポインターの位置。
     last: PointF,
+    /// 最後にタイトルバーを左のボタンで押したウィンドウ、点、時刻(ダブルクリックを見分ける)。
+    last_bar_press: Option<(WindowId, PointF, u32)>,
 }
 
 impl Default for Interaction {
@@ -186,24 +228,34 @@ impl Default for Interaction {
             hover: None,
             hover_edges: None,
             last: (0.0, 0.0).into(),
+            last_bar_press: None,
         }
     }
 }
 
 impl Interaction {
-    /// ウィンドウ `window` の閉じるボタンを、目立たせて描くか。
+    /// ウィンドウ `window` のタイトルバーで、目立たせて描くボタン。
     ///
-    /// ボタンを押していないときは、ポインターがその上にあるとき。閉じるボタンを押している間は、
-    /// ポインターがそのボタンの上にあるとき(外へ出すと、取り消しになることが分かる)。
-    pub fn close_button_is_hot(&self, window: WindowId) -> bool {
+    /// ボタンを押していないときは、ポインターが乗っているボタン。ボタンを押している間は、ポインターが
+    /// そのボタンの上にあるとき(外へ出すと、取り消しになることが分かる)。
+    pub fn hot_button(&self, window: WindowId) -> Option<TitleButton> {
         match self.grab {
-            Grab::None => self.hover == Some(window),
-            Grab::Close {
+            Grab::None => self
+                .hover
+                .filter(|(hovered, _)| *hovered == window)
+                .map(|(_, button)| button),
+            Grab::Button {
                 window: pressed,
+                button,
                 inside,
-            } => pressed == window && inside,
-            _ => false,
+            } => (pressed == window && inside).then_some(button),
+            _ => None,
         }
+    }
+
+    /// ウィンドウ `window` の閉じるボタンを、目立たせて描くか。
+    pub fn close_button_is_hot(&self, window: WindowId) -> bool {
+        self.hot_button(window) == Some(TitleButton::Close)
     }
 
     /// ボタンを押していない(何も grab していない)か。
@@ -233,23 +285,26 @@ impl Interaction {
         }
     }
 
+    /// ボタンを押していないときの、ポインターが乗っているものを忘れる(ウィンドウを最小化したときなど)。
+    /// 目立たせていたボタンがあればtrue。
+    pub fn forget_hover(&mut self) -> bool {
+        self.hover_edges = None;
+        self.hover.take().is_some()
+    }
+
     /// ポインターが `point` へ動いた。
-    ///
-    /// `outer_size_of` は、ウィンドウの外形の大きさを返す(まだ絵を出していなければNone)。
-    /// `limits_of` は、クライアントが決めた最小と最大の大きさを返す(サイズ変更できないウィンドウはNone)。
     pub fn motion<T>(
         &mut self,
         stack: &mut Stack<T>,
         area: Rect,
         point: PointF,
-        outer_size_of: impl Fn(&T) -> Option<Size>,
-        limits_of: impl Fn(&T) -> Option<SizeLimits>,
+        measure: &impl Measure<T>,
     ) -> Outcome {
         self.last = point;
         match self.grab {
             Grab::None => {
                 let mut outcome = Outcome::new(Deliver::ToClient);
-                outcome.redraw = self.update_hover(stack, point, outer_size_of, limits_of);
+                outcome.redraw = self.update_hover(stack, point, measure);
                 // サイズ変更の境界の上では、その下のウィンドウには渡さない。
                 if self.hover_edges.is_some() {
                     outcome.deliver = Deliver::Nobody;
@@ -262,7 +317,10 @@ impl Interaction {
                 size,
             } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
-                let Some(limits) = stack.get(window).and_then(|entry| limits_of(&entry.item))
+                let Some(limits) = stack
+                    .get(window)
+                    .filter(|entry| !entry.is_maximized() && !entry.minimized)
+                    .and_then(|entry| measure.limits(&entry.item))
                 else {
                     // grab していたウィンドウが去ったか、サイズ変更できなくなった。離すまで、何もしない。
                     return outcome;
@@ -288,37 +346,45 @@ impl Interaction {
                 press,
                 origin,
                 moving,
+                movable,
             } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
                 let Some(width) = stack
                     .get(window)
-                    .and_then(|entry| outer_size_of(&entry.item))
+                    .and_then(|entry| measure.outer_size(&entry.item))
                     .map(|size| size.w)
                 else {
                     // 掴んでいたウィンドウが去った。ボタンを離すまで、何もしない。
                     return outcome;
                 };
                 let (dx, dy) = (point.x - press.x, point.y - press.y);
-                let moving = moving || dx.hypot(dy) >= DRAG_SLACK;
+                let moving = movable && (moving || dx.hypot(dy) >= DRAG_SLACK);
                 self.grab = Grab::Bar {
                     window,
                     press,
                     origin,
                     moving,
+                    movable,
                 };
                 if moving {
+                    // 動かし始めたら、ダブルクリックにはしない。
+                    self.last_bar_press = None;
                     let wanted = (origin.x + dx.round() as i32, origin.y + dy.round() as i32);
                     let location = clamp_outer_location(wanted.into(), width, area);
                     outcome.redraw = stack.move_to(window, location);
                 }
                 outcome
             }
-            Grab::Close { window, inside } => {
+            Grab::Button {
+                window,
+                button,
+                inside,
+            } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
-                let now =
-                    close_button_under(stack, point, outer_size_of, limits_of) == Some(window);
-                self.grab = Grab::Close {
+                let now = button_under(stack, point, measure) == Some((window, button));
+                self.grab = Grab::Button {
                     window,
+                    button,
                     inside: now,
                 };
                 outcome.redraw = now != inside;
@@ -335,19 +401,19 @@ impl Interaction {
         outcome
     }
 
-    /// 点 `point` で、ボタン `button` が押された。
+    /// 点 `point` で、ボタン `button` が押された。`time` は、押した時刻(ミリ秒)。
     pub fn press<T>(
         &mut self,
         stack: &mut Stack<T>,
         point: PointF,
         button: u32,
-        outer_size_of: impl Fn(&T) -> Option<Size>,
-        limits_of: impl Fn(&T) -> Option<SizeLimits>,
+        time: u32,
+        measure: &impl Measure<T>,
     ) -> Outcome {
         self.last = point;
         match &mut self.grab {
-            // タイトルバーや閉じるボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
-            Grab::Bar { .. } | Grab::Close { .. } | Grab::Resize { .. } => {
+            // タイトルバーやボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
+            Grab::Bar { .. } | Grab::Button { .. } | Grab::Resize { .. } => {
                 return Outcome::new(Deliver::Nobody)
             }
             Grab::Client { buttons } => {
@@ -356,7 +422,7 @@ impl Interaction {
             }
             Grab::None => {}
         }
-        let hit = target_at(stack, point, &outer_size_of, &limits_of);
+        let hit = target_at(stack, point, measure);
         let Some((index, window, origin, target)) = hit else {
             // どのウィンドウの上でもない。
             self.grab = Grab::Client { buttons: 1 };
@@ -364,10 +430,12 @@ impl Interaction {
         };
         // どのボタンでも、どの部分でも、押したウィンドウを手前に出す。
         let raised = stack.raise(index);
-        let was_hot = self.close_button_is_hot(window);
+        let was_hot = self.hot_button(window);
+        let mut command = None;
         let deliver = match target {
             Target::Edges(edges) if button == LEFT_BUTTON => {
-                let content = outer_size_of(&stack.get(window).expect("the window").item)
+                let content = measure
+                    .outer_size(&stack.get(window).expect("the window").item)
                     .map(|outer| Size::new(outer.w, outer.h - TITLE_BAR_HEIGHT))
                     .expect("a window that was hit has a size");
                 let start = ResizeStart {
@@ -390,30 +458,45 @@ impl Interaction {
                 Deliver::ToClient
             }
             Target::Part(Part::Bar) if button == LEFT_BUTTON => {
+                // 同じウィンドウのタイトルバーを、短い時間の中で、ほぼ同じ所でもう一度押したら、ダブルクリック。
+                let double = self.last_bar_press.is_some_and(|(last, at, when)| {
+                    last == window
+                        && time.wrapping_sub(when) <= DOUBLE_CLICK_MS
+                        && (point.x - at.x).hypot(point.y - at.y) < DRAG_SLACK
+                });
+                if double {
+                    self.last_bar_press = None;
+                    command = Some((window, Command::ToggleMaximize));
+                } else {
+                    self.last_bar_press = Some((window, point, time));
+                }
+                let maximized = stack.get(window).is_some_and(|entry| entry.is_maximized());
                 self.grab = Grab::Bar {
                     window,
                     press: point,
                     origin,
                     moving: false,
+                    movable: !double && !maximized,
                 };
                 Deliver::Nobody
             }
-            Target::Part(Part::CloseButton) if button == LEFT_BUTTON => {
-                self.grab = Grab::Close {
+            Target::Part(Part::Button(pressed)) if button == LEFT_BUTTON => {
+                self.grab = Grab::Button {
                     window,
+                    button: pressed,
                     inside: true,
                 };
                 Deliver::Nobody
             }
             // 帯の上の、左でないボタンは、手前に出すだけ。
-            Target::Part(Part::Bar | Part::CloseButton) => Deliver::Nobody,
+            Target::Part(Part::Bar | Part::Button(_)) => Deliver::Nobody,
         };
         self.hover = None;
         self.hover_edges = None;
         Outcome {
-            redraw: raised || was_hot != self.close_button_is_hot(window),
+            redraw: raised || was_hot != self.hot_button(window) || command.is_some(),
             raised,
-            close: None,
+            command,
             configure: None,
             deliver,
         }
@@ -425,8 +508,7 @@ impl Interaction {
         stack: &mut Stack<T>,
         point: PointF,
         button: u32,
-        outer_size_of: impl Fn(&T) -> Option<Size>,
-        limits_of: impl Fn(&T) -> Option<SizeLimits>,
+        measure: &impl Measure<T>,
     ) -> Outcome {
         self.last = point;
         let mut outcome = match &mut self.grab {
@@ -439,8 +521,8 @@ impl Interaction {
                 }
                 Outcome::new(Deliver::ToClient)
             }
-            // タイトルバーや閉じるボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
-            Grab::Bar { .. } | Grab::Close { .. } | Grab::Resize { .. }
+            // タイトルバーやボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
+            Grab::Bar { .. } | Grab::Button { .. } | Grab::Resize { .. }
                 if button != LEFT_BUTTON =>
             {
                 return Outcome::new(Deliver::Nobody)
@@ -456,19 +538,30 @@ impl Interaction {
                 });
                 outcome
             }
-            Grab::Close { window, .. } => {
-                let window = *window;
+            Grab::Button {
+                window,
+                button: pressed,
+                ..
+            } => {
+                let (window, pressed) = (*window, *pressed);
                 let mut outcome = Outcome::new(Deliver::Nobody);
-                // ボタンの上で離したときにだけ、閉じる。外へ出して離すと、取り消し。
-                if close_button_under(stack, point, &outer_size_of, &limits_of) == Some(window) {
-                    outcome.close = Some(window);
+                // ボタンの上で離したときにだけ、働く。外へ出して離すと、取り消し。
+                if button_under(stack, point, measure) == Some((window, pressed)) {
+                    outcome.command = Some((
+                        window,
+                        match pressed {
+                            TitleButton::Close => Command::Close,
+                            TitleButton::Minimize => Command::Minimize,
+                            TitleButton::Maximize => Command::ToggleMaximize,
+                        },
+                    ));
                 }
                 outcome.redraw = true;
                 outcome
             }
         };
         self.grab = Grab::None;
-        outcome.redraw |= self.update_hover(stack, point, outer_size_of, limits_of);
+        outcome.redraw |= self.update_hover(stack, point, measure);
         outcome
     }
 
@@ -477,25 +570,29 @@ impl Interaction {
     /// 受けるのは、中身の上でボタンが押されている間だけ。受けたら、そのボタンを離すまで、帯を
     /// 掴んだときと同じに動かす(遊びは置かず、すぐ動かす)。`press` は、そのボタンを押した点。
     /// 頼みが届くまでの間にポインターが動いたぶんは、ここで動かす。呼ぶ側は、頼んできたのが、
-    /// 押されているクライアントであることを確かめておくこと。
+    /// 押されているクライアントであることを確かめておくこと。最大化しているウィンドウは、動かさない。
     pub fn begin_client_move<T>(
         &mut self,
         stack: &mut Stack<T>,
         area: Rect,
         window: WindowId,
         press: PointF,
-        outer_size_of: impl Fn(&T) -> Option<Size>,
+        measure: &impl Measure<T>,
     ) -> bool {
         let (Grab::Client { .. }, Some(entry)) = (self.grab, stack.get(window)) else {
             return false;
         };
+        if entry.is_maximized() {
+            return false;
+        }
         self.grab = Grab::Bar {
             window,
             press,
             origin: entry.location,
             moving: true,
+            movable: true,
         };
-        self.motion(stack, area, self.last, outer_size_of, |_| None);
+        self.motion(stack, area, self.last, measure);
         true
     }
 
@@ -504,8 +601,7 @@ impl Interaction {
     /// 頼みが届くまでの間にポインターが動いたぶんの configure を返す。受けなければNone。
     ///
     /// 受ける条件は [`Interaction::begin_client_move`] と同じで、加えて、サイズ変更できるウィンドウである
-    /// こと。`press` は、そのボタンを押した点。
-    #[allow(clippy::too_many_arguments)]
+    /// こと(最大化していない、`limits` がNoneでない)。`press` は、そのボタンを押した点。
     pub fn begin_client_resize<T>(
         &mut self,
         stack: &mut Stack<T>,
@@ -513,17 +609,16 @@ impl Interaction {
         window: WindowId,
         edges: Edges,
         press: PointF,
-        outer_size_of: impl Fn(&T) -> Option<Size>,
-        limits_of: impl Fn(&T) -> Option<SizeLimits>,
+        measure: &impl Measure<T>,
     ) -> Option<Outcome> {
         let (Grab::Client { .. }, Some(entry)) = (self.grab, stack.get(window)) else {
             return None;
         };
-        if edges.is_empty() {
+        if edges.is_empty() || entry.is_maximized() {
             return None;
         }
-        limits_of(&entry.item)?;
-        let outer = outer_size_of(&entry.item)?;
+        measure.limits(&entry.item)?;
+        let outer = measure.outer_size(&entry.item)?;
         let content = Size::new(outer.w, outer.h - TITLE_BAR_HEIGHT);
         self.grab = Grab::Resize {
             window,
@@ -535,21 +630,20 @@ impl Interaction {
             },
             size: content,
         };
-        Some(self.motion(stack, area, self.last, outer_size_of, limits_of))
+        Some(self.motion(stack, area, self.last, measure))
     }
 
-    /// ボタンを押していないときの、閉じるボタンとサイズ変更の境界の上にあるかどうかを更新する。
-    /// 閉じるボタンの上かどうかが変わったらtrue(再描画が要る)。
+    /// ボタンを押していないときの、タイトルバーのボタンとサイズ変更の境界の上にあるかどうかを更新する。
+    /// 目立たせるボタンが変わったらtrue(再描画が要る)。
     fn update_hover<T>(
         &mut self,
         stack: &Stack<T>,
         point: PointF,
-        outer_size_of: impl Fn(&T) -> Option<Size>,
-        limits_of: impl Fn(&T) -> Option<SizeLimits>,
+        measure: &impl Measure<T>,
     ) -> bool {
-        let target = target_at(stack, point, outer_size_of, limits_of);
+        let target = target_at(stack, point, measure);
         let hover = match target {
-            Some((_, window, _, Target::Part(Part::CloseButton))) => Some(window),
+            Some((_, window, _, Target::Part(Part::Button(button)))) => Some((window, button)),
             _ => None,
         };
         self.hover_edges = match target {
@@ -560,16 +654,15 @@ impl Interaction {
     }
 }
 
-/// 点 `point` が、見えている閉じるボタンの上にあれば、そのウィンドウ。手前のウィンドウのサイズ変更の境界に
-/// 隠れている所は、見えていないものとして扱う。
-fn close_button_under<T>(
+/// 点 `point` が、見えているタイトルバーのボタンの上にあれば、そのウィンドウとボタン。手前のウィンドウの
+/// サイズ変更の境界に隠れている所は、見えていないものとして扱う。
+fn button_under<T>(
     stack: &Stack<T>,
     point: PointF,
-    outer_size_of: impl Fn(&T) -> Option<Size>,
-    limits_of: impl Fn(&T) -> Option<SizeLimits>,
-) -> Option<WindowId> {
-    match target_at(stack, point, outer_size_of, limits_of)? {
-        (_, window, _, Target::Part(Part::CloseButton)) => Some(window),
+    measure: &impl Measure<T>,
+) -> Option<(WindowId, TitleButton)> {
+    match target_at(stack, point, measure)? {
+        (_, window, _, Target::Part(Part::Button(button))) => Some((window, button)),
         _ => None,
     }
 }
@@ -583,13 +676,25 @@ mod tests {
     const OUTER: (i32, i32) = (320, 264);
     const RIGHT_BUTTON: u32 = 0x111;
 
-    fn size(_: &&str) -> Option<Size> {
-        Some(OUTER.into())
-    }
+    /// テストのウィンドウの測り方。外枠はどれも同じ大きさ。
+    struct Windows;
 
-    /// 「fixed」という名前のウィンドウだけは、サイズ変更できない(最大化しているもののまね)。
-    fn limits(name: &&str) -> Option<SizeLimits> {
-        (*name != "fixed").then(SizeLimits::default)
+    impl Measure<&'static str> for Windows {
+        fn outer_size(&self, _: &&'static str) -> Option<Size> {
+            Some(OUTER.into())
+        }
+        /// 「fixed」という名前のウィンドウだけは、サイズ変更できない。
+        fn limits(&self, name: &&'static str) -> Option<SizeLimits> {
+            (*name != "fixed").then(SizeLimits::default)
+        }
+        /// 名前が「full」で始まるウィンドウには、3 つのボタンがある。ほかは、閉じるボタンだけ。
+        fn buttons(&self, name: &&'static str) -> TitleButtons {
+            if name.starts_with("full") {
+                TitleButtons::ALL
+            } else {
+                TitleButtons::CLOSE_ONLY
+            }
+        }
     }
 
     fn at(x: f64, y: f64) -> PointF {
@@ -600,6 +705,8 @@ mod tests {
     struct World {
         stack: Stack<&'static str>,
         interaction: Interaction,
+        /// 次に押す時刻(ミリ秒)。押すたびに 1 秒進める(ダブルクリックにならないように)。
+        time: u32,
     }
 
     impl World {
@@ -611,6 +718,7 @@ mod tests {
             World {
                 stack,
                 interaction: Interaction::default(),
+                time: 0,
             }
         }
 
@@ -619,19 +727,24 @@ mod tests {
                 &mut self.stack,
                 Rect::from_size(SCREEN.into()),
                 at(x, y),
-                size,
-                limits,
+                &Windows,
             )
         }
 
         fn press(&mut self, x: f64, y: f64, button: u32) -> Outcome {
+            self.time += 1000;
+            self.press_at(x, y, button, self.time)
+        }
+
+        /// 時刻 `time` に押す。
+        fn press_at(&mut self, x: f64, y: f64, button: u32, time: u32) -> Outcome {
             self.interaction
-                .press(&mut self.stack, at(x, y), button, size, limits)
+                .press(&mut self.stack, at(x, y), button, time, &Windows)
         }
 
         fn release(&mut self, x: f64, y: f64, button: u32) -> Outcome {
             self.interaction
-                .release(&mut self.stack, at(x, y), button, size, limits)
+                .release(&mut self.stack, at(x, y), button, &Windows)
         }
 
         fn begin_client_move(&mut self, window: WindowId, x: f64, y: f64) -> bool {
@@ -640,7 +753,7 @@ mod tests {
                 Rect::from_size(SCREEN.into()),
                 window,
                 at(x, y),
-                size,
+                &Windows,
             )
         }
 
@@ -666,12 +779,12 @@ mod tests {
     #[test]
     fn a_window_has_three_parts() {
         let (location, outer) = ((32, 32).into(), OUTER.into());
-        let part = |x: f64, y: f64| part_at(location, outer, at(x, y));
+        let part = |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, at(x, y));
         // 帯は、上の24画素。その右の端の24画素が、閉じるボタン。
         assert_eq!(part(32.0, 32.0), Some(Part::Bar));
         assert_eq!(part(327.9, 55.9), Some(Part::Bar));
-        assert_eq!(part(328.0, 32.0), Some(Part::CloseButton));
-        assert_eq!(part(351.9, 55.9), Some(Part::CloseButton));
+        assert_eq!(part(328.0, 32.0), Some(Part::Button(TitleButton::Close)));
+        assert_eq!(part(351.9, 55.9), Some(Part::Button(TitleButton::Close)));
         // その下が中身。
         assert_eq!(part(32.0, 56.0), Some(Part::Content));
         assert_eq!(part(351.0, 56.0), Some(Part::Content));
@@ -757,9 +870,9 @@ mod tests {
         // 下へ: 帯の全体が残る。
         world.motion(100.0, 2000.0);
         assert_eq!(world.place("b").0, (32, 456));
-        // 左へ、右へ: 帯のうち48画素が残る。
+        // 左へ: タイトルバーの右の 120 ピクセル(48 と、ボタン 3 つ分の 72)が残る。右へ: 左の 48 ピクセルが残る。
         world.motion(-2000.0, 100.0);
-        assert_eq!(world.place("b").0, (-272, 92));
+        assert_eq!(world.place("b").0, (-200, 92));
         world.motion(2000.0, 100.0);
         assert_eq!(world.place("b").0, (592, 92));
         // 限りに当たった後も、ポインターが戻れば、付いてくる。
@@ -782,7 +895,7 @@ mod tests {
 
         // 右のボタンでは、閉じるボタンも働かない。
         world.press(310.0, 10.0, RIGHT_BUTTON);
-        assert_eq!(world.release(310.0, 10.0, RIGHT_BUTTON).close, None);
+        assert_eq!(world.release(310.0, 10.0, RIGHT_BUTTON).close(), None);
     }
 
     #[test]
@@ -791,7 +904,7 @@ mod tests {
         let b = world.id("b");
         // bの閉じるボタン(帯の右の端)。
         let pressed = world.press(340.0, 40.0, LEFT_BUTTON);
-        assert_eq!((pressed.deliver, pressed.close), (Deliver::Nobody, None));
+        assert_eq!((pressed.deliver, pressed.close()), (Deliver::Nobody, None));
         assert!(world.interaction.close_button_is_hot(b));
         // ボタンの中で動かしても、ウィンドウは動かない。
         let moved = world.motion(345.0, 50.0);
@@ -799,7 +912,7 @@ mod tests {
         assert_eq!(world.place("b"), ((32, 32), Some(1)));
         // 上で離すと、閉じるように頼む。
         let released = world.release(345.0, 50.0, LEFT_BUTTON);
-        assert_eq!(released.close, Some(b));
+        assert_eq!(released.close(), Some(b));
         assert_eq!(released.deliver, Deliver::Nobody);
     }
 
@@ -817,12 +930,12 @@ mod tests {
         assert!(world.interaction.close_button_is_hot(b));
         // 外で離すと、取り消し。
         world.motion(200.0, 100.0);
-        assert_eq!(world.release(200.0, 100.0, LEFT_BUTTON).close, None);
+        assert_eq!(world.release(200.0, 100.0, LEFT_BUTTON).close(), None);
 
         // 別のウィンドウの閉じるボタンの上で離しても、閉じない。
         world.press(340.0, 40.0, LEFT_BUTTON);
         world.motion(310.0, 10.0);
-        assert_eq!(world.release(310.0, 10.0, LEFT_BUTTON).close, None);
+        assert_eq!(world.release(310.0, 10.0, LEFT_BUTTON).close(), None);
         assert_eq!(world.order(), ["b", "a"]);
     }
 
@@ -834,14 +947,14 @@ mod tests {
         let pressed = world.press(310.0, 10.0, LEFT_BUTTON);
         assert!(pressed.raised, "the window comes to the front first");
         assert_eq!(world.order(), ["a", "b"]);
-        assert_eq!(world.release(310.0, 10.0, LEFT_BUTTON).close, Some(a));
+        assert_eq!(world.release(310.0, 10.0, LEFT_BUTTON).close(), Some(a));
 
         // 隠れている閉じるボタンには、当たらない。手前のウィンドウの部分として扱う。
         let mut world = World::two();
         world.stack.move_to(world.id("b"), (40, 0).into());
         let pressed = world.press(310.0, 10.0, LEFT_BUTTON);
         assert!(!pressed.raised);
-        assert_eq!(world.release(310.0, 10.0, LEFT_BUTTON).close, None);
+        assert_eq!(world.release(310.0, 10.0, LEFT_BUTTON).close(), None);
     }
 
     #[test]
@@ -977,7 +1090,7 @@ mod tests {
         let mut world = World::two();
         world.press(340.0, 40.0, LEFT_BUTTON);
         world.stack.remove(|name| *name == "b");
-        assert_eq!(world.release(340.0, 40.0, LEFT_BUTTON).close, None);
+        assert_eq!(world.release(340.0, 40.0, LEFT_BUTTON).close(), None);
     }
 
     #[test]
@@ -1044,6 +1157,7 @@ mod tests {
         let mut world = World {
             stack,
             interaction: Interaction::default(),
+            time: 0,
         };
         // 外枠(y 0〜264)のすぐ下でも、ポインターの形は変わらず、クライアントへ渡す。
         assert_eq!(world.motion(100.0, 268.0).deliver, Deliver::ToClient);
@@ -1069,8 +1183,7 @@ mod tests {
                 b,
                 Edges::BOTTOM_RIGHT,
                 at(200.0, 200.0),
-                size,
-                limits
+                &Windows
             )
             .is_none());
         // bのコンテンツを押している間なら、受ける。辺の指定が無いものは、受けない。
@@ -1083,8 +1196,7 @@ mod tests {
                 b,
                 Edges::default(),
                 at(200.0, 200.0),
-                size,
-                limits
+                &Windows
             )
             .is_none());
         let begun = world
@@ -1095,8 +1207,7 @@ mod tests {
                 b,
                 Edges::BOTTOM_RIGHT,
                 at(200.0, 200.0),
-                size,
-                limits,
+                &Windows,
             )
             .expect("the resize begins");
         assert_eq!(begun.configure, None);
@@ -1119,5 +1230,119 @@ mod tests {
                 .map(|c| c.resizing),
             Some(false)
         );
+    }
+
+    /// ボタンが 3 つある「full-a」(左上)と「full-b」((32, 32))。手前は full-b。
+    fn two_with_buttons() -> World {
+        let mut stack = Stack::default();
+        stack.add("full-a", Rect::from_size(SCREEN.into()));
+        stack.add("full-b", Rect::from_size(SCREEN.into()));
+        World {
+            stack,
+            interaction: Interaction::default(),
+            time: 0,
+        }
+    }
+
+    #[test]
+    fn the_title_buttons_minimize_and_maximize() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        // full-b の外枠は x 32〜352。閉じるは 328〜352、最大化は 304〜328、最小化は 280〜304。
+        world.motion(316.0, 40.0);
+        assert_eq!(world.interaction.hot_button(b), Some(TitleButton::Maximize));
+        world.press(316.0, 40.0, LEFT_BUTTON);
+        assert_eq!(
+            world.release(316.0, 40.0, LEFT_BUTTON).command,
+            Some((b, Command::ToggleMaximize))
+        );
+        world.press(292.0, 40.0, LEFT_BUTTON);
+        assert_eq!(
+            world.release(292.0, 40.0, LEFT_BUTTON).command,
+            Some((b, Command::Minimize))
+        );
+        // 押したまま外へ出して離すと、取り消し。
+        world.press(292.0, 40.0, LEFT_BUTTON);
+        world.motion(200.0, 40.0);
+        assert_eq!(world.interaction.hot_button(b), None);
+        assert_eq!(world.release(200.0, 40.0, LEFT_BUTTON).command, None);
+        // ボタンが閉じるだけのウィンドウでは、同じ所はタイトルバー。
+        let mut plain = World::two();
+        plain.press(316.0, 40.0, LEFT_BUTTON);
+        assert_eq!(plain.release(316.0, 40.0, LEFT_BUTTON).command, None);
+    }
+
+    #[test]
+    fn a_double_click_on_the_bar_toggles_maximize() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        let first = world.press_at(100.0, 40.0, LEFT_BUTTON, 1000);
+        assert_eq!(first.command, None);
+        world.release(100.0, 40.0, LEFT_BUTTON);
+        // 500 ミリ秒の中で、4 ピクセルより近い所を押すと、ダブルクリック。
+        let second = world.press_at(102.0, 41.0, LEFT_BUTTON, 1400);
+        assert_eq!(second.command, Some((b, Command::ToggleMaximize)));
+        // 2 回目の押下のまま動かしても、ウィンドウは動かない。
+        world.motion(200.0, 200.0);
+        assert_eq!(world.place("full-b").0, (32, 32));
+        world.release(200.0, 200.0, LEFT_BUTTON);
+        // 遅い、遠い、別のウィンドウ、のどれでも、ダブルクリックにはならない。
+        world.press_at(100.0, 40.0, LEFT_BUTTON, 3000);
+        world.release(100.0, 40.0, LEFT_BUTTON);
+        assert_eq!(world.press_at(100.0, 40.0, LEFT_BUTTON, 3501).command, None);
+        world.release(100.0, 40.0, LEFT_BUTTON);
+        assert_eq!(world.press_at(110.0, 40.0, LEFT_BUTTON, 3600).command, None);
+        world.release(110.0, 40.0, LEFT_BUTTON);
+        // 3 回目の押下は、新しい 1 回目になる。
+        assert_eq!(
+            world.press_at(110.0, 40.0, LEFT_BUTTON, 3700).command,
+            Some((b, Command::ToggleMaximize))
+        );
+    }
+
+    #[test]
+    fn a_maximized_window_is_not_moved_or_resized() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        let area = Rect::new((0, 40).into(), (640, 440).into());
+        world.stack.maximize(b, area, None);
+        // タイトルバーを動かしても、動かない。
+        world.press(100.0, 50.0, LEFT_BUTTON);
+        world.motion(300.0, 300.0);
+        assert!(!world.interaction.is_moving());
+        assert_eq!(world.place("full-b").0, (0, 40));
+        world.release(300.0, 300.0, LEFT_BUTTON);
+        // 外枠のすぐ外(上の y 36)にも、サイズ変更の境界は無い(後ろの full-a のコンテンツに当たる)。
+        assert_eq!(world.motion(100.0, 36.0).deliver, Deliver::ToClient);
+        assert_eq!(world.interaction.cursor(), Cursor::Default);
+        // クライアントからの移動とサイズ変更の頼みも、受けない。
+        world.press(100.0, 100.0, LEFT_BUTTON);
+        assert!(!world.begin_client_move(b, 100.0, 100.0));
+        assert!(world
+            .interaction
+            .begin_client_resize(
+                &mut world.stack,
+                area,
+                b,
+                Edges::RIGHT,
+                at(100.0, 100.0),
+                &Windows
+            )
+            .is_none());
+    }
+
+    #[test]
+    fn a_minimized_window_is_not_hit() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        world.stack.set_minimized(b, true);
+        // full-b のタイトルバーの所(100, 40)は、後ろの full-a のコンテンツに当たる。
+        world.motion(100.0, 40.0);
+        assert_eq!(world.interaction.hot_button(b), None);
+        let pressed = world.press(100.0, 40.0, LEFT_BUTTON);
+        assert_eq!(pressed.deliver, Deliver::ToClient);
+        assert!(pressed.raised);
+        world.release(100.0, 40.0, LEFT_BUTTON);
+        assert_eq!(world.order(), ["full-a", "full-b"]);
     }
 }

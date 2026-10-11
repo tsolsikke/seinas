@@ -46,6 +46,8 @@ pub struct Listing {
     pub app_id: String,
     /// いちばん手前の(activated の)ウィンドウか。
     pub activated: bool,
+    pub maximized: bool,
+    pub minimized: bool,
 }
 
 /// wlr の handle(`zwlr_foreign_toplevel_handle_v1`)ごとのデータ。
@@ -91,6 +93,11 @@ impl ForeignToplevelState {
                 crate::is_shell_client,
             ),
         }
+    }
+
+    /// manager を bind しているシェルの部品があるか(最小化したウィンドウを戻す手段があるか)。
+    pub fn has_managers(&self) -> bool {
+        !self.managers.is_empty()
     }
 
     /// `window` が一覧に載っているか。
@@ -199,7 +206,7 @@ impl Listed {
         for wl_output in output.client_outputs(&client) {
             handle.output_enter(&wl_output);
         }
-        handle.state(states(self.shown.activated));
+        handle.state(states(&self.shown));
         handle.done();
         self.handles.push(handle);
     }
@@ -211,6 +218,11 @@ impl Listed {
         }
         let title = self.shown.title != new.title;
         let app_id = self.shown.app_id != new.app_id;
+        let state = (
+            self.shown.activated,
+            self.shown.maximized,
+            self.shown.minimized,
+        ) != (new.activated, new.maximized, new.minimized);
         for handle in &self.handles {
             if title {
                 handle.title(new.title.clone());
@@ -218,8 +230,8 @@ impl Listed {
             if app_id {
                 handle.app_id(new.app_id.clone());
             }
-            if self.shown.activated != new.activated {
-                handle.state(states(new.activated));
+            if state {
+                handle.state(states(&new));
             }
             handle.done();
         }
@@ -232,13 +244,18 @@ impl Listed {
     }
 }
 
-/// state の配列(u32 の配列)。最大化・最小化・全画面は、まだ持っていない。
-fn states(activated: bool) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    if activated {
-        bytes.extend((zwlr_foreign_toplevel_handle_v1::State::Activated as u32).to_ne_bytes());
-    }
-    bytes
+/// state の配列(u32 の配列)。全画面は、まだ持っていない。
+fn states(listing: &Listing) -> Vec<u8> {
+    use zwlr_foreign_toplevel_handle_v1::State;
+    [
+        (listing.maximized, State::Maximized),
+        (listing.minimized, State::Minimized),
+        (listing.activated, State::Activated),
+    ]
+    .into_iter()
+    .filter(|(on, _)| *on)
+    .flat_map(|(_, state)| (state as u32).to_ne_bytes())
+    .collect()
 }
 
 impl<D> GlobalDispatch<ZwlrForeignToplevelManagerV1, (), D> for ForeignToplevelState
@@ -261,6 +278,9 @@ where
             listed.announce::<D>(display_handle, &manager, &frontend.output);
         }
         foreign.managers.push(manager);
+        // 最小化のボタンを出せるようになったかもしれない。
+        frontend.managers_changed();
+        state.redraw_needed();
     }
 
     fn can_view(client: Client, _global_data: &()) -> bool {
@@ -296,11 +316,14 @@ impl<D: FrontendHost> Dispatch<ZwlrForeignToplevelManagerV1, (), D> for ForeignT
 }
 
 fn forget_manager<D: FrontendHost>(state: &mut D, manager: &ZwlrForeignToplevelManagerV1) {
-    state
-        .frontend_mut()
-        .foreign_toplevels
-        .managers
-        .retain(|m| m != manager);
+    let frontend = state.frontend_mut();
+    let before = frontend.foreign_toplevels.managers.len();
+    frontend.foreign_toplevels.managers.retain(|m| m != manager);
+    if frontend.foreign_toplevels.managers.len() != before {
+        // 最後のシェルの部品が去ったら、最小化のボタンを消し、最小化しているウィンドウを戻す。
+        frontend.managers_changed();
+        state.redraw_needed();
+    }
 }
 
 impl<D: FrontendHost> Dispatch<ZwlrForeignToplevelHandleV1, HandleData, D>
@@ -348,13 +371,25 @@ impl<D: FrontendHost> Dispatch<ZwlrForeignToplevelHandleV1, HandleData, D>
                     )
                 });
             }
-            // 最大化・最小化・全画面は、まだ持っていない。頼みは受けるが、今は何もしない(状態も変えない)。
-            Request::SetMaximized
-            | Request::UnsetMaximized
-            | Request::SetMinimized
-            | Request::UnsetMinimized
-            | Request::SetFullscreen { .. }
-            | Request::UnsetFullscreen => {
+            Request::SetMaximized | Request::UnsetMaximized => {
+                let maximized = matches!(request, Request::SetMaximized);
+                if state.frontend_mut().set_maximized(data.window, maximized) {
+                    state.redraw_needed();
+                }
+            }
+            Request::SetMinimized => {
+                if state.frontend_mut().minimize(data.window) {
+                    state.redraw_needed();
+                }
+            }
+            // 戻すと、raise して activated にする(Windows のタスクバーと同じ)。
+            Request::UnsetMinimized => {
+                if state.frontend_mut().unminimize(data.window) {
+                    state.redraw_needed();
+                }
+            }
+            // 全画面は、まだ持っていない。頼みは受けるが、今は何もしない(状態も変えない)。
+            Request::SetFullscreen { .. } | Request::UnsetFullscreen => {
                 info!("foreign toplevel: {request:?} is not supported yet; ignored");
             }
             Request::Destroy => {}

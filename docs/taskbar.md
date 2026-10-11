@@ -35,7 +35,7 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 | activated でない | activate する(コンポジタが raise して、activated にする) |
 | activated | 最小化する(set_minimized) |
 
-最小化と、その戻しは、コンポジタがまだ扱っていません(頼みは受けますが、何もしません)。ウィンドウの最大化・最小化を入れるときに働くようになります。
+最小化したウィンドウは、コンポジタが描かなくなり、ボタンは印が消えてタイトルが薄くなります。戻すと、そのウィンドウが raise されて activated になります(`docs/window-placement.md` の「最大化・最小化」)。タスクバーがつながっている間は、ウィンドウのタイトルバーにも最小化のボタンが出ます。
 
 ## 時計
 

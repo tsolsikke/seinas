@@ -7,11 +7,17 @@
 //! - 一覧に載るのは、絵を出したウィンドウだけ。タイトル・app_id・activated かどうかが変わると送り、
 //!   去ったウィンドウには closed を送る。
 //! - activate はウィンドウを raise して activated にし、close はクライアントに閉じるように頼む。
-//! - 最大化・最小化・全画面の頼みは受けるが、今は何もしない。
+//! - 最大化・最小化と、その戻しの頼みに応じ、状態(maximized、minimized)を送る。全画面の頼みは受けるが、今は何もしない。
 
 mod common;
 
-use common::{bar_color, wait_for, Compositor, TestClient, ACTIVE_BAR, BACKGROUND, INACTIVE_BAR};
+use common::{
+    bar_color, wait_for, Compositor, TestClient, ACTIVE_BAR, BACKGROUND, HEIGHT, INACTIVE_BAR,
+    WIDTH,
+};
+
+/// テスト用のクライアントのコンテンツの色(橙)。
+const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 
 /// テスト用のクライアントのウィンドウの、コンテンツの幅。
 const WINDOW_WIDTH: usize = 200;
@@ -179,27 +185,49 @@ fn close_asks_the_client() {
 }
 
 #[test]
-fn maximize_minimize_and_fullscreen_are_accepted_but_do_nothing() {
+fn maximize_and_minimize_requests_change_the_window() {
     let seinas = Compositor::start("fg");
-    let _window = open_window(&seinas, &["--title", "一つ目"]);
+    let _window = open_window(&seinas, &["--title", "一つ目", "--follow-size"]);
     let mut list = connect_list(&seinas, &[]);
-    for command in [
-        "maximize",
-        "unmaximize",
-        "minimize",
-        "unminimize",
-        "fullscreen",
-        "unfullscreen",
-    ] {
+    let line = |states: &str| {
+        format!("toplevel 1: title=\"一つ目\" app_id=\"\" state=[{states}] outputs=1")
+    };
+
+    // 最大化すると、使える範囲いっぱいになる(クライアントが従えば)。状態に maximized が付く。
+    list.send_line("maximize 1");
+    assert_eq!(list.next_line("maximized"), line("maximized,activated"));
+    assert_eq!(list.next_line("synced"), "toplevels: synced");
+    seinas.wait_for_screen("the maximized window", |shot| {
+        bar_color(shot, 0, 0, WIDTH) == Some(ACTIVE_BAR)
+            && shot.pixel(WIDTH - 1, HEIGHT - 1) == ORANGE
+    });
+    list.send_line("unmaximize 1");
+    assert_eq!(list.next_line("restored"), line("activated"));
+    assert_eq!(list.next_line("synced"), "toplevels: synced");
+    seinas.wait_for_screen("the restored window", |shot| {
+        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
+            && shot.pixel(WINDOW_WIDTH + 2, 2) == BACKGROUND
+    });
+
+    // 最小化すると、描かれなくなり、activated も外れる。戻すと、また activated になる。
+    list.send_line("minimize 1");
+    assert_eq!(list.next_line("minimized"), line("minimized"));
+    assert_eq!(list.next_line("synced"), "toplevels: synced");
+    seinas.wait_for_screen("no window", |shot| shot.pixel(2, 2) == BACKGROUND);
+    list.send_line("unminimize 1");
+    assert_eq!(list.next_line("unminimized"), line("activated"));
+    assert_eq!(list.next_line("synced"), "toplevels: synced");
+    seinas.wait_for_screen("the window again", |shot| {
+        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
+    });
+
+    // 全画面は、まだ持っていない。頼みは受けるが、何もしない。
+    for command in ["fullscreen", "unfullscreen"] {
         list.send_line(&format!("{command} 1"));
-        // 状態のイベント(done)は来ず、頼みの処理が終わった通知だけが来る。
         assert_eq!(list.next_line(command), "toplevels: synced");
     }
-    // ウィンドウは、位置も大きさも変わらない。
-    let shot = seinas.shot();
-    assert_eq!(bar_color(&shot, 0, 0, WINDOW_WIDTH), Some(ACTIVE_BAR));
-    assert_eq!(shot.pixel(WINDOW_WIDTH + 2, 2), BACKGROUND);
-    assert!(seinas.log().contains("SetMaximized is not supported yet"));
+    let log = seinas.log();
+    assert!(log.contains("SetFullscreen") && log.contains("is not supported yet"));
 }
 
 #[test]

@@ -14,14 +14,16 @@
 //! - `--ignore-close`: 閉じるように頼まれても、終わらない(応じないクライアントのまね)。
 //! - `--size WxH`: コンテンツの大きさ(既定は 200x150)。
 //! - `--color RRGGBB`: コンテンツの色(既定は ff8000、橙)。
-//! - `--follow-size`: configure で届く大きさが変わったら、その大きさで再描画する(既定は、大きさを変えない)。
-//!   最初の configure の大きさには従わない(`--size` の大きさで出す)。
+//! - `--follow-size`: configure で届く大きさか、maximized の状態が変わったら、届いた大きさで再描画する(既定は、
+//!   大きさを変えない)。最初の configure の大きさには従わない(`--size` の大きさで出す)。
 //! - `--min-size WxH`、`--max-size WxH`: コンテンツの最小と最大の大きさを、コンポジタに伝える。
 //! - `--resize-on-press EDGE`: コンテンツの上でボタンが押されたら、辺 `EDGE`(top・bottom・left・right・
 //!   top-left・top-right・bottom-left・bottom-right)でサイズ変更してほしいと頼む(xdg_toplevel の resize)。
 //!   `--pointer` も付けたことになる。
 //!
-//! 標準入力から `title TEXT` の行が届くと、題名を `TEXT` に変える。
+//! 標準入力から `title TEXT` の行が届くと、タイトルを `TEXT` に変える。`maximize`、`unmaximize`、`minimize` の行が
+//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`sync` の行が届くと、それまでの
+//! 頼みをコンポジタが処理し終えたときに `window: synced` を書く。
 //!
 //! 標準出力には、次の行を書く。
 //!
@@ -119,8 +121,10 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     // 再描画したときの pool も、持ち続ける(前のバッファを、コンポジタがまだ使っているかもしれないため)。
     let mut pools = vec![pool];
     let mut drawn = (width, height);
-    // 最後に従うかどうかを決めた、configure の大きさ。
-    let mut seen = wire.toplevel_size;
+    // 最後に従うかどうかを決めた、configure の大きさと maximized の状態。
+    let mut seen = (wire.toplevel_size, wire.toplevel_maximized);
+    // `sync` の行で送った wl_display.sync の callback の番号。
+    let mut sync = None;
     if options.pointer {
         wire.watch_pointer()?;
     }
@@ -141,6 +145,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
         match wire.poll_event()? {
             Polled::Closed => return Ok(true),
             Polled::Event(event) => {
+                if Some(event.object) == sync {
+                    sync = None;
+                    println!("window: synced");
+                    let _ = std::io::stdout().flush();
+                    continue;
+                }
                 if let Some(error) = protocol_error(&event) {
                     return Err(format!("protocol error: {error}"));
                 }
@@ -157,11 +167,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 }
                 // xdg_surface.configure(configure のまとまりの終わり)で、届いた大きさに再描画する。
                 let configured = (event.object, event.opcode) == (XDG_SURFACE, 0);
-                let changed = configured && wire.toplevel_size != seen;
+                let now = (wire.toplevel_size, wire.toplevel_maximized);
+                let changed = configured && now != seen;
                 if changed {
-                    seen = wire.toplevel_size;
+                    seen = now;
                 }
-                let wanted = seen.map(|(w, h)| (w as i32, h as i32));
+                let wanted = seen.0.map(|(w, h)| (w as i32, h as i32));
                 if let (true, true, Some((w, h))) = (options.follow_size, changed, wanted) {
                     if w > 0 && h > 0 && (w, h) != drawn {
                         let (buffer, pool) = wire.new_buffer(w, h, pixel)?;
@@ -183,6 +194,22 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             if let Some(title) = command.strip_prefix("title ") {
                 wire.set_title(title)?;
                 wire.commit()?;
+            }
+            // xdg_toplevel.set_maximized(9)、unset_maximized(10)、set_minimized(13)。
+            let opcode = match command.as_str() {
+                "maximize" => Some(9),
+                "unmaximize" => Some(10),
+                "minimize" => Some(13),
+                _ => None,
+            };
+            if let Some(opcode) = opcode {
+                wire.send(&crate::message(crate::wire::TOPLEVEL, opcode, &[]))?;
+            }
+            if command == "sync" {
+                // wl_display.sync:それまでの頼みをコンポジタが処理し終えたら、callback が届く。
+                let id = wire.new_id();
+                wire.send(&crate::message(crate::WL_DISPLAY, 0, &id.to_le_bytes()))?;
+                sync = Some(id);
             }
         }
     }

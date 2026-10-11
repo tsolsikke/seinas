@@ -3,12 +3,15 @@
 //! 決まり(`docs/taskbar.md`):
 //! - タスクバーは画面の下に固定され、exclusive zone で通常のウィンドウと重ならない。
 //! - 開いているウィンドウを、map した順にボタンで並べ、activated のウィンドウのボタンは地の色が違う。
-//! - ボタンを押すと、そのウィンドウが raise される。
+//! - ボタンを押すと、そのウィンドウが raise される。activated のウィンドウのボタンでは最小化し、最小化している
+//!   ウィンドウのボタンでは戻す。
 //! - シェルの部品のためのソケットでなければ、つなげない。
 
 mod common;
 
-use common::{bar_color, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, HEIGHT, WIDTH};
+use common::{
+    bar_color, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, HEIGHT, WIDTH,
+};
 
 /// タスクバーの高さと、ボタンの上の端・高さ・幅(ウィンドウが 2 つのとき、640 の幅で 200)。
 const TASKBAR: usize = 40;
@@ -55,9 +58,15 @@ fn the_taskbar_sits_at_the_bottom_and_shrinks_the_usable_area() {
     });
     // 新しいウィンドウには、タスクバーの分を除いた大きさを伝える(640x480 - 40 - タイトルバー 24)。
     let window = seinas.connect_test_client(&["window"]);
-    assert_eq!(
-        window.next_line("the first configure"),
-        "window: wm_capabilities []"
+    // タスクバーがあるので、最小化もできる(順は決まっていない)。
+    let capabilities = window.next_line("the capabilities");
+    assert!(
+        [
+            "window: wm_capabilities [maximize,minimize]",
+            "window: wm_capabilities [minimize,maximize]"
+        ]
+        .contains(&capabilities.as_str()),
+        "{capabilities}"
     );
     assert_eq!(
         window.next_line("the first configure"),
@@ -125,4 +134,43 @@ fn the_taskbar_needs_the_shell_socket() {
         "{}",
         seinas.taskbar_log()
     );
+}
+
+#[test]
+fn the_taskbar_minimizes_and_restores_a_window() {
+    let mut seinas = Compositor::start_with_input("te");
+    let _taskbar = seinas.connect_taskbar();
+    let _first = open_window(&seinas, "一つ目");
+    let indicator = |shot: &Shot| shot.pixel(BUTTONS[0] + BUTTON_WIDTH / 2, TOP + BUTTON_TOP + 30);
+    seinas.wait_for_screen("the window and its button", |shot| {
+        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
+            && button_ground(shot, 0) == ACTIVE_BUTTON
+    });
+    let press_button = |seinas: &mut Compositor| {
+        seinas.pointer(&format!(
+            "motion {} {}",
+            BUTTONS[0] + BUTTON_WIDTH / 2,
+            TOP + 20
+        ));
+        seinas.pointer("press");
+        seinas.pointer("release");
+    };
+
+    // activated のウィンドウのボタンを押すと、最小化する。ウィンドウは描かれず、ボタンの地と印が消える
+    // (地の色を見るため、ポインターはボタンの外へ出しておく)。
+    press_button(&mut seinas);
+    seinas.pointer("motion 400 200");
+    seinas.wait_for_screen("the window minimized", |shot| {
+        shot.pixel(2, 30) == BACKGROUND
+            && button_ground(shot, 0) == TASKBAR_BACKGROUND
+            && indicator(shot) == TASKBAR_BACKGROUND
+            && button_has_text(shot, 0)
+    });
+    // もう一度押すと、戻って activated になる。
+    press_button(&mut seinas);
+    seinas.wait_for_screen("the window restored", |shot| {
+        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
+            && button_ground(shot, 0) == ACTIVE_BUTTON
+            && indicator(shot) != TASKBAR_BACKGROUND
+    });
 }

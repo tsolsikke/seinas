@@ -40,6 +40,8 @@ pub const BAR: usize = 24;
 pub const TITLE_PADDING: usize = 8;
 /// 閉じるボタンの大きさ。帯の右の端に、正方形で置かれる。
 pub const CLOSE_BUTTON: usize = 24;
+/// タイトルバーの右の端のボタンの幅(シェルの部品が無いときの、最大化と閉じるの 2 つ)。
+pub const BUTTONS: usize = 2 * CLOSE_BUTTON;
 /// ポインターを乗せたときの、閉じるボタンの地の色。
 pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
 
@@ -182,13 +184,13 @@ pub fn bar_color(shot: &Shot, x0: usize, y0: usize, width: usize) -> Option<[u8;
 }
 
 /// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの帯の中で、帯の色でない画素(題名の文字)の位置。
-/// 位置は、帯の左上を原点にした(x, y)。右の端の閉じるボタンは、見ない。
+/// 位置は、タイトルバーの左上を原点にした(x, y)。右の端のボタン(最大化と閉じる)は、見ない。
 pub fn title_ink(shot: &Shot, x0: usize, y0: usize, width: usize) -> Vec<(usize, usize)> {
     let Some(bar) = bar_color(shot, x0, y0, width) else {
         return Vec::new();
     };
     (0..BAR)
-        .flat_map(|y| (0..width - CLOSE_BUTTON).map(move |x| (x, y)))
+        .flat_map(|y| (0..width - BUTTONS).map(move |x| (x, y)))
         .filter(|&(x, y)| shot.pixel(x0 + x, y0 + y) != bar)
         .collect()
 }

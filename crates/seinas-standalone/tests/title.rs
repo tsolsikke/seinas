@@ -14,8 +14,8 @@ mod common;
 use std::path::Path;
 
 use common::{
-    bar_color, title_ink, Compositor, Shot, ACTIVE_BAR, BACKGROUND, BAR, CLOSE_BUTTON,
-    INACTIVE_BAR, TITLE_PADDING,
+    bar_color, title_ink, Compositor, Shot, ACTIVE_BAR, BACKGROUND, BAR, BUTTONS, INACTIVE_BAR,
+    TITLE_PADDING,
 };
 
 /// 試験用のクライアントのウィンドウの、中身の大きさと色(橙)。
@@ -35,8 +35,8 @@ fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
         && shot.pixel(x0 + WINDOW_WIDTH - 1, y0 + BAR + WINDOW_HEIGHT - 1) == ORANGE
 }
 
-/// 題名に使える範囲の右の端。右の端の閉じるボタンと、その手前の空きを除く。
-const TITLE_END: usize = WINDOW_WIDTH - CLOSE_BUTTON - TITLE_PADDING;
+/// タイトルに使える範囲の右の端。右の端のボタン(最大化と閉じる)と、その手前の空きを除く。
+const TITLE_END: usize = WINDOW_WIDTH - BUTTONS - TITLE_PADDING;
 
 /// 題名の文字の画素が、置かれてよい範囲(左の空きから、閉じるボタンの手前の空きまで)に収まっているか。
 fn ink_stays_inside(ink: &[(usize, usize)]) -> bool {
@@ -278,7 +278,7 @@ fn the_client_is_told_that_the_server_draws_the_decoration() {
     let seinas = Compositor::start("th");
     let client = seinas.connect_test_client(&["window", "--decoration"]);
     // 最大化・最小化・全画面はできないと伝える(できることの並びが、空)。
-    client.wait_for_line("window: wm_capabilities []");
+    client.wait_for_line("window: wm_capabilities [maximize]");
     // 最初のconfigureで伝える大きさは、画面(640x480)から帯の高さを引いたもの。
     assert_eq!(
         client.next_line("the first configure"),

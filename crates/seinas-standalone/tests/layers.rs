@@ -91,7 +91,7 @@ fn the_first_configure_tells_the_usable_size() {
     // 画面(640x480)から、パネル(40)とタイトルバー(24)を引いた大きさ。
     assert_eq!(
         window.next_line("the first configure"),
-        "window: wm_capabilities []"
+        "window: wm_capabilities [maximize]"
     );
     assert_eq!(
         window.next_line("the first configure"),

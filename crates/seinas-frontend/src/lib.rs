@@ -24,19 +24,23 @@ mod stack;
 mod title_bar;
 pub use decoration::{
     clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
-    paint_title_bar, title_text, ACTIVE_BAR, ACTIVE_TITLE, CLOSE_BUTTON_SIZE, HOT_CLOSE_BUTTON,
-    HOT_CLOSE_MARK, INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, TITLE_BAR_HEIGHT, TITLE_PADDING,
-    TITLE_SIZE,
+    paint_title_bar, title_text, TitleButton, TitleButtons, TitleLook, ACTIVE_BAR, ACTIVE_TITLE,
+    CLOSE_BUTTON_SIZE, HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON,
+    INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, TITLE_BAR_HEIGHT, TITLE_BUTTON_SIZE,
+    TITLE_PADDING, TITLE_SIZE,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use interaction::{
-    part_at, Configure, Cursor, Deliver, Interaction, Outcome, Part, DRAG_SLACK, LEFT_BUTTON,
+    part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
+    DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
 };
 pub use resize::{
     anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
     MIN_CONTENT_SIZE, RESIZE_BORDER,
 };
-pub use stack::{next_slot, slot_count, slot_location, Placed, Stack, WindowId, CASCADE_STEP};
+pub use stack::{
+    next_slot, slot_count, slot_location, Placed, Restore, Stack, WindowId, CASCADE_STEP,
+};
 pub use title_bar::TitleBar;
 
 use seinas_text::TextPainter;
@@ -278,6 +282,16 @@ impl<D: FrontendHost> Frontend<D> {
         self.usable = usable;
         self.windows
             .rearrange(usable, window_size, clamp_outer_location);
+        // 最大化しているウィンドウには、新しい範囲の大きさを伝え直す。
+        let size = content_size_for(usable.size);
+        for window in self.windows.iter().filter(|window| window.is_maximized()) {
+            window.item.with_pending_state(|state| {
+                state.size = Some((size.w, size.h).into());
+            });
+            if window.item.is_initial_configure_sent() {
+                window.item.send_pending_configure();
+            }
+        }
         true
     }
 
@@ -332,6 +346,8 @@ impl<D: FrontendHost> Frontend<D> {
                     title,
                     app_id,
                     activated,
+                    maximized: window.is_maximized(),
+                    minimized: window.minimized,
                 }
             })
             .collect();
@@ -421,7 +437,12 @@ impl<D: FrontendHost> Frontend<D> {
     }
 
     /// ウィンドウ `id` を raise して activated にする(foreign-toplevel の activate)。スタックが変わったらtrue。
+    ///
+    /// 最小化しているウィンドウは、戻してから raise する。
     pub fn activate(&mut self, id: WindowId) -> bool {
+        if self.windows.get(id).is_some_and(|window| window.minimized) {
+            return self.unminimize(id);
+        }
         let Some(index) = self.windows.position(id) else {
             return false;
         };
@@ -430,6 +451,122 @@ impl<D: FrontendHost> Frontend<D> {
         }
         self.update_activation();
         true
+    }
+
+    /// ウィンドウの測り方(操作の決まりが使う)。
+    pub fn measure(&self) -> Toplevels {
+        Toplevels {
+            minimizable: self.foreign_toplevels.has_managers(),
+        }
+    }
+
+    /// ウィンドウ `id` を最大化する(`maximized` がtrue)か、元に戻す。変わったらtrue。
+    ///
+    /// 最大化は、使える範囲の左上に置き、使える範囲からタイトルバーの高さを引いた大きさを、maximized の状態
+    /// つきの configure で伝える。元に戻すと、最大化する前の位置とスロット番号に戻し、そのときのコンテンツの
+    /// 大きさを伝える。大きさの決まったウィンドウ(最小と最大が同じ)は、最大化しない。
+    pub fn set_maximized(&mut self, id: WindowId, maximized: bool) -> bool {
+        let Some(toplevel) = self.windows.get(id).map(|window| window.item.clone()) else {
+            return false;
+        };
+        if maximized {
+            if !can_maximize(&toplevel) {
+                return false;
+            }
+            // 元に戻すときの大きさは、いま描いている大きさ(まだ描いていなければ、伝えていた大きさ)。
+            let content = content_size(&toplevel).or_else(|| {
+                toplevel
+                    .with_pending_state(|state| state.size)
+                    .map(|size| Size::new(size.w, size.h))
+            });
+            if !self.windows.maximize(id, self.usable, content) {
+                return false;
+            }
+            self.resize_anchors.remove(&id);
+            let size = content_size_for(self.usable.size);
+            toplevel.with_pending_state(|state| {
+                state.size = Some((size.w, size.h).into());
+                state.states.set(xdg_toplevel::State::Maximized);
+            });
+        } else {
+            let Some(restore) = self.windows.unmaximize(id, self.usable) else {
+                return false;
+            };
+            // 動かされていたウィンドウは、タイトルバーがいまの使える範囲に入るようにする。
+            if restore.slot.is_none() {
+                let width = restore
+                    .content
+                    .or_else(|| content_size(&toplevel))
+                    .map_or(1, |size| size.w);
+                let location = clamp_outer_location(restore.location, width, self.usable);
+                self.windows.move_to(id, location);
+            }
+            toplevel.with_pending_state(|state| {
+                state.size = restore.content.map(|size| (size.w, size.h).into());
+                state.states.unset(xdg_toplevel::State::Maximized);
+            });
+        }
+        if toplevel.is_initial_configure_sent() {
+            toplevel.send_pending_configure();
+        }
+        self.update_foreign_toplevels();
+        true
+    }
+
+    /// ウィンドウ `id` を最小化する。描かず、ポインターも当たらず、activated は次のウィンドウへ移る。変わったら
+    /// true。戻す手段(foreign-toplevel の manager を bind しているシェルの部品)が無ければ、最小化しない。
+    pub fn minimize(&mut self, id: WindowId) -> bool {
+        if !self.foreign_toplevels.has_managers() || !self.windows.set_minimized(id, true) {
+            return false;
+        }
+        self.interaction.forget_hover();
+        self.update_activation();
+        true
+    }
+
+    /// 最小化しているウィンドウ `id` を戻し、raise して activated にする。変わったらtrue。
+    pub fn unminimize(&mut self, id: WindowId) -> bool {
+        if !self.windows.set_minimized(id, false) {
+            return false;
+        }
+        if let Some(index) = self.windows.position(id) {
+            self.windows.raise(index);
+        }
+        self.update_activation();
+        true
+    }
+
+    /// foreign-toplevel の manager を bind しているシェルの部品が、増えたか減ったときに呼ぶ。
+    ///
+    /// 最小化できるかどうか(ボタンと、クライアントに伝える wm_capabilities)を合わせる。シェルの部品が
+    /// 1 つも無くなったら、戻す手段が無くなるので、最小化しているウィンドウを全部戻す。
+    pub fn managers_changed(&mut self) {
+        let minimizable = self.foreign_toplevels.has_managers();
+        let mut capabilities = vec![xdg_toplevel::WmCapabilities::Maximize];
+        if minimizable {
+            capabilities.push(xdg_toplevel::WmCapabilities::Minimize);
+        }
+        self.xdg_shell_state.replace_capabilities(capabilities);
+        if !minimizable {
+            let minimized: Vec<WindowId> = self
+                .windows
+                .iter()
+                .filter(|window| window.minimized)
+                .map(|window| window.id)
+                .collect();
+            for id in minimized {
+                self.windows.set_minimized(id, false);
+            }
+            self.update_activation();
+        }
+    }
+
+    /// `toplevel` のウィンドウの番号。
+    pub fn window_id(&self, toplevel: &ToplevelSurface) -> Option<WindowId> {
+        self.windows
+            .iter()
+            .find(|window| window.item.wl_surface() == toplevel.wl_surface())
+            .map(|window| window.id)
     }
 
     /// ウィンドウ `id` のクライアントに、閉じるように頼む(foreign-toplevel の close)。応じるかどうかは、
@@ -481,22 +618,31 @@ impl<D: FrontendHost> Frontend<D> {
     /// ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
         let mut elements = self.layer_elements(renderer, &[Layer::Overlay, Layer::Top]);
+        let measure = self.measure();
         for (window, active) in self.windows.iter_with_activation() {
+            // 最小化しているウィンドウは描かない。
+            if window.minimized {
+                continue;
+            }
             let surface = window.item.wl_surface();
             // まだ絵を出していないウィンドウには、帯も付けない。
             if let Some(content) = content_size(&window.item) {
                 let text = toplevel_title(&window.item);
-                let hot = self.interaction.close_button_is_hot(window.id);
+                let look = TitleLook {
+                    buttons: measure.buttons(&window.item),
+                    maximized: window.is_maximized(),
+                    hot: self.interaction.hot_button(window.id),
+                };
                 let bar = self
                     .title_bars
                     .entry(surface.id())
                     .and_modify(|bar| {
-                        if !bar.matches(&text, content.w, active, hot) {
-                            *bar = TitleBar::new(&mut self.text, &text, content.w, active, hot);
+                        if !bar.matches(&text, content.w, active, look) {
+                            *bar = TitleBar::new(&mut self.text, &text, content.w, active, look);
                         }
                     })
                     .or_insert_with(|| {
-                        TitleBar::new(&mut self.text, &text, content.w, active, hot)
+                        TitleBar::new(&mut self.text, &text, content.w, active, look)
                     });
                 elements.extend(
                     bar.element(renderer, window.location)
@@ -571,7 +717,12 @@ impl<D: FrontendHost> Frontend<D> {
             .layers()
             .map(|layer| layer.wl_surface().clone())
             .collect();
-        let windows = self.windows.iter().map(|window| window.item.wl_surface());
+        // 最小化しているウィンドウには返さない(描いていないので)。
+        let windows = self
+            .windows
+            .iter()
+            .filter(|window| !window.minimized)
+            .map(|window| window.item.wl_surface());
         for surface in windows.chain(layers.iter()) {
             with_surface_tree_downward(
                 surface,
@@ -623,6 +774,7 @@ where
         return;
     };
     let area = frontend.usable;
+    let measure = frontend.measure();
     // ボタンを押していない間に、top か overlay の layer surface(タスクバーなど)の上にあるときは、
     // ウィンドウの操作(raise、ドラッグ、close ボタン)をせず、その layer surface に渡す。
     let over_layer_above = |frontend: &Frontend<D>, point: PointF| {
@@ -644,13 +796,9 @@ where
         } if over_layer_above(frontend, location) => (location, Outcome::to_client()),
         PointerInput::Motion(location) => (
             location,
-            frontend.interaction.motion(
-                &mut frontend.windows,
-                area,
-                location,
-                window_size,
-                window_limits,
-            ),
+            frontend
+                .interaction
+                .motion(&mut frontend.windows, area, location, &measure),
         ),
         PointerInput::Leave => (
             point_from(pointer.current_location()),
@@ -662,13 +810,9 @@ where
             pressed: true,
         } => (
             location,
-            frontend.interaction.press(
-                &mut frontend.windows,
-                location,
-                button,
-                window_size,
-                window_limits,
-            ),
+            frontend
+                .interaction
+                .press(&mut frontend.windows, location, button, time, &measure),
         ),
         PointerInput::Button {
             location,
@@ -676,22 +820,29 @@ where
             pressed: false,
         } => (
             location,
-            frontend.interaction.release(
-                &mut frontend.windows,
-                location,
-                button,
-                window_size,
-                window_limits,
-            ),
+            frontend
+                .interaction
+                .release(&mut frontend.windows, location, button, &measure),
         ),
     };
     frontend.apply_resize(outcome.configure);
     if outcome.raised {
         frontend.update_activation();
     }
-    if let Some(toplevel) = outcome.close.and_then(|id| frontend.windows.get(id)) {
+    match outcome.command {
         // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
-        toplevel.item.send_close();
+        Some((id, Command::Close)) => frontend.request_close(id),
+        Some((id, Command::Minimize)) => {
+            frontend.minimize(id);
+        }
+        Some((id, Command::ToggleMaximize)) => {
+            let maximized = frontend
+                .windows
+                .get(id)
+                .is_some_and(|window| window.is_maximized());
+            frontend.set_maximized(id, !maximized);
+        }
+        None => {}
     }
     let focus = match outcome.deliver {
         Deliver::ToClient => frontend
@@ -740,6 +891,36 @@ where
     pointer.frame(state);
 }
 
+/// クライアントが、xdg_toplevel で最大化・元に戻す・最小化を頼んできた。[`delegate_frontend!`] が使う。
+///
+/// `command` が [`Command::ToggleMaximize`] のときは、`maximized` が頼まれた状態。最大化の頼みには、応じても
+/// 応じなくても configure を返す(xdg-shell の決まり)。最小化は、戻す手段が無ければ何もしない。
+pub fn toplevel_request<D: FrontendHost>(
+    state: &mut D,
+    toplevel: &ToplevelSurface,
+    command: Command,
+    maximized: Option<bool>,
+) {
+    let frontend = state.frontend_mut();
+    let Some(id) = frontend.window_id(toplevel) else {
+        return;
+    };
+    let changed = match command {
+        Command::ToggleMaximize => {
+            let changed = frontend.set_maximized(id, maximized.unwrap_or(true));
+            if !changed && toplevel.is_initial_configure_sent() {
+                toplevel.send_configure();
+            }
+            changed
+        }
+        Command::Minimize => frontend.minimize(id),
+        Command::Close => false,
+    };
+    if changed {
+        state.redraw_needed();
+    }
+}
+
 /// クライアントが、自分のウィンドウを動かしてほしいと頼んできた(xdg_toplevelのmove)。
 /// [`delegate_frontend!`] が使う。
 ///
@@ -754,13 +935,11 @@ where
         return;
     };
     let area = frontend.usable;
-    if !frontend.interaction.begin_client_move(
-        &mut frontend.windows,
-        area,
-        window,
-        press,
-        window_size,
-    ) {
+    let measure = frontend.measure();
+    if !frontend
+        .interaction
+        .begin_client_move(&mut frontend.windows, area, window, press, &measure)
+    {
         return;
     }
     take_pointer_from_client(state, &pointer, serial);
@@ -784,14 +963,14 @@ pub fn client_resize_request<D>(
         return;
     };
     let area = frontend.usable;
+    let measure = frontend.measure();
     let Some(outcome) = frontend.interaction.begin_client_resize(
         &mut frontend.windows,
         area,
         window,
         edges_from(edges),
         press,
-        window_size,
-        window_limits,
+        &measure,
     ) else {
         return;
     };
@@ -871,6 +1050,36 @@ fn window_limits(toplevel: &ToplevelSurface) -> Option<SizeLimits> {
         min: Size::new(cached.min_size.w, cached.min_size.h),
         max: Size::new(cached.max_size.w, cached.max_size.h),
     })
+}
+
+/// 大きさの決まったウィンドウ(クライアントの最小と最大が同じ)でなければ、最大化できる。
+fn can_maximize(toplevel: &ToplevelSurface) -> bool {
+    let cached = with_states(toplevel.wl_surface(), |states| {
+        *states.cached_state.get::<SurfaceCachedState>().current()
+    });
+    let (min, max) = (cached.min_size, cached.max_size);
+    !(max.w > 0 && max.h > 0 && max == min)
+}
+
+/// ウィンドウ(toplevel)の測り方。操作の決まり([`Interaction`])が使う。
+pub struct Toplevels {
+    /// 最小化のボタンを出すか(戻す手段のシェルの部品があるか)。
+    pub minimizable: bool,
+}
+
+impl Measure<ToplevelSurface> for Toplevels {
+    fn outer_size(&self, toplevel: &ToplevelSurface) -> Option<Size> {
+        window_size(toplevel)
+    }
+    fn limits(&self, toplevel: &ToplevelSurface) -> Option<SizeLimits> {
+        window_limits(toplevel)
+    }
+    fn buttons(&self, toplevel: &ToplevelSurface) -> TitleButtons {
+        TitleButtons {
+            minimize: self.minimizable,
+            maximize: can_maximize(toplevel),
+        }
+    }
 }
 
 /// xdg_toplevel の辺の指定を、Seinas の型にする。
@@ -1065,6 +1274,15 @@ macro_rules! delegate_frontend {
             ) {
                 $crate::client_resize_request(self, &surface, serial, edges);
             }
+            fn maximize_request(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::toplevel_request(self, &surface, $crate::Command::ToggleMaximize, Some(true));
+            }
+            fn unmaximize_request(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::toplevel_request(self, &surface, $crate::Command::ToggleMaximize, Some(false));
+            }
+            fn minimize_request(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
+                $crate::toplevel_request(self, &surface, $crate::Command::Minimize, None);
+            }
             fn title_changed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 $crate::FrontendHost::frontend_mut(self).update_foreign_toplevels();
                 $crate::FrontendHost::redraw_needed(self);
@@ -1196,10 +1414,10 @@ macro_rules! delegate_frontend {
                 };
 
                 let compositor_state = CompositorState::new::<Self>(display_handle);
-                // 最大化・最小化・全画面は、できない。できることの一覧を空にして、クライアントに伝える。
+                // できるのは最大化だけ(最小化は、戻す手段のシェルの部品がつないだときに加える。全画面はできない)。
                 let xdg_shell_state = XdgShellState::new_with_capabilities::<Self>(
                     display_handle,
-                    [] as [$crate::smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::WmCapabilities; 0],
+                    [$crate::smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::WmCapabilities::Maximize],
                 );
                 let xdg_decoration_state = XdgDecorationState::new::<Self>(display_handle);
                 // layer-shell は、シェルの部品にだけ見せる(ADR 0002)。

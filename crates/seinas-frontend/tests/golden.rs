@@ -4,14 +4,25 @@
 
 use std::path::Path;
 
-use seinas_frontend::{load_fonts, paint_title_bar, TITLE_BAR_HEIGHT};
+use seinas_frontend::{
+    load_fonts, paint_title_bar, TitleButton, TitleButtons, TitleLook, TITLE_BAR_HEIGHT,
+};
 use seinas_golden::{Image, Runner, Tolerance};
 use seinas_text::TextPainter;
 
 /// タイトルバーを描いて、RGB の画像にする。
-fn bar(painter: &mut TextPainter, title: &str, width: i32, active: bool, hot: bool) -> Image {
-    let pixels = paint_title_bar(painter, title, width, active, hot);
+fn bar(painter: &mut TextPainter, title: &str, width: i32, active: bool, look: TitleLook) -> Image {
+    let pixels = paint_title_bar(painter, title, width, active, look);
     Image::from_bgrx(width as usize, TITLE_BAR_HEIGHT as usize, &pixels)
+}
+
+/// 閉じるボタンだけのタイトルバー。`hot` なら、閉じるボタンにポインターが乗っている。
+fn close_only(hot: bool) -> TitleLook {
+    TitleLook {
+        buttons: TitleButtons::CLOSE_ONLY,
+        maximized: false,
+        hot: hot.then_some(TitleButton::Close),
+    }
 }
 
 fn main() {
@@ -42,7 +53,7 @@ fn main() {
             run.image(
                 name,
                 Tolerance::EXACT,
-                bar(painter, title, width, active, hot),
+                bar(painter, title, width, active, close_only(hot)),
             );
         });
     }
@@ -52,13 +63,54 @@ fn main() {
     run.image(
         "c6-no-fonts",
         Tolerance::EXACT,
-        bar(&mut no_fonts, "zeyes", 200, true, true),
+        bar(&mut no_fonts, "zeyes", 200, true, close_only(true)),
     );
     // close ボタン(24 px)より狭い幅。
     run.image(
         "c7-narrower-than-close-button",
         Tolerance::EXACT,
-        bar(&mut no_fonts, "zeyes", 10, true, true),
+        bar(&mut no_fonts, "zeyes", 10, true, close_only(true)),
+    );
+
+    // C8〜C10: 最小化・最大化のボタン(フォントの要らないもの。ボタンの印は線で描く)。
+    let all = |maximized, hot| TitleLook {
+        buttons: TitleButtons::ALL,
+        maximized,
+        hot,
+    };
+    run.image(
+        "c8-all-buttons",
+        Tolerance::EXACT,
+        bar(&mut no_fonts, "", 200, true, all(false, None)),
+    );
+    run.image(
+        "c9-maximized-hot-maximize",
+        Tolerance::EXACT,
+        bar(
+            &mut no_fonts,
+            "",
+            200,
+            true,
+            all(true, Some(TitleButton::Maximize)),
+        ),
+    );
+    run.image(
+        "c10-inactive-hot-minimize-no-maximize",
+        Tolerance::EXACT,
+        bar(
+            &mut no_fonts,
+            "",
+            200,
+            false,
+            TitleLook {
+                buttons: TitleButtons {
+                    minimize: true,
+                    maximize: false,
+                },
+                maximized: false,
+                hot: Some(TitleButton::Minimize),
+            },
+        ),
     );
 
     run.finish();

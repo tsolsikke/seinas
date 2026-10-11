@@ -10,7 +10,7 @@ ADR 0001(`docs/adr/0001-replaceable-boundaries.md`)の決定 4 の実装です�
 | --- | --- | --- | --- |
 | A. 描画の合成 | `seinas-render` | 単色の四角の重なりと画面の 4 辺での切り取り、メモリーのイメージ(不透明)、メモリーのイメージ(半透明、premultiplied alpha)、要素なし。4 ケース | PPM |
 | B. テキスト描画 | `seinas-text` | 4 つの文字列(ASCII、かな、漢字、フォールバックと欠けた字)× 3 つの大きさ(13 px はヒンティングなし、14 px と 16 px はあり)の 12 ケースと、気をつける字の 6 つの文字列(見分けにくい字、円記号とバックスラッシュ、結合濁点、罫線、半角カナ、第 2 水準の漢字)× 2 つの大きさ(14 px と 16 px)の 12 ケース。戻り値(`Drawn`)の一覧 `cases.txt` | PGM(カバレッジ) |
-| C. タイトルバー | `seinas-frontend` | activated とそうでないもの × close ボタンの hover の有無、長いタイトルの切り詰め、フォントなし、close ボタンより狭い幅。7 ケース | PPM |
+| C. タイトルバー | `seinas-frontend` | activated とそうでないもの × close ボタンの hover の有無、長いタイトルの切り詰め、フォントなし、close ボタンより狭い幅(ここまでは閉じるボタンだけ)。3 つのボタン、最大化しているとき(元に戻すの印)と最大化のボタンの hover、最大化のボタンの無いウィンドウと最小化のボタンの hover。10 ケース | PPM |
 | D. fbdev の blit | `seinas-fbdev` | XRGB、ARGB、XBGR、RGBX、オフセットと行の余白つき。5 ケース | raw(バッファのバイト列) |
 | E. layer surface の重なり | `seinas-standalone`(`tests/golden_layers.rs`) | 160x120 の fake screen に、background・bottom・top(exclusive zone あり・なし)・overlay の layer surface と、ウィンドウを 1 つ出した画面の全体。1 ケース | PPM |
 | F. タスクバー | `seinas-taskbar` | 3 つのウィンドウ(activated、ポインターが乗っているもの、長いタイトルの切り詰め)と時計、最小化しているウィンドウと時刻が取れないときの `--:--`、ウィンドウなし、フォントなし。4 ケース | PPM |

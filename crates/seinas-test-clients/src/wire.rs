@@ -94,8 +94,10 @@ pub struct Wire {
     layer_surface: Option<u32>,
     /// layer surface に届いた、いちばん新しい configure の大きさ。
     pub layer_size: Option<(u32, u32)>,
-    /// xdg_toplevel.configure で届いた、いちばん新しい大きさ(0x0 は「クライアントに任せる」)。
+    /// xdg_toplevel.configure で届いた、いちばん新しい大きさ(0x0 は「クライアントに任せる」)と、maximized の
+    /// 状態が付いていたか。
     pub toplevel_size: Option<(u32, u32)>,
+    pub toplevel_maximized: bool,
 }
 
 impl Wire {
@@ -408,6 +410,9 @@ impl Wire {
             (TOPLEVEL, 0) => {
                 self.toplevel_size =
                     Some((event.u32_at(0).unwrap_or(0), event.u32_at(4).unwrap_or(0)));
+                // 状態の配列に maximized(1)があるか。
+                let count = event.u32_at(8).unwrap_or(0) as usize / 4;
+                self.toplevel_maximized = (0..count).any(|i| event.u32_at(12 + i * 4) == Some(1));
                 if self.print_configures {
                     println!("window: configure {}", describe_configure(event));
                     let _ = std::io::stdout().flush();
@@ -546,6 +551,7 @@ pub fn connect() -> Result<Wire, String> {
         layer_surface: None,
         layer_size: None,
         toplevel_size: None,
+        toplevel_maximized: false,
     })
 }
 
