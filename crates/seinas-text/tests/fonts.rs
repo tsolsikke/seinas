@@ -214,3 +214,55 @@ fn the_fallback_ends_with_unifont_and_bad_lines_are_reported() {
     assert!(painter.can_draw());
     assert!(draw(&mut painter, "タイトル").0 > 0);
 }
+
+/// face が 2 つの小さな TTC(`tests/data/README.md`)。
+fn two_faces_dir() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data")
+}
+
+#[test]
+fn both_faces_of_a_ttc_are_listed_and_the_second_can_be_the_ui() {
+    let temp = Temp::new();
+    let bundled = temp.dir_with("bundled", &[UI_FONT_FILE, FALLBACK_FONT_FILE]);
+    let data = two_faces_dir();
+    let ttc = data.join("two-faces.ttc");
+
+    // 一覧には、TTC の中の face が 2 つとも、番号つきで入る。英語と日本語の名前を持つ。
+    let (entries, notes) = fonts::scan(std::slice::from_ref(&data));
+    assert!(notes.is_empty(), "{notes:?}");
+    let faces: Vec<(u32, Vec<&str>)> = entries
+        .iter()
+        .filter(|entry| entry.path == ttc)
+        .map(|entry| {
+            let families = entry.families.iter().map(String::as_str).collect();
+            (entry.index, families)
+        })
+        .collect();
+    assert_eq!(faces.len(), 2, "{faces:?}");
+    assert_eq!(faces[0].0, 0);
+    assert!(faces[0].1.contains(&"BIZ UDPGothic"), "{faces:?}");
+    assert_eq!(faces[1].0, 1);
+    assert!(faces[1].1.contains(&"BIZ UDGothic"), "{faces:?}");
+    assert!(faces[1].1.contains(&"BIZ UDゴシック"), "{faces:?}");
+
+    // 2 つ目の face を、名前で ui に選べる(日本語の名前でも)。
+    for name in ["BIZ UDGothic", "BIZ UDゴシック"] {
+        let config = temp.config(&format!(
+            "ui = {name}\ndefault-dirs = no\ndir = {}\n",
+            data.display()
+        ));
+        let (config_read, problems) = fonts::read_config(&config);
+        assert!(problems.is_empty());
+        let resolved = fonts::resolve(&bundled, &config_read, &Env::default());
+        assert_eq!((&resolved.ui.path, resolved.ui.index), (&ttc, 1), "{name}");
+        assert!(resolved.notes.is_empty(), "{:?}", resolved.notes);
+
+        // 描くと、2 つ目の face(等幅。半角 7 px)になる。
+        let (mut painter, messages) = TextPainter::load_setup(&FontSetup {
+            bundled_dir: bundled.clone(),
+            config_file: Some(config),
+        });
+        assert!(messages.is_empty(), "{messages:?}");
+        assert_eq!(draw(&mut painter, "iiii").0, 28, "{name}");
+    }
+}

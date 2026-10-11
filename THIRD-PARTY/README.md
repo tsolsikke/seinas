@@ -42,7 +42,7 @@ python3 tools/third-party.py
 ## フォント
 
 Seinas が自分で描く文字(タイトルバーなど)のために、次のフォントを使います。
-フォントは、バイナリに埋め込まず、リポジトリにも入れていません。`tools/fetch-fonts.sh` がバージョンと SHA-256 を固定して取得し、Seinas は実行のときにファイルとして読みます。
+フォントは、バイナリに埋め込まず、リポジトリにも入れていません(テストのための小さな TTC だけは入れています。下の「テストのための TTC」)。`tools/fetch-fonts.sh` がバージョンと SHA-256 を固定して取得し、Seinas は実行のときにファイルとして読みます。
 musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-musl/` には、`fonts/` の下にフォントのファイルが、`THIRD-PARTY/fonts/` の下にライセンス文と著作権表示が入ります。
 
 この節が、フォントの出どころとライセンスの記録の置き場所です。取得元の URL と SHA-256 は `tools/fetch-fonts.sh` にあり、ほかの文書はここと `tools/fetch-fonts.sh` を指します。
@@ -64,6 +64,11 @@ musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-m
   - `OFL.txt` とフォントの中とで、URL の末尾が違います(`mincho` と `gothic`)。上流のファイルが、そうなっています。
   - `AUTHORS.txt` に書かれた著作者:`Morisawa Inc.`、`Type Network`
   - フォントの中の商標の表記:`BIZ UDPGothic is a trademark of Morisawa Inc.`(BIZ UDGothic のほうは、名前の部分が `BIZ UDGothic`)
+
+### テストのための TTC
+
+- `crates/seinas-text/tests/data/two-faces.ttc`(7,696 バイト)は、BIZ UDPGothic と BIZ UDGothic の Regular(1.051)から、fontTools で数文字だけを残し、face が 2 つの TTC にしたものです。テストだけが使い、配布物には入りません。
+- OFL 1.1 の変えた版(Modified Version)として、同じ OFL 1.1 で配ります。予約されたフォント名の宣言が無いので、名前は元のままです。ライセンス文と著作権表示は、隣の `OFL.txt`(上流のもの)。作り方は、隣の `README.md` と `tools/make-test-ttc.sh`。
 
 ### GNU Unifont JP
 
