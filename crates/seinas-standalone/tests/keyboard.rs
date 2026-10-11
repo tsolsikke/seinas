@@ -5,6 +5,8 @@
 //!   raise・activate・最小化・閉じたときに移る。
 //! - 押した・離したキーと、修飾キーの状態が、フォーカスのあるクライアントへ届く。最小化したウィンドウには届かない。
 //! - keymap は、日本語の配列(jp106)。
+//! - 固定された修飾キー(Caps Lock、Num Lock)は、親から届く状態に合わせる(入れ子の構成。ここでは、テスト用の
+//!   入力インターフェースの `locked` の行で送る)。
 //!
 //! キーとポインターのイベントは、テスト用の入力インターフェース(`--test-input`)から送る。
 
@@ -190,4 +192,40 @@ fn keys_without_a_window_go_nowhere() {
     assert!(seinas
         .log()
         .contains("keyboard: layout \"jp\", model \"jp106\""));
+}
+
+/// キーボードのイベントが、この順に届くこと。
+fn expect_keyboard(client: &TestClient, lines: &[&str]) {
+    for line in lines {
+        assert_eq!(next_keyboard_line(client, line), format!("window: {line}"));
+    }
+}
+
+#[test]
+fn the_locked_modifiers_follow_the_parent() {
+    let mut seinas = Compositor::start_with_input("kd");
+    let window = open_window(&seinas, "一つ目");
+    expect_enter(&window, "the focus on the first window");
+    // 親で Caps Lock(2)と Num Lock(16)が固定されていると分かったら、enter で伝え直す。
+    seinas.pointer("locked 18");
+    expect_keyboard(
+        &window,
+        &["keyboard leave", "keyboard enter", "modifiers 0 0 18 0"],
+    );
+    // 同じ状態なら、何も送らない。Caps Lock のキー(jp106 では Shift と英数)で、子の側でも外れる。
+    seinas.pointer("locked 18");
+    seinas.pointer("key 42 press");
+    tap(&mut seinas, 58);
+    seinas.pointer("key 42 release");
+    expect_keyboard(
+        &window,
+        &["key 42 pressed", "modifiers 1 0 18 0", "key 58 pressed"],
+    );
+    window.wait_for_line("window: modifiers 0 0 16 0");
+    // 親の側で外れたら(子にキーが届かないまま)、それにも合わせる。
+    seinas.pointer("locked 0");
+    expect_keyboard(
+        &window,
+        &["keyboard leave", "keyboard enter", "modifiers 0 0 0 0"],
+    );
 }

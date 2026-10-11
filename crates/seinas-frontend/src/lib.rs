@@ -1132,6 +1132,45 @@ pub fn keyboard_input<D: FrontendHost>(
         .flatten()
 }
 
+/// 親の keymap で `locked` の修飾キー(Caps Lock、Num Lock)を、子の側の状態に合わせる。入れ子の構成で、親から
+/// 修飾キーの状態が届いたときに使う。`locked` は、wl_keyboard の modifiers の mods_locked(親と同じ keymap を
+/// 使っているので、ビットの意味は同じ)。
+///
+/// 押されている修飾キー(Shift、Alt など)は、子の側でキーから求めたものを使い、親からは受けない(押したことが
+/// 子に届いていないキーを押されたことにすると、離したことも届かず、押されたまま残るため)。合わせたときは、
+/// フォーカスのあるクライアントへ、enter で伝え直す。変えたらtrue。
+pub fn set_locked_modifiers<D: FrontendHost>(state: &mut D, locked: u32) -> bool {
+    let Some(keyboard) = state.frontend().keyboard.clone() else {
+        return false;
+    };
+    let (caps, num) = keyboard.with_xkb_state(state, |context| {
+        let xkb = context.xkb().lock().expect("the xkb state");
+        // SAFETY: keymap は、この中で番号を引くのに使うだけで、外へ持ち出さない。
+        let keymap = unsafe { xkb.keymap() };
+        let is_locked = |name: &str| {
+            let index = keymap.mod_get_index(name);
+            index < 32 && locked & (1 << index) != 0
+        };
+        (
+            is_locked(smithay::input::keyboard::xkb::MOD_NAME_CAPS),
+            is_locked(smithay::input::keyboard::xkb::MOD_NAME_NUM),
+        )
+    });
+    let mut modifiers = keyboard.modifier_state();
+    if (modifiers.caps_lock, modifiers.num_lock) == (caps, num) {
+        return false;
+    }
+    modifiers.caps_lock = caps;
+    modifiers.num_lock = num;
+    keyboard.set_modifier_state(modifiers);
+    // Smithay は、ここで変えた修飾キーの状態をクライアントへ送らないので、enter で送り直す。
+    if let Some(focus) = keyboard.current_focus() {
+        keyboard.set_focus(state, None, SERIAL_COUNTER.next_serial());
+        keyboard.set_focus(state, Some(focus), SERIAL_COUNTER.next_serial());
+    }
+    true
+}
+
 /// キーボードの keymap を、xkb の文字列(XKB_KEYMAP_FORMAT_TEXT_V1)で置き換え、クライアントへ配り直す。
 /// 入れ子の構成で、親の keymap をそのまま使うのに使う。置き換えたらtrue。
 pub fn set_keymap<D: FrontendHost>(state: &mut D, keymap: String) -> bool {

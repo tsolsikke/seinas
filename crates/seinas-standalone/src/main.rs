@@ -55,8 +55,9 @@ use std::{
 };
 
 use seinas_frontend::{
-    font_dir, geometry::PointF, keyboard_input, pointer_input, reap_dead_clients, BuildFrontend,
-    Config, Frontend, FrontendHost, KeyboardConfig, PointerInput, LEFT_BUTTON,
+    font_dir, geometry::PointF, keyboard_input, pointer_input, reap_dead_clients,
+    set_locked_modifiers, BuildFrontend, Config, Frontend, FrontendHost, KeyboardConfig,
+    PointerInput, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -146,6 +147,8 @@ enum TestInput {
         code: u32,
         pressed: bool,
     },
+    /// 固定された修飾キー(入れ子の構成で、親から届く wl_keyboard の mods_locked と同じもの)。
+    Locked(u32),
 }
 
 fn parse_test_input(line: &str, at: &mut PointF) -> Result<TestInput, String> {
@@ -161,6 +164,13 @@ fn parse_test_input(line: &str, at: &mut PointF) -> Result<TestInput, String> {
             _ => return Err(format!("key needs press or release: {line}")),
         };
         return Ok(TestInput::Key { code, pressed });
+    }
+    if let Some(rest) = line.strip_prefix("locked ") {
+        let mask = rest
+            .trim()
+            .parse()
+            .map_err(|_| format!("locked needs a number: {line}"))?;
+        return Ok(TestInput::Locked(mask));
     }
     parse_pointer_input(line, at).map(TestInput::Pointer)
 }
@@ -380,6 +390,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     Ok(TestInput::Pointer(input)) => pointer_input(state, input, time),
                     Ok(TestInput::Key { code, pressed }) => {
                         keyboard_input(state, code, pressed, time);
+                    }
+                    Ok(TestInput::Locked(mask)) => {
+                        set_locked_modifiers(state, mask);
                     }
                     Err(message) => warn!("test input: {message}"),
                 }

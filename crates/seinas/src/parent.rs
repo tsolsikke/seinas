@@ -7,8 +7,8 @@
 use std::error::Error;
 
 use seinas_frontend::{
-    geometry::PointF, keyboard_input, pointer_input, release_all_keys, set_keymap, Cursor, Edges,
-    FrontendHost, PointerInput,
+    geometry::PointF, keyboard_input, pointer_input, release_all_keys, set_keymap,
+    set_locked_modifiers, Cursor, Edges, FrontendHost, PointerInput,
 };
 use seinas_render::{FrameView, PixelFormat};
 use smithay_client_toolkit::{
@@ -412,7 +412,13 @@ impl Dispatch2<wl_keyboard::WlKeyboard, Seinas> for ParentKeyboard {
                     keyboard.change_repeat_info(rate, delay);
                 }
             }
-            // 修飾キーの状態は、子の側で、キーから求める。
+            // 固定された修飾キー(Caps Lock、Num Lock)は、親に合わせる。押されている修飾キーは、子の側で、
+            // キーから求める。
+            wl_keyboard::Event::Modifiers { mods_locked, .. }
+                if set_locked_modifiers(state, mods_locked) =>
+            {
+                info!("the locked modifiers follow the parent ({mods_locked:#x})");
+            }
             _ => {}
         }
     }
