@@ -22,6 +22,7 @@ mod interaction;
 mod resize;
 mod shortcuts;
 mod stack;
+mod switcher;
 mod title_bar;
 pub use decoration::{
     clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
@@ -39,10 +40,13 @@ pub use resize::{
     anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
     MIN_CONTENT_SIZE, RESIZE_BORDER,
 };
-pub use shortcuts::{Decision, Modifiers, Shortcut, Shortcuts};
+pub use shortcuts::{
+    is_modifier_key, keysym, Decision, Modifiers, Shortcut, Shortcuts, SWITCH_NEXT, SWITCH_PREVIOUS,
+};
 pub use stack::{
     next_slot, slot_count, slot_location, Placed, Restore, Stack, WindowId, CASCADE_STEP,
 };
+pub use switcher::Switcher;
 pub use title_bar::TitleBar;
 
 use seinas_text::TextPainter;
@@ -188,6 +192,8 @@ pub struct Frontend<D: SeatHandler> {
     pub keyboard: Option<KeyboardHandle<D>>,
     /// Seinas のショートカット。キーを IME とアプリへ渡す前に見る。
     pub shortcuts: Shortcuts,
+    /// Alt+Tab での切り替えの最中なら、その状態。
+    pub switcher: Option<Switcher>,
     /// 画面(wl_output)。
     pub output: Output,
     /// 画面の大きさ。
@@ -354,6 +360,7 @@ impl<D: FrontendHost> Frontend<D> {
         self.windows
             .remove(|window| window.wl_surface() == toplevel.wl_surface());
         self.title_bars.remove(&toplevel.wl_surface().id());
+        self.forget_closed_candidates();
         self.update_activation();
     }
 
@@ -496,6 +503,64 @@ impl<D: FrontendHost> Frontend<D> {
         }
         self.update_activation();
         true
+    }
+
+    /// Alt+Tab(`backward` なら Alt+Shift+Tab)で、次(前)のウィンドウを候補にする。切り替えの最中でなければ、
+    /// 始める。候補は、いちばん手前に見せるだけで、raise・activated・キーボードのフォーカスは、決めるまで変えない。
+    /// 見せるものが変わったらtrue。
+    ///
+    /// 候補は、始めたときの、絵を出しているウィンドウ(最小化しているものも)。ウィンドウが無ければ、始めない。
+    pub fn switch_windows(&mut self, backward: bool) -> bool {
+        match &mut self.switcher {
+            Some(switcher) => switcher.step(backward),
+            None => {
+                let candidates = self
+                    .windows
+                    .switch_order()
+                    .into_iter()
+                    .filter(|&id| {
+                        self.windows
+                            .get(id)
+                            .is_some_and(|window| window_size(&window.item).is_some())
+                    })
+                    .collect();
+                self.switcher = Switcher::start(candidates, backward);
+            }
+        }
+        let candidate = self.switcher.as_ref().map(Switcher::current);
+        self.windows.set_preview(candidate)
+    }
+
+    /// 切り替えを決める。候補を(最小化していれば戻して)raise し、activated にする。切り替えの最中でなければ、
+    /// 何もしない。見せるものかスタックが変わったらtrue。
+    pub fn finish_switch(&mut self) -> bool {
+        let Some(switcher) = self.switcher.take() else {
+            return false;
+        };
+        let shown = self.windows.set_preview(None);
+        self.activate(switcher.current()) || shown
+    }
+
+    /// 切り替えを取り消す。重なる順とフォーカスは、始める前のまま(見せていた候補を外すだけ)。見せるものが
+    /// 変わったらtrue。
+    pub fn cancel_switch(&mut self) -> bool {
+        self.switcher.take().is_some() && self.windows.set_preview(None)
+    }
+
+    /// 切り替えの候補から、去ったウィンドウを外す。見せていた候補が去ったら、次の候補を見せる。候補が
+    /// 無くなったら、切り替えを終える。
+    fn forget_closed_candidates(&mut self) {
+        let Some(switcher) = &mut self.switcher else {
+            return;
+        };
+        let windows = &self.windows;
+        if switcher.remove(|id| windows.get(id).is_none()) {
+            let candidate = switcher.current();
+            self.windows.set_preview(Some(candidate));
+        } else {
+            self.switcher = None;
+            self.windows.set_preview(None);
+        }
     }
 
     /// キーボードのフォーカスを付けるウィンドウの画面。activated のウィンドウ(最小化していないうちの、いちばん
@@ -675,11 +740,8 @@ impl<D: FrontendHost> Frontend<D> {
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
         let mut elements = self.layer_elements(renderer, &[Layer::Overlay, Layer::Top]);
         let measure = self.measure();
-        for (window, active) in self.windows.iter_with_activation() {
-            // 最小化しているウィンドウは描かない。
-            if window.minimized {
-                continue;
-            }
+        // 最小化しているウィンドウは描かない(Alt+Tab の候補として見せているものは描く)。
+        for (window, active) in self.windows.iter_shown() {
             let surface = window.item.wl_surface();
             // まだ絵を出していないウィンドウには、帯も付けない。
             if let Some(content) = content_size(&window.item) {
@@ -825,6 +887,12 @@ pub fn pointer_input<D>(state: &mut D, input: PointerInput, time: u32)
 where
     D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
 {
+    // Alt+Tab での切り替えの最中にボタンを押したら、切り替えを取り消してから、ふだんどおりに扱う。
+    if matches!(input, PointerInput::Button { pressed: true, .. })
+        && state.frontend_mut().cancel_switch()
+    {
+        changed(state);
+    }
     let frontend = state.frontend_mut();
     let Some(pointer) = frontend.pointer.clone() else {
         return;
@@ -1088,8 +1156,13 @@ pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
 /// キーの押下か解放を受ける。`code` は evdev のキーの番号、`time` は起動からの時間(ミリ秒)。
 ///
 /// 先に Seinas のショートカットを見て(IME とアプリへ渡す前)、使わなければ、キーボードのフォーカスのある
-/// クライアントへ渡す。使ったショートカットを返す(今は一覧が空なので、いつもNone)。最小化しているウィンドウには、
-/// フォーカスが無いので届かない。
+/// クライアントへ渡す。使ったショートカットを返す。最小化しているウィンドウには、フォーカスが無いので届かない。
+///
+/// Alt+Tab での切り替え(`docs/window-placement.md` の「Alt+Tab」):
+/// - Alt+Tab・Alt+Shift+Tab は、切り替えを始めるか、次・前の候補へ進める。Tab はクライアントへ渡さない。
+/// - 切り替えの最中は、修飾キーのほかのキーを渡さない。Esc は、取り消し。
+/// - Alt を離したら決める。Alt を離したことは、先にフォーカスのあるクライアントへ渡し、その後でフォーカスを移す
+///   (どのクライアントにも、Alt が押されたまま残らない)。
 pub fn keyboard_input<D: FrontendHost>(
     state: &mut D,
     code: u32,
@@ -1103,7 +1176,7 @@ pub fn keyboard_input<D: FrontendHost>(
     } else {
         KeyState::Released
     };
-    keyboard
+    let used = keyboard
         .input(
             state,
             (code + 8).into(),
@@ -1118,18 +1191,39 @@ pub fn keyboard_input<D: FrontendHost>(
                     logo: modifiers.logo,
                 };
                 let sym = keysym.modified_sym().raw();
-                match state
-                    .frontend_mut()
-                    .shortcuts
-                    .filter(code, pressed, sym, modifiers)
-                {
-                    Decision::Forward => FilterResult::Forward,
+                let frontend = state.frontend_mut();
+                let switching = frontend.switcher.is_some();
+                match frontend.shortcuts.filter(code, pressed, sym, modifiers) {
                     Decision::Use(shortcut) => FilterResult::Intercept(Some(shortcut)),
                     Decision::Swallow => FilterResult::Intercept(None),
+                    // 切り替えの最中は、修飾キーのほかのキーを渡さない(離したことも)。
+                    Decision::Forward if switching && pressed && !is_modifier_key(sym) => {
+                        frontend.shortcuts.hold(code);
+                        FilterResult::Intercept((sym == keysym::ESCAPE).then_some(Shortcut {
+                            keysym: sym,
+                            modifiers,
+                        }))
+                    }
+                    Decision::Forward => FilterResult::Forward,
                 }
             },
         )
-        .flatten()
+        .flatten();
+    let frontend = state.frontend_mut();
+    let changed = match used {
+        Some(shortcut) if shortcut == SWITCH_NEXT => frontend.switch_windows(false),
+        Some(shortcut) if shortcut == SWITCH_PREVIOUS => frontend.switch_windows(true),
+        Some(shortcut) if shortcut.keysym == keysym::ESCAPE => frontend.cancel_switch(),
+        // Alt を離した(Alt のキーを離したことは、上で、いまのフォーカスへ渡してある)。
+        _ if frontend.switcher.is_some() && !keyboard.modifier_state().alt => {
+            frontend.finish_switch()
+        }
+        _ => false,
+    };
+    if changed {
+        self::changed(state);
+    }
+    used
 }
 
 /// 親の keymap で `locked` の修飾キー(Caps Lock、Num Lock)を、子の側の状態に合わせる。入れ子の構成で、親から
@@ -1188,10 +1282,15 @@ pub fn set_keymap<D: FrontendHost>(state: &mut D, keymap: String) -> bool {
 
 /// 押されているキーを、全部離したことにする。入れ子の構成で、親のキーボードのフォーカスが外れたときに使う
 /// (離したイベントが届かないまま、クライアントで繰り返しが続かないように)。
+///
+/// Alt+Tab での切り替えの最中なら、決めずに取り消す(Alt を離したのではないので)。
 pub fn release_all_keys<D: FrontendHost>(state: &mut D, time: u32) {
     let Some(keyboard) = state.frontend().keyboard.clone() else {
         return;
     };
+    if state.frontend_mut().cancel_switch() {
+        changed(state);
+    }
     for keycode in keyboard.pressed_keys() {
         keyboard_input(state, keycode.raw() - 8, false, time);
     }
@@ -1642,7 +1741,8 @@ macro_rules! delegate_frontend {
                     seat,
                     pointer,
                     keyboard,
-                    shortcuts: $crate::Shortcuts::default(),
+                    shortcuts: $crate::Shortcuts::seinas(),
+                    switcher: None,
                     output,
                     size: $crate::geometry::Size::new(config.width, config.height),
                     usable: $crate::geometry::Rect::from_size($crate::geometry::Size::new(

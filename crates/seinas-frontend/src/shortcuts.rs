@@ -2,7 +2,7 @@
 //!
 //! キーは、IME とアプリへ渡す前に、ここで見る(ADR 0004)。IME が固まっていても、ショートカットが効くように
 //! するため。Wayland のオブジェクトにも xkb の型にも触れずに確かめられるよう、keysym は数で受け取る。
-//! 一覧は、今は空(ショートカットは、まだ無い)。
+//! 一覧は、Alt+Tab と Alt+Shift+Tab(ウィンドウの切り替え)だけ。
 
 /// ショートカットの判定に使う、修飾キーの状態。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -13,6 +13,42 @@ pub struct Modifiers {
     /// Windows キーに当たるもの。
     pub logo: bool,
 }
+
+/// xkb の keysym の数(使うものだけ)。
+pub mod keysym {
+    pub const TAB: u32 = 0xff09;
+    /// Shift を押したときの Tab。
+    pub const ISO_LEFT_TAB: u32 = 0xfe20;
+    pub const ESCAPE: u32 = 0xff1b;
+}
+
+/// 修飾キー(Shift、Ctrl、Alt、Caps Lock など)の keysym か。
+pub fn is_modifier_key(keysym: u32) -> bool {
+    // Shift_L〜Hyper_R と、ISO_Lock〜ISO_Level5_Lock(AltGr など)と、Num_Lock。
+    (0xffe1..=0xffee).contains(&keysym) || (0xfe01..=0xfe13).contains(&keysym) || keysym == 0xff7f
+}
+
+/// Alt+Tab:次のウィンドウへ切り替える。
+pub const SWITCH_NEXT: Shortcut = Shortcut {
+    keysym: keysym::TAB,
+    modifiers: Modifiers {
+        ctrl: false,
+        alt: true,
+        shift: false,
+        logo: false,
+    },
+};
+
+/// Alt+Shift+Tab:前のウィンドウへ切り替える。
+pub const SWITCH_PREVIOUS: Shortcut = Shortcut {
+    keysym: keysym::ISO_LEFT_TAB,
+    modifiers: Modifiers {
+        ctrl: false,
+        alt: true,
+        shift: true,
+        logo: false,
+    },
+};
 
 /// 1 つのショートカット。keysym(xkb の数)と、そのとき押されている修飾キーの組。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +82,18 @@ impl Shortcuts {
         Shortcuts {
             list,
             held: Vec::new(),
+        }
+    }
+
+    /// Seinas のショートカットの一覧(ウィンドウの切り替え)。
+    pub fn seinas() -> Self {
+        Self::new(vec![SWITCH_NEXT, SWITCH_PREVIOUS])
+    }
+
+    /// 一覧に無いキー `code` の押下を Seinas が使ったことにする(離したことも、どこへも渡さない)。
+    pub fn hold(&mut self, code: u32) {
+        if !self.held.contains(&code) {
+            self.held.push(code);
         }
     }
 
@@ -84,8 +132,7 @@ impl Shortcuts {
 mod tests {
     use super::*;
 
-    /// xkb の keysym の数。
-    const TAB: u32 = 0xff09;
+    use keysym::TAB;
     const LETTER_A: u32 = 0x61;
     const ALT: Modifiers = Modifiers {
         ctrl: false,
@@ -130,5 +177,36 @@ mod tests {
         shortcuts.filter(15, true, TAB, ALT);
         assert_eq!(shortcuts.filter(15, false, TAB, ALT), Decision::Swallow);
         assert_eq!(shortcuts.filter(15, false, TAB, ALT), Decision::Forward);
+    }
+
+    #[test]
+    fn alt_shift_tab_is_the_shifted_tab() {
+        let mut shortcuts = Shortcuts::seinas();
+        let alt_shift = Modifiers { shift: true, ..ALT };
+        assert_eq!(
+            shortcuts.filter(15, true, keysym::ISO_LEFT_TAB, alt_shift),
+            Decision::Use(SWITCH_PREVIOUS)
+        );
+        // Ctrl も押していれば、使わない。
+        let ctrl_alt = Modifiers { ctrl: true, ..ALT };
+        assert_eq!(shortcuts.filter(15, true, TAB, ctrl_alt), Decision::Forward);
+    }
+
+    #[test]
+    fn a_held_key_is_swallowed_on_release() {
+        let mut shortcuts = Shortcuts::seinas();
+        shortcuts.hold(1);
+        assert_eq!(
+            shortcuts.filter(1, false, keysym::ESCAPE, ALT),
+            Decision::Swallow
+        );
+        assert_eq!(
+            shortcuts.filter(1, false, keysym::ESCAPE, ALT),
+            Decision::Forward
+        );
+        assert!(is_modifier_key(0xffe9), "Alt_L");
+        assert!(is_modifier_key(0xffe5), "Caps_Lock");
+        assert!(!is_modifier_key(TAB));
+        assert!(!is_modifier_key(keysym::ESCAPE));
     }
 }

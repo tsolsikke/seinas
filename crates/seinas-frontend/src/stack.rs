@@ -71,6 +71,9 @@ pub struct Stack<T> {
     entries: Vec<Placed<T>>,
     /// 次に加えるウィンドウに付ける番号。
     next_id: u64,
+    /// 見せるだけのウィンドウ(Alt+Tab の切り替えの候補)。重なる順と activated は変えずに、いちばん手前に
+    /// 描き、ポインターも当てる。最小化していても描く。
+    preview: Option<WindowId>,
 }
 
 impl<T> Default for Stack<T> {
@@ -78,6 +81,7 @@ impl<T> Default for Stack<T> {
         Stack {
             entries: Vec::new(),
             next_id: 0,
+            preview: None,
         }
     }
 }
@@ -96,6 +100,44 @@ impl<T> Stack<T> {
             .iter()
             .enumerate()
             .map(move |(index, entry)| (entry, Some(index) == active))
+    }
+
+    /// 見せる順(手前から)に、activated かどうかを添えて並べる。見せるだけのウィンドウがあれば、それを
+    /// いちばん手前にする。最小化しているウィンドウは、見せるだけのものでなければ並べない。
+    pub fn iter_shown(&self) -> impl Iterator<Item = (&Placed<T>, bool)> {
+        let preview = self.preview;
+        let first = self
+            .iter_with_activation()
+            .filter(move |(entry, _)| Some(entry.id) == preview);
+        let rest = self
+            .iter_with_activation()
+            .filter(move |(entry, _)| Some(entry.id) != preview && !entry.minimized);
+        first.chain(rest)
+    }
+
+    /// 見せるだけのウィンドウを `id` にする(Noneで止める)。変わったらtrue。
+    pub fn set_preview(&mut self, id: Option<WindowId>) -> bool {
+        let id = id.filter(|&id| self.get(id).is_some());
+        std::mem::replace(&mut self.preview, id) != id
+    }
+
+    /// 見せるだけのウィンドウ。
+    pub fn preview(&self) -> Option<WindowId> {
+        self.preview
+    }
+
+    /// Alt+Tab で切り替える順。activated のウィンドウを先に、ほかを重なる順(手前から)に並べる。最小化して
+    /// いるウィンドウも入る。
+    ///
+    /// ウィンドウは activate したときに raise するので、重なる順は、最後に activated になった順と同じになる
+    /// (最小化しても順は変わらないので、activated のウィンドウだけを先に出す)。
+    pub fn switch_order(&self) -> Vec<WindowId> {
+        let mut order: Vec<(WindowId, bool)> = self
+            .iter_with_activation()
+            .map(|(entry, active)| (entry.id, active))
+            .collect();
+        order.sort_by_key(|&(_, active)| !active);
+        order.into_iter().map(|(id, _)| id).collect()
     }
 
     pub fn len(&self) -> usize {
@@ -231,18 +273,24 @@ impl<T> Stack<T> {
     /// `is_gone` が真を返すウィンドウを、並びから外す。残ったものの順と置き場所は変わらない。
     pub fn remove(&mut self, is_gone: impl Fn(&T) -> bool) {
         self.entries.retain(|entry| !is_gone(&entry.item));
+        if self.preview.is_some_and(|id| self.get(id).is_none()) {
+            self.preview = None;
+        }
     }
 
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウが、手前から何番目か。
     ///
     /// `size_of` は、ウィンドウの大きさを返す。まだ絵を出していないウィンドウ(大きさが無い)と、最小化している
-    /// ウィンドウには当たらない。
+    /// ウィンドウには当たらない。見せるだけのウィンドウがあれば、それを先に見る([`Stack::iter_shown`] の順)。
     pub fn index_at(&self, point: PointF, size_of: impl Fn(&T) -> Option<Size>) -> Option<usize> {
-        self.entries.iter().position(|entry| {
-            !entry.minimized
-                && size_of(&entry.item)
+        let id = self
+            .iter_shown()
+            .find(|(entry, _)| {
+                size_of(&entry.item)
                     .is_some_and(|size| Rect::new(entry.location, size).contains(point))
-        })
+            })
+            .map(|(entry, _)| entry.id)?;
+        self.position(id)
     }
 
     /// 手前から `index` 番目のウィンドウを、いちばん手前に出す。順が変わったらtrue。
@@ -585,6 +633,56 @@ mod tests {
         assert!(stack
             .unmaximize(b, Rect::from_size(SCREEN.into()))
             .is_none());
+    }
+
+    #[test]
+    fn the_switch_order_starts_with_the_activated_window() {
+        let mut stack = three();
+        let id =
+            |stack: &Stack<&'static str>, name| stack.iter().find(|e| e.item == name).unwrap().id;
+        let names = |stack: &Stack<&'static str>| {
+            stack
+                .switch_order()
+                .into_iter()
+                .map(|id| stack.get(id).unwrap().item)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&stack), ["c", "b", "a"]);
+        // 手前の c を最小化すると、activated の b が先で、c はその次(最後に activated だった順)。
+        stack.set_minimized(id(&stack, "c"), true);
+        assert_eq!(names(&stack), ["b", "c", "a"]);
+        // 全部最小化すると、重なる順のまま。
+        stack.set_minimized(id(&stack, "b"), true);
+        stack.set_minimized(id(&stack, "a"), true);
+        assert_eq!(names(&stack), ["c", "b", "a"]);
+        assert!(Stack::<&str>::default().switch_order().is_empty());
+    }
+
+    #[test]
+    fn a_preview_is_shown_and_hit_in_front_without_changing_the_order() {
+        let mut stack = three();
+        let a = stack.iter().find(|e| e.item == "a").unwrap().id;
+        let c = stack.iter().find(|e| e.item == "c").unwrap().id;
+        stack.set_minimized(a, true);
+        assert_eq!(stack.index_at(at(10.0, 10.0), size), None);
+        // 最小化している a を見せると、いちばん手前に描かれ、当たる。重なる順と activated は変わらない。
+        assert!(stack.set_preview(Some(a)));
+        assert!(!stack.set_preview(Some(a)));
+        let shown: Vec<_> = stack
+            .iter_shown()
+            .map(|(e, active)| (e.item, active))
+            .collect();
+        assert_eq!(shown, [("a", false), ("c", true), ("b", false)]);
+        assert_eq!(stack.index_at(at(100.0, 100.0), size), Some(2));
+        assert_eq!(order(&stack), ["c", "b", "a"]);
+        assert_eq!(activated(&stack), ["c"]);
+        // 見せるのを止めると、元どおり。去ったウィンドウは、見せるのも止まる。
+        assert!(stack.set_preview(None));
+        assert_eq!(stack.index_at(at(100.0, 100.0), size), Some(0));
+        stack.set_preview(Some(c));
+        stack.remove(|name| *name == "c");
+        assert_eq!(stack.preview(), None);
+        assert!(!stack.set_preview(Some(c)), "a window that is gone");
     }
 
     #[test]
