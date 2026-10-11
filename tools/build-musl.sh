@@ -1,11 +1,11 @@
 #!/bin/sh
-# seinas、seinas-standalone、seinas-fbdev、zeyes-minを、x86_64-unknown-linux-musl向けに静的にリンクして作る。
+# seinas、seinas-standalone、seinas-fbdev、seinas-taskbar、zeyes-minを、x86_64-unknown-linux-musl向けに静的にリンクして作る。
 #
 # 使い方:
 #     tools/build-musl.sh
 #
 # できるもの:
-#     target/x86_64-unknown-linux-musl/release/seinas、seinas-standalone、seinas-fbdev、zeyes-min、test-client
+#     target/x86_64-unknown-linux-musl/release/seinas、seinas-standalone、seinas-fbdev、seinas-taskbar、zeyes-min、test-client
 #     target/dist/seinas-musl/(実行ファイルと、LICENSE、第三者のライセンス文、既定のフォントをまとめたもの)
 #
 # CPUの指定(target-cpu=nativeなど)は付けない。Rustの既定のx86-64(SSE2まで)で作る。
@@ -33,17 +33,21 @@ cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas -p z
 # (fbdevだけの構成にWaylandの受け口、など)までビルドに入ってしまう。
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas-standalone
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas-fbdev
+cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas-taskbar
 
 out=target/x86_64-unknown-linux-musl/release
 
 # 静的にリンクできているかを確かめる。
-tools/elf-report.sh "$out/seinas" "$out/seinas-standalone" "$out/seinas-fbdev" "$out/zeyes-min" > /dev/null
+tools/elf-report.sh "$out/seinas" "$out/seinas-standalone" "$out/seinas-fbdev" "$out/seinas-taskbar" "$out/zeyes-min" > /dev/null
 
 # seinas-standaloneに、入れ子の裏側(SCTK、wayland-client)が入っていないかを確かめる。
 tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source
 
 # seinas-fbdevに、Waylandの受け口が入っていないかを確かめる。
 tools/check-no-wayland.sh seinas-fbdev "$out/seinas-fbdev"
+
+# seinas-taskbarは、コンポジタとは別のクライアントなので、Waylandのサーバーの側(Smithay)が入っていないことを確かめる。
+tools/check-deps.sh seinas-taskbar smithay wayland-server pixman
 
 # 既定のフォントを取得する(置いてあり、SHA-256 が合えば、何もしない)。
 # 取得できないとき(ネットワークが無い、SHA-256 が合わない)は、フォントの無い配布物を作らずに止まる。
@@ -58,7 +62,7 @@ fi
 # 配布物をまとめる。静的にリンクしたライブラリのライセンス文と、既定のフォントを、実行ファイルと一緒に置く。
 # フォントのライセンス文と著作権表示は、THIRD-PARTY/fonts/ に入っている。
 mkdir -p "$dist/fonts"
-cp "$out/seinas" "$out/seinas-standalone" "$out/seinas-fbdev" "$out/zeyes-min" LICENSE "$dist/"
+cp "$out/seinas" "$out/seinas-standalone" "$out/seinas-fbdev" "$out/seinas-taskbar" "$out/zeyes-min" LICENSE "$dist/"
 cp -R THIRD-PARTY "$dist/THIRD-PARTY"
 cp target/fonts/*.ttf target/fonts/*.otf "$dist/fonts/"
 

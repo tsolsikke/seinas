@@ -1,0 +1,25 @@
+[package]
+name = "seinas-taskbar"
+description = "Seinasのタスクバー。コンポジタとは別のプログラム(layer-shellとforeign-toplevelのクライアント)で、ウィンドウの一覧と時計を出す。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+smithay-client-toolkit = { workspace = true }
+wayland-client = { workspace = true }
+# foreign-toplevel(zwlr_foreign_toplevel_manager_v1)のクライアントの型。smithay-client-toolkit がすでに使っている版。
+wayland-protocols-wlr = { workspace = true, features = ["client"] }
+seinas-text = { path = "../seinas-text" }
+# 壁の時計(clock_gettime)を、失敗を見分けて読むのに使う。
+libc = { workspace = true }
+
+[dev-dependencies]
+seinas-golden = { path = "../seinas-golden" }
+
+# 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
+[[test]]
+name = "golden"
+harness = false

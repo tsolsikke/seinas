@@ -13,6 +13,7 @@ ADR 0001(`docs/adr/0001-replaceable-boundaries.md`)の決定 4 の実装です�
 | C. タイトルバー | `seinas-frontend` | activated とそうでないもの × close ボタンの hover の有無、長いタイトルの切り詰め、フォントなし、close ボタンより狭い幅。7 ケース | PPM |
 | D. fbdev の blit | `seinas-fbdev` | XRGB、ARGB、XBGR、RGBX、オフセットと行の余白つき。5 ケース | raw(バッファのバイト列) |
 | E. layer surface の重なり | `seinas-standalone`(`tests/golden_layers.rs`) | 160x120 の fake screen に、background・bottom・top(exclusive zone あり・なし)・overlay の layer surface と、ウィンドウを 1 つ出した画面の全体。1 ケース | PPM |
+| F. タスクバー | `seinas-taskbar` | 3 つのウィンドウ(activated、ポインターが乗っているもの、長いタイトルの切り詰め)と時計、最小化しているウィンドウと時刻が取れないときの `--:--`、ウィンドウなし、フォントなし。4 ケース | PPM |
 
 正解データは、各 crate の `tests/golden/` にあります(説明は `crates/seinas-text/tests/golden/README.md`)。テストは `tests/golden.rs`(`harness = false`)で、ふだんの `cargo test` で動きます。
 入力はテストのコードに書いてあり、保存するのは出力だけです。
@@ -22,13 +23,13 @@ ADR 0001(`docs/adr/0001-replaceable-boundaries.md`)の決定 4 の実装です�
 
 - 今は、すべての対象を完全一致で比べます。同じ実装に同じ入力を渡すと同じバイトが出ることを、ホスト(glibc)と musl、pixman の SIMD の経路の有無で確かめてあります。
 - 比べる部品は、許す差(ちがってよいピクセルの数、1 チャンネルの差の上限)を持てる形ですが、今はどれも 0 です。
-- 許す差を 0 より大きくしてよいのは、テキスト描画(B)とタイトルバー(C)だけです。描画の合成(A)と fbdev の blit(D)は、いつも完全一致です。
-- B・C に差を許すのは、置き換えのときに限ります。そのコミットの中でテストに値を書き、理由をコミットメッセージに書きます。目安:ちがうピクセルがインクのピクセルの 1% 以下、インクを囲む矩形のずれが 1 px 以下、`Drawn` の値(幅、切り詰め、フォールバックと欠けた字の数)は一致。
+- 許す差を 0 より大きくしてよいのは、テキスト描画(B)とタイトルバー(C)とタスクバー(F)だけです。描画の合成(A)と fbdev の blit(D)は、いつも完全一致です。
+- B・C・F に差を許すのは、置き換えのときに限ります。そのコミットの中でテストに値を書き、理由をコミットメッセージに書きます。目安:ちがうピクセルがインクのピクセルの 1% 以下、インクを囲む矩形のずれが 1 px 以下、`Drawn` の値(幅、切り詰め、フォールバックと欠けた字の数)は一致。
 - ちがったときは、テストが失敗し、ちがうピクセルの数、いちばん大きいチャンネルの差、ちがう所を囲む矩形を出します。あわせて、今の出力と差分の画像(ちがう所が赤)を `target/golden-actual/<crate>/` に書き出します。
 
 ## フォント
 
-B と C の多くのケースは、`tools/fetch-fonts.sh` が置いたフォント(`target/fonts`)を使います。
+B・C・F の多くのケースは、`tools/fetch-fonts.sh` が置いたフォント(`target/fonts`)を使います。
 
 - テストは、フォントのファイル(`.ttf` と `.otf`)の SHA-256 を、`tools/fetch-fonts.sh` に書かれた値と比べます。ちがえば、いつも失敗にします(別のバージョンのフォントで比べないため)。
 - フォントが無いときも、失敗にします(黙ってスキップしません)。
@@ -40,7 +41,7 @@ B と C の多くのケースは、`tools/fetch-fonts.sh` が置いたフォン�
 tools/update-golden.sh
 ```
 
-4 つの crate の golden テストを、環境変数 `SEINAS_UPDATE_GOLDEN=1` を付けてホストで動かします。テストは、比べるかわりに正解データを上書きし、古いファイルとの差を 1 ケース 1 行で出します。最後に `git diff --stat` を出します。
+5 つの crate の golden テストと、`seinas-standalone` の `golden_layers` を、環境変数 `SEINAS_UPDATE_GOLDEN=1` を付けてホストで動かします。テストは、比べるかわりに正解データを上書きし、古いファイルとの差を 1 ケース 1 行で出します。最後に `git diff --stat` を出します。
 
 作り直すときの決まり:
 

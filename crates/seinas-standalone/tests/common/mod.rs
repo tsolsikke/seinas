@@ -394,6 +394,33 @@ impl Compositor {
         )
     }
 
+    /// タスクバー(seinas-taskbar)を、引数 `args` で `socket` へつなぐ。標準エラーは、作業用の場所の
+    /// `taskbar.log` に書く。
+    pub fn connect_taskbar_to(&self, socket: &Path, args: &[&str]) -> Running {
+        let log = fs::File::create(self.dir.join("taskbar.log")).expect("create the taskbar log");
+        Running(
+            Command::new(workspace_bin("seinas-taskbar", "seinas-taskbar"))
+                .args(args)
+                .arg("--fonts")
+                .arg(font_dir())
+                .env("WAYLAND_DISPLAY", socket)
+                .env_remove("SEINAS_FONTS")
+                .stderr(log)
+                .spawn()
+                .expect("start seinas-taskbar"),
+        )
+    }
+
+    /// タスクバーを、シェルの部品のためのソケットへつなぐ。時計は UTC。
+    pub fn connect_taskbar(&self) -> Running {
+        self.connect_taskbar_to(&self.shell_socket(), &["--utc-offset", "+00:00"])
+    }
+
+    /// これまでにタスクバーが標準エラーへ書いたもの。
+    pub fn taskbar_log(&self) -> String {
+        fs::read_to_string(self.dir.join("taskbar.log")).unwrap_or_default()
+    }
+
     /// シェルの部品のためのソケット(ふだんのソケットのパスに `-shell` を付けたもの)。
     pub fn shell_socket(&self) -> PathBuf {
         let mut name = self.socket.as_os_str().to_owned();

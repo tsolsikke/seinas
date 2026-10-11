@@ -12,6 +12,7 @@ members = [
     "crates/seinas-standalone",
     "crates/seinas-test-clients",
     "crates/zeyes-min",
+    "crates/seinas-taskbar",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ smithay = { version = "=0.7.0", default-features = false }
 smithay-client-toolkit = { version = "=0.21.1", default-features = false, features = ["calloop"] }
 pixman = "0.2"
 wayland-client = "0.31"
+wayland-protocols-wlr = { version = "=0.3.12", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt"] }
 libc = "0.2"

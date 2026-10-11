@@ -15,10 +15,12 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウの題名など)。フォントをファイルから読み、1行の文字を画素にする |
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
 | `crates/seinas-test-clients` | 試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いた知らせを書き出したりする |
+| `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
+| `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |
 | `docs/fbdev.md` | fbdevの裏側の構成、動かし方、確かめ方 |
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
@@ -83,6 +85,12 @@ WAYLAND_DISPLAY=seinas-0 cargo run --locked -p zeyes-min
 ```
 
 タスクバーなどのシェルの部品は、`seinas-0-shell` のソケットへつなぎます(`docs/adr/0002-shell-components.md`)。そこからつないだクライアントにだけ、layer-shell とウィンドウの一覧(foreign-toplevel)が見えます。
+
+```bash
+WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
+```
+
+タスクバーは画面の下に出て、開いているウィンドウのボタンと時計を並べます(`docs/taskbar.md`)。
 
 クライアントのウィンドウの上には、Seinasが題名の帯を描きます。zeyes-minの題名は「zeyes」で、`--title TEXT` で変えられます。
 帯を掴んで動かすと、ウィンドウが動きます。帯の右の端の「×」を押すと、閉じます。

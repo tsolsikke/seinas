@@ -659,6 +659,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "seinas-taskbar"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "seinas-golden",
+ "seinas-text",
+ "smithay-client-toolkit",
+ "wayland-client",
+ "wayland-protocols-wlr",
+]
+
+[[package]]
 name = "seinas-test-clients"
 version = "0.1.0"
 dependencies = [
