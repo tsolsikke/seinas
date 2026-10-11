@@ -229,6 +229,8 @@ pub struct Frontend<D: SeatHandler> {
     pub interaction: Interaction,
     /// 閉じるように頼んだクライアントへの ping の答えを待つ一覧と、応答なしの印。
     pub pings: Pings<ShellClient>,
+    /// 接続を切ったクライアントの後片付けを、バックエンドに頼む([`reap_dead_clients`])。
+    pub reap_requested: bool,
     /// 最大化の予告の枠(上・下・左・右の 4 本)。
     pub maximize_marks: [SolidColorBuffer; 4],
     /// サイズ変更の最中か、その最後の大きさがまだ届いていないウィンドウ。左か上の辺を動かしたときに、
@@ -732,6 +734,32 @@ impl<D: FrontendHost> Frontend<D> {
         }
     }
 
+    /// ウィンドウ `id` の閉じるボタンが押された。応答なしの印が付いたクライアントなら、Wayland の接続を切る
+    /// (プロセスは kill しない)。そうでなければ、閉じるように頼む([`Frontend::request_close`])。
+    ///
+    /// 切ったクライアントのウィンドウは、接続の後片付け(バックエンドが [`reap_dead_clients`] で行う)で、全部
+    /// 消える。
+    pub fn close_button(&mut self, id: WindowId) {
+        let Some(window) = self.windows.get(id) else {
+            return;
+        };
+        let client = window.item.client();
+        if !self.pings.is_unresponsive(&client) {
+            self.request_close(id);
+            return;
+        }
+        let title = toplevel_title(&window.item);
+        warn!(
+            "disconnecting a client that does not respond (the window \"{title}\"); its process is not killed"
+        );
+        // xdg_wm_base の unresponsive のエラーを送り、接続を切る。
+        if let Err(e) = client.unresponsive() {
+            warn!("the client was already gone: {e:?}");
+        }
+        self.pings.forget(|other| *other == client);
+        self.reap_requested = true;
+    }
+
     /// ウィンドウ `toplevel` のクライアントに、応答なしの印が付いているか。
     pub fn is_unresponsive(&self, toplevel: &ToplevelSurface) -> bool {
         self.pings.is_unresponsive(&toplevel.client())
@@ -1020,8 +1048,8 @@ where
     }
     match outcome.command {
         // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
-        // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
-        Some((id, Command::Close)) => frontend.request_close(id),
+        // 応答なしのクライアントなら、接続を切る。
+        Some((id, Command::Close)) => frontend.close_button(id),
         Some((id, Command::Minimize)) => {
             frontend.minimize(id);
         }
@@ -1853,6 +1881,7 @@ macro_rules! delegate_frontend {
                     title_bars: Default::default(),
                     interaction: Default::default(),
                     pings: $crate::Pings::new(config.ping_timeout),
+                    reap_requested: false,
                     maximize_marks: Default::default(),
                     resize_anchors: Default::default(),
                 }

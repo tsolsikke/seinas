@@ -1,10 +1,11 @@
-//! 閉じるのに応じないクライアントのうち、ping に答えないもの(応答なし)を見分けることを、fake screen のピクセルと、
-//! テスト用のクライアントの出力で確かめる。
+//! 閉じるのに応じないクライアントのうち、ping に答えないもの(応答なし)を見分け、閉じるボタンで接続を切ることを、
+//! fake screen のピクセルと、テスト用のクライアントの出力で確かめる。
 //!
 //! 決まり(`docs/window-placement.md` の「閉じる」):
 //! - 閉じるボタンを押すと、close と一緒に ping を送る。決まった時間(テストでは `--ping-timeout 300` で 300 ミリ秒)の
 //!   中に pong が返らなければ、応答なしの印(タイトルの後の「(応答なし)」と、暗い赤の閉じるボタン)を付ける。
 //!   後から pong が返れば、外す。
+//! - 印の付いたウィンドウの閉じるボタンを押すと、そのクライアントの Wayland の接続を切る。プロセスは kill しない。
 //! - close に応じなくても pong を返すクライアントには、印を付けず、切らない。
 //!
 //! テスト用のクライアントの `--ignore-ping` は、ping に答えない(固まった)クライアントのまね、`--ignore-close` は、
@@ -45,11 +46,71 @@ fn open_window(seinas: &Compositor, args: &[&str]) -> TestClient {
     window
 }
 
+/// キーボードのイベントの、次の行。ほかの行は読み飛ばす。
+fn next_keyboard_line(client: &TestClient, what: &str) -> String {
+    loop {
+        let line = client.next_line(what);
+        if line.starts_with("window: key ") || line.starts_with("window: keyboard ") {
+            return line;
+        }
+    }
+}
+
 fn start(name: &str) -> (Compositor, TestClient) {
     let seinas = Compositor::start_with_input_and(name, &["--ping-timeout", "300"]);
     let list = seinas.connect_shell_client(&["toplevels"]);
     list.wait_for_line("toplevels: ready");
     (seinas, list)
+}
+
+#[test]
+fn a_client_that_does_not_answer_the_ping_is_marked_and_cut_off() {
+    let (mut seinas, list) = start("na");
+    let other = open_window(&seinas, &["--title", "other"]);
+    let frozen = open_window(&seinas, &["--title", "frozen", "--ignore-ping"]);
+    assert_eq!(
+        next_keyboard_line(&other, "the focus moving to the frozen window"),
+        "window: keyboard enter"
+    );
+    assert_eq!(
+        next_keyboard_line(&other, "leave"),
+        "window: keyboard leave"
+    );
+    list.wait_for_line(r#"toplevel 2: title="frozen" app_id="" state=[activated] outputs=1"#);
+
+    // 閉じるボタンを押すと、close と ping が届く。pong が返らないので、印が付く。
+    click_close(&mut seinas, (32, 32));
+    frozen.wait_for_line("window: close");
+    frozen.wait_for_line("window: ping");
+    seinas.wait_for_screen("the mark of no response", |shot| {
+        close_ground(shot, (32, 32)) == UNRESPONSIVE_CLOSE_BUTTON
+            && shot.pixel(34, 33) == ACTIVE_BAR
+    });
+    assert!(seinas.log().contains("did not answer a ping in 300 ms"));
+
+    // もう一度押すと、接続を切る。ウィンドウは消え、一覧からも消え、フォーカスは次のウィンドウへ移る。
+    click_close(&mut seinas, (32, 32));
+    list.wait_for_line("toplevel 2: closed");
+    assert_eq!(
+        next_keyboard_line(&other, "the focus back on the other window"),
+        "window: keyboard enter"
+    );
+    seinas.wait_for_screen("only the other window", |shot| {
+        shot.pixel(150, 150) == ORANGE && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
+    });
+    assert!(seinas
+        .log()
+        .contains("disconnecting a client that does not respond (the window \"frozen\")"));
+
+    // Seinas と、ほかのクライアントは動き続ける。
+    seinas.pointer("key 30 press");
+    assert_eq!(
+        next_keyboard_line(&other, "a key"),
+        "window: key 30 pressed"
+    );
+    assert!(seinas.process.is_running());
+    let mut other = other;
+    assert!(other.process.is_running());
 }
 
 #[test]
