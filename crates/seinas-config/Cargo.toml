@@ -1,0 +1,10 @@
+[package]
+name = "seinas-config"
+description = "Seinasの設定のファイル(1 行に「キー = 値」の小さな形式)の読み方と、置き場の決め方。フォントと壁紙の設定が使う。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

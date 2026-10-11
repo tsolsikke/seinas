@@ -12,6 +12,8 @@ publish.workspace = true
 cosmic-text = { workspace = true }
 # 控えのフォントの決め方(cosmic-textのFallback)を実装するのに、文字の種類の型が要る。cosmic-textと同じ版を使う。
 unicode-script = "0.5"
+# 設定のファイル(fonts.conf)の読み方。壁紙の設定と同じもの。
+seinas-config = { path = "../seinas-config" }
 
 [dev-dependencies]
 seinas-golden = { path = "../seinas-golden" }

@@ -16,6 +16,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
 | `crates/seinas-test-clients` | 試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いた知らせを書き出したりする |
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
+| `crates/seinas-config` | 設定のファイル(1 行に「キー = 値」)の読み方。フォントの設定が使う |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |

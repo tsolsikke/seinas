@@ -95,28 +95,30 @@ impl fmt::Display for ConfigProblem {
     }
 }
 
-/// 設定のファイルの内容を読む。1 行に `キー = 値`、`#` から行の終わりまではコメント。
+/// 設定のファイルの内容を読む。1 行に `キー = 値`、`#` から行の終わりまではコメント(読み方は `seinas-config`)。
 ///
 /// 読めない行、知らないキー、範囲の外の値は、飛ばして、理由を返す。
 pub fn parse_config(text: &str) -> (FontConfig, Vec<ConfigProblem>) {
+    let (entries, problems) = seinas_config::parse(text);
+    from_entries(entries, problems)
+}
+
+/// 行に分けた設定を、フォントの設定にする。
+fn from_entries(
+    entries: Vec<seinas_config::Entry>,
+    problems: Vec<seinas_config::Problem>,
+) -> (FontConfig, Vec<ConfigProblem>) {
     let mut config = FontConfig::default();
-    let mut problems = Vec::new();
-    for (index, raw) in text.lines().enumerate() {
-        let line = index + 1;
-        let content = raw.split('#').next().unwrap_or("").trim();
-        if content.is_empty() {
-            continue;
-        }
+    let mut problems: Vec<ConfigProblem> = problems
+        .into_iter()
+        .map(|p| ConfigProblem {
+            line: p.line,
+            reason: p.reason,
+        })
+        .collect();
+    for seinas_config::Entry { line, key, value } in entries {
+        let value = value.as_str();
         let mut problem = |reason: String| problems.push(ConfigProblem { line, reason });
-        let Some((key, value)) = content.split_once('=') else {
-            problem(format!("not a \"key = value\" line: {content}"));
-            continue;
-        };
-        let (key, value) = (key.trim(), value.trim());
-        if value.is_empty() {
-            problem(format!("{key} has no value"));
-            continue;
-        }
         let weight = |value: &str| {
             value
                 .parse::<u16>()
@@ -124,7 +126,7 @@ pub fn parse_config(text: &str) -> (FontConfig, Vec<ConfigProblem>) {
                 .filter(|w| (100..=900).contains(w))
                 .ok_or_else(|| format!("{key} must be from 100 to 900: {value}"))
         };
-        match key {
+        match key.as_str() {
             "ui" => config.ui.family = Some(value.to_owned()),
             "monospace" => config.monospace.family = Some(value.to_owned()),
             "ui-weight" => match weight(value) {
@@ -151,22 +153,14 @@ pub fn parse_config(text: &str) -> (FontConfig, Vec<ConfigProblem>) {
             _ => problem(format!("unknown key: {key}")),
         }
     }
+    problems.sort_by_key(|p| p.line);
     (config, problems)
 }
 
 /// 設定のファイルを読む。ファイルが無ければ、既定の設定(問題なし)。読めなければ、既定の設定と、その理由。
 pub fn read_config(path: &Path) -> (FontConfig, Vec<ConfigProblem>) {
-    match std::fs::read_to_string(path) {
-        Ok(text) => parse_config(&text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (FontConfig::default(), Vec::new()),
-        Err(e) => (
-            FontConfig::default(),
-            vec![ConfigProblem {
-                line: 0,
-                reason: format!("cannot read {}: {e}", path.display()),
-            }],
-        ),
-    }
+    let (entries, problems) = seinas_config::read(path);
+    from_entries(entries, problems)
 }
 
 /// 置き場と設定のファイルを決めるのに使う、環境変数の値。
@@ -194,11 +188,8 @@ impl Env {
 
     /// 設定のファイルの既定の場所(`$XDG_CONFIG_HOME/seinas/fonts.conf`、無ければ `~/.config/seinas/fonts.conf`)。
     pub fn config_file(&self) -> Option<PathBuf> {
-        let base = self
-            .xdg_config_home
-            .clone()
-            .or_else(|| self.home.as_ref().map(|home| home.join(".config")))?;
-        Some(base.join("seinas").join("fonts.conf"))
+        let dir = seinas_config::config_dir(self.xdg_config_home.as_deref(), self.home.as_deref())?;
+        Some(dir.join("fonts.conf"))
     }
 
     /// 利用者の置き場(`$XDG_DATA_HOME/fonts`、無ければ `~/.local/share/fonts`)。

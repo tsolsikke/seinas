@@ -610,6 +610,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "seinas-config"
+version = "0.1.0"
+
+[[package]]
 name = "seinas-fbdev"
 version = "0.1.0"
 dependencies = [
@@ -682,6 +686,7 @@ name = "seinas-text"
 version = "0.1.0"
 dependencies = [
  "cosmic-text",
+ "seinas-config",
  "seinas-golden",
  "unicode-script",
 ]
