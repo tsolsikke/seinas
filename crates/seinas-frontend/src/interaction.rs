@@ -128,6 +128,8 @@ pub enum Command {
     Minimize,
     /// 最大化か、最大化していれば元に戻す。
     ToggleMaximize,
+    /// 最大化する(移動の最中に、使える範囲の上端で離した)。
+    Maximize,
     /// 最大化を戻し、外枠の左上を `location` に置く(最大化しているウィンドウのタイトルバーをドラッグした)。
     Restore {
         location: Point,
@@ -149,6 +151,8 @@ enum Grab {
         moving: bool,
         /// 動かせるか。ダブルクリックの 2 回目では、動かさない。
         movable: bool,
+        /// 最大化の予告を出しているか(動かしている最中に、ポインターが使える範囲の上端にある)。
+        snap: bool,
     },
     /// タイトルバーのボタンを押している。
     Button {
@@ -280,6 +284,17 @@ impl Interaction {
         matches!(self.grab, Grab::Bar { moving: true, .. })
     }
 
+    /// 最大化の予告を出しているウィンドウ(動かしている最中に、ポインターが使える範囲の上端にあり、ここで
+    /// 離すと最大化する)。
+    pub fn maximize_preview(&self) -> Option<WindowId> {
+        match self.grab {
+            Grab::Bar {
+                window, snap: true, ..
+            } => Some(window),
+            _ => None,
+        }
+    }
+
     /// サイズ変更の最中なら、そのウィンドウと、始めたときの様子。
     pub fn resizing(&self) -> Option<(WindowId, ResizeStart)> {
         match self.grab {
@@ -359,6 +374,7 @@ impl Interaction {
                 origin,
                 moving,
                 movable,
+                snap,
             } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
                 let Some((outer, maximized, restore, buttons)) =
@@ -405,23 +421,30 @@ impl Interaction {
                         origin: location,
                         moving: true,
                         movable,
+                        snap: false,
                     };
                     outcome.command = Some((window, Command::Restore { location }));
                     outcome.redraw = true;
                     return outcome;
                 }
                 let moving = moving || starts;
+                // 動かしている最中に、ポインターが使える範囲の上端に触れたら、最大化の予告を出す。大きさの
+                // 決まったウィンドウ(最大化のボタンが無いもの)では、出さない。
+                let now_snap =
+                    moving && !maximized && buttons.maximize && point.y <= area.loc.y as f64;
                 self.grab = Grab::Bar {
                     window,
                     press,
                     origin,
                     moving,
                     movable,
+                    snap: now_snap,
                 };
+                outcome.redraw = now_snap != snap;
                 if moving && !maximized {
                     let wanted = (origin.x + dx.round() as i32, origin.y + dy.round() as i32);
                     let location = clamp_outer_location(wanted.into(), outer.w, area);
-                    outcome.redraw = stack.move_to(window, location);
+                    outcome.redraw |= stack.move_to(window, location);
                 }
                 outcome
             }
@@ -527,6 +550,7 @@ impl Interaction {
                     origin,
                     moving: false,
                     movable: !double,
+                    snap: false,
                 };
                 Deliver::Nobody
             }
@@ -577,7 +601,15 @@ impl Interaction {
             {
                 return Outcome::new(Deliver::Nobody)
             }
-            Grab::Bar { .. } => Outcome::new(Deliver::Nobody),
+            Grab::Bar { window, snap, .. } => {
+                let mut outcome = Outcome::new(Deliver::Nobody);
+                // 最大化の予告を出している所で離したら、最大化する。
+                if *snap {
+                    outcome.command = Some((*window, Command::Maximize));
+                    outcome.redraw = true;
+                }
+                outcome
+            }
             Grab::Resize { window, size, .. } => {
                 // 最後の大きさを、resizing の状態を外して伝える。
                 let mut outcome = Outcome::new(Deliver::Nobody);
@@ -641,6 +673,7 @@ impl Interaction {
             origin: entry.location,
             moving: true,
             movable: true,
+            snap: false,
         };
         self.motion(stack, area, self.last, measure);
         true
@@ -1416,6 +1449,62 @@ mod tests {
         );
         assert_eq!(world.motion(150.0, 100.0).command, None);
         world.release(150.0, 100.0, LEFT_BUTTON);
+    }
+
+    #[test]
+    fn the_top_of_the_area_previews_and_makes_a_maximize() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        // full-b(外枠の左上 (32, 32))のタイトルバーを grab して、上の端へ。
+        world.press(100.0, 40.0, LEFT_BUTTON);
+        world.motion(100.0, 20.0);
+        assert_eq!(world.interaction.maximize_preview(), None);
+        let top = world.motion(100.0, 0.0);
+        assert!(top.redraw);
+        assert_eq!(world.interaction.maximize_preview(), Some(b));
+        // 離れると、予告を消す。
+        let away = world.motion(100.0, 30.0);
+        assert!(away.redraw);
+        assert_eq!(world.interaction.maximize_preview(), None);
+        // 上の端で離すと、最大化する。
+        world.motion(150.0, 0.0);
+        let release = world.release(150.0, 0.0, LEFT_BUTTON);
+        assert_eq!(release.command, Some((b, Command::Maximize)));
+        assert_eq!(world.interaction.maximize_preview(), None);
+        // 上の端から離れて離したら、最大化しない。
+        world.press(100.0, 10.0, LEFT_BUTTON);
+        world.motion(100.0, 0.0);
+        world.motion(120.0, 50.0);
+        assert_eq!(world.release(120.0, 50.0, LEFT_BUTTON).command, None);
+    }
+
+    #[test]
+    fn the_top_of_a_narrowed_area_is_its_own_top() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        // 上に高さ 40 の layer surface があると、使える範囲の上端は y 40。
+        let area = Rect::new((0, 40).into(), (640, 440).into());
+        world.stack.move_to(b, (32, 72).into());
+        world.press(100.0, 80.0, LEFT_BUTTON);
+        let motion = |world: &mut World, y: f64| {
+            world
+                .interaction
+                .motion(&mut world.stack, area, at(100.0, y), &Windows);
+            world.interaction.maximize_preview()
+        };
+        assert_eq!(motion(&mut world, 41.0), None);
+        assert_eq!(motion(&mut world, 40.0), Some(b));
+    }
+
+    #[test]
+    fn a_window_of_a_fixed_size_is_not_maximized_at_the_top() {
+        // ボタンが閉じるだけのウィンドウ(最大化のボタンが無い)。
+        let mut world = World::two();
+        world.press(100.0, 40.0, LEFT_BUTTON);
+        world.motion(100.0, 0.0);
+        assert!(world.interaction.is_moving());
+        assert_eq!(world.interaction.maximize_preview(), None);
+        assert_eq!(world.release(100.0, 0.0, LEFT_BUTTON).command, None);
     }
 
     #[test]

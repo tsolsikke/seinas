@@ -1,10 +1,13 @@
-//! 最大化しているウィンドウをドラッグで戻すことを、fake screen のピクセルと、テスト用のクライアントの出力で
-//! 確かめる。
+//! 最大化しているウィンドウをドラッグで戻すことと、上端へのドラッグで最大化することを、fake screen のピクセルと、
+//! テスト用のクライアントの出力で確かめる。
 //!
 //! 決まり(`docs/window-placement.md` の「最大化・最小化」):
 //! - 最大化しているウィンドウのタイトルバーを 8 ピクセル動かすと、元の大きさに戻り、そのまま動く。ポインターは、
 //!   元の大きさのタイトルバーの、横の同じ割合の所(ボタンの上は避ける)に来る。8 ピクセルの手前で離したら、何もしない。
-//! - foreign-toplevel の maximized の状態が合い、キーボードのフォーカスと activated は動かない。
+//! - 動かしている最中に、ポインターが使える範囲の上端に触れると、最大化の予告(使える範囲の内側に沿った、太さ
+//!   4 ピクセルの枠)を出し、そこで離すと最大化する。上端から離れると、予告を消す。大きさの決まったウィンドウでは、
+//!   予告も最大化もしない。
+//! - どちらの操作でも、foreign-toplevel の maximized の状態が合い、キーボードのフォーカスと activated は動かない。
 //!
 //! ポインターのイベントは、テスト用の入力インターフェース(`--test-input`)から送る。
 
@@ -16,6 +19,8 @@ use common::{bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, BA
 const WINDOW_WIDTH: usize = 200;
 const WINDOW_HEIGHT: usize = 150;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
+/// 最大化の予告の枠の色(activated のタイトルバーと同じ)。
+const MARK: [u8; 3] = ACTIVE_BAR;
 
 /// 外枠の左上が (`x0`, `y0`)、コンテンツが `w` × `h` のウィンドウが、activated のタイトルバーで描かれているか。
 fn shows_window(shot: &Shot, (x0, y0): (usize, usize), (w, h): (usize, usize)) -> bool {
@@ -27,6 +32,11 @@ fn shows_window(shot: &Shot, (x0, y0): (usize, usize), (w, h): (usize, usize)) -
 /// 最大化しているウィンドウが描かれているか。
 fn shows_maximized(shot: &Shot) -> bool {
     shows_window(shot, (0, 0), (WIDTH, HEIGHT - BAR))
+}
+
+/// 最大化の予告の枠が出ているか(右の辺と下の辺の、ウィンドウの無い所で見る)。
+fn shows_mark(shot: &Shot) -> bool {
+    shot.pixel(WIDTH - 2, HEIGHT / 2) == MARK && shot.pixel(WIDTH / 2 + 100, HEIGHT - 2) == MARK
 }
 
 /// 次の configure の行(`WxH [状態]`)。状態は名前の順に並べ直す。ほかの行は読み飛ばす。
@@ -164,5 +174,62 @@ fn releasing_before_the_slack_keeps_a_maximized_window() {
         format!("{WINDOW_WIDTH}x{WINDOW_HEIGHT} [activated]")
     );
     wait_for_state(&list, "activated");
+    expect_the_focus_kept(&mut seinas, &window);
+}
+
+#[test]
+fn the_top_of_the_screen_previews_and_maximizes() {
+    let (mut seinas, window, list) = start("dc", &[]);
+    seinas.wait_for_screen("the window", |shot| {
+        shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
+    });
+    // grab して下へ動かし、上の端へ戻すと、予告が出る。
+    seinas.pointer("motion 100 10");
+    seinas.pointer("press");
+    seinas.pointer("motion 100 60");
+    seinas.pointer("motion 100 0");
+    seinas.wait_for_screen("the mark", shows_mark);
+    // 上の端から離れると、予告は消える。
+    seinas.pointer("motion 100 30");
+    seinas.wait_for_screen("no mark", |shot| {
+        shot.pixel(WIDTH - 2, HEIGHT / 2) == BACKGROUND
+            && shot.pixel(WIDTH / 2 + 100, HEIGHT - 2) == BACKGROUND
+    });
+    // 上の端で離すと、最大化する。予告は消える。
+    seinas.pointer("motion 100 0");
+    seinas.wait_for_screen("the mark again", shows_mark);
+    seinas.pointer("release");
+    assert_eq!(
+        next_configure(&window, "maximized at the top"),
+        format!("{WIDTH}x{} [activated,maximized]", HEIGHT - BAR)
+    );
+    wait_for_state(&list, "activated,maximized");
+    seinas.wait_for_screen("the maximized window without the mark", shows_maximized);
+    let mut seinas = seinas;
+    expect_the_focus_kept(&mut seinas, &window);
+}
+
+#[test]
+fn a_window_of_a_fixed_size_is_not_maximized_at_the_top() {
+    let (mut seinas, mut window, _list) =
+        start("dd", &["--min-size", "200x150", "--max-size", "200x150"]);
+    seinas.wait_for_screen("the window", |shot| {
+        shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
+    });
+    seinas.pointer("motion 100 10");
+    seinas.pointer("press");
+    seinas.pointer("motion 100 60");
+    seinas.wait_for_screen("the window moved", |shot| {
+        shows_window(shot, (0, 50), (WINDOW_WIDTH, WINDOW_HEIGHT))
+    });
+    seinas.pointer("motion 100 0");
+    seinas.pointer("release");
+    window.send_line("sync");
+    window.wait_for_line("window: synced");
+    // 上の端へ動いただけで、予告も最大化も無い。
+    let shot = seinas.wait_for_shot("the window at the top", |shot| {
+        shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
+    });
+    assert_eq!(shot.pixel(WIDTH - 2, HEIGHT / 2), BACKGROUND);
     expect_the_focus_kept(&mut seinas, &window);
 }

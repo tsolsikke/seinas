@@ -55,6 +55,7 @@ use smithay::{
     backend::renderer::{
         element::{
             memory::MemoryRenderBufferRenderElement,
+            solid::{SolidColorBuffer, SolidColorRenderElement},
             render_elements,
             surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
             Kind,
@@ -171,7 +172,13 @@ render_elements! {
     pub WindowElement<=PixmanRenderer>;
     Surface=WaylandSurfaceRenderElement<PixmanRenderer>,
     TitleBar=MemoryRenderBufferRenderElement<PixmanRenderer>,
+    Mark=SolidColorRenderElement,
 }
+
+/// 最大化の予告の枠の太さ(ピクセル)。
+pub const MAXIMIZE_MARK_WIDTH: i32 = 4;
+/// 最大化の予告の枠の色(activated のタイトルバーと同じ色)。
+pub const MAXIMIZE_MARK: [u8; 3] = ACTIVE_BAR;
 
 /// 受け口の状態。`D` は、コンポジタの状態の型。
 pub struct Frontend<D: SeatHandler> {
@@ -210,6 +217,8 @@ pub struct Frontend<D: SeatHandler> {
     pub title_bars: HashMap<ObjectId, TitleBar>,
     /// ポインターでの操作(動かす、閉じる、サイズ変更)の状態。
     pub interaction: Interaction,
+    /// 最大化の予告の枠(上・下・左・右の 4 本)。
+    pub maximize_marks: [SolidColorBuffer; 4],
     /// サイズ変更の最中か、その最後の大きさがまだ届いていないウィンドウ。左か上の辺を動かしたときに、
     /// 反対の辺の位置を保つのに使う。
     pub resize_anchors: HashMap<WindowId, ResizeStart>,
@@ -739,6 +748,10 @@ impl<D: FrontendHost> Frontend<D> {
     /// ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
         let mut elements = self.layer_elements(renderer, &[Layer::Overlay, Layer::Top]);
+        // 最大化の予告は、使える範囲の内側に沿った枠で、ウィンドウより手前に描く。
+        if self.interaction.maximize_preview().is_some() {
+            elements.extend(self.maximize_mark_elements().map(WindowElement::Mark));
+        }
         let measure = self.measure();
         // 最小化しているウィンドウは描かない(Alt+Tab の候補として見せているものは描く)。
         for (window, active) in self.windows.iter_shown() {
@@ -784,6 +797,27 @@ impl<D: FrontendHost> Frontend<D> {
         }
         elements.extend(self.layer_elements(renderer, &[Layer::Bottom, Layer::Background]));
         elements
+    }
+
+    /// 最大化の予告の枠(使える範囲の内側に沿った、太さ [`MAXIMIZE_MARK_WIDTH`] の 4 本)を、描画の要素にする。
+    fn maximize_mark_elements(&mut self) -> impl Iterator<Item = SolidColorRenderElement> + '_ {
+        let area = self.usable;
+        let w = MAXIMIZE_MARK_WIDTH.min(area.size.w).min(area.size.h);
+        let (x, y, width, height) = (area.loc.x, area.loc.y, area.size.w, area.size.h);
+        let bars = [
+            (x, y, width, w),
+            (x, y + height - w, width, w),
+            (x, y + w, w, height - 2 * w),
+            (x + width - w, y + w, w, height - 2 * w),
+        ];
+        let [r, g, b] = MAXIMIZE_MARK.map(|c| c as f32 / 255.0);
+        self.maximize_marks
+            .iter_mut()
+            .zip(bars)
+            .map(move |(buffer, (x, y, w, h))| {
+                buffer.update((w, h), [r, g, b, 1.0]);
+                SolidColorRenderElement::from_buffer(buffer, (x, y), 1.0, 1.0, Kind::Unspecified)
+            })
     }
 
     /// 層が `layers` の layer surface を、描画の要素として並べる(`layers` の順に、同じ層の中は手前から)。
@@ -966,6 +1000,9 @@ where
                 .is_some_and(|window| window.is_maximized());
             frontend.set_maximized(id, !maximized);
         }
+        Some((id, Command::Maximize)) => {
+            frontend.set_maximized(id, true);
+        }
         // 最大化しているウィンドウのタイトルバーをドラッグした。元の大きさに戻し、ポインターの下へ置く。
         Some((id, Command::Restore { location })) if frontend.set_maximized(id, false) => {
             frontend.windows.move_to(id, location);
@@ -1045,6 +1082,7 @@ pub fn toplevel_request<D: FrontendHost>(
             changed
         }
         Command::Minimize => frontend.minimize(id),
+        Command::Maximize => frontend.set_maximized(id, true),
         Command::Close | Command::Restore { .. } => false,
     };
     if changed {
@@ -1758,6 +1796,7 @@ macro_rules! delegate_frontend {
                     text: $crate::load_fonts(&config.font_dir, config.font_config.as_deref()),
                     title_bars: Default::default(),
                     interaction: Default::default(),
+                    maximize_marks: Default::default(),
                     resize_anchors: Default::default(),
                 }
             }

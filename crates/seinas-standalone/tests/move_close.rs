@@ -145,8 +145,8 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
     });
 
     // 左上へ: タイトルバーの上の端は、画面の上の端で止まる。横は、タイトルバーの右の 120 ピクセル(48 と、
-    // ボタン 3 つ分の 72)が残る。
-    motion(&mut seinas, -5000, -5000);
+    // ボタン 3 つ分の 72)が残る。ポインターは、上の端(最大化の予告が出る所)の 1 つ下までにする。
+    motion(&mut seinas, -5000, 1);
     seinas.wait_for_screen("the bar kept at the top left", |shot| {
         shot.pixel(119, 0) == ACTIVE_BAR
             && shot.pixel(120, 0) == BACKGROUND
@@ -313,8 +313,8 @@ fn a_client_may_ask_to_be_moved_while_a_button_is_held_on_it() {
     seinas.wait_for_screen("the window following the pointer", |shot| {
         shows_window(shot, 60, 30, ACTIVE_BAR)
     });
-    // 画面の外の限りは、帯を掴んだときと同じ。
-    motion(&mut seinas, 100, -500);
+    // 画面の外の限りは、タイトルバーを grab したときと同じ(ポインターは、最大化の予告が出る上の端の 1 つ下まで)。
+    motion(&mut seinas, 100, 1);
     seinas.wait_for_screen("the window stopped at the top", |shot| {
         shows_window(shot, 0, 0, ACTIVE_BAR)
     });
