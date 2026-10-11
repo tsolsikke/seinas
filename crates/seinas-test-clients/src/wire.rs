@@ -475,7 +475,17 @@ impl Wire {
                 let at = |index: usize| event.u32_at(index * 4).unwrap_or(0);
                 match opcode {
                     0 => self.say(&format!("keymap {}", at(1))),
-                    1 => self.say("keyboard enter"),
+                    // 押されているキーがあれば、その番号を添える(`keyboard enter keys 42`)。
+                    1 => {
+                        let keys: Vec<String> = (0..at(2) as usize / 4)
+                            .map(|i| at(3 + i).to_string())
+                            .collect();
+                        if keys.is_empty() {
+                            self.say("keyboard enter");
+                        } else {
+                            self.say(&format!("keyboard enter keys {}", keys.join(" ")));
+                        }
+                    }
                     2 => self.say("keyboard leave"),
                     3 => {
                         let state = if at(3) == 1 { "pressed" } else { "released" };

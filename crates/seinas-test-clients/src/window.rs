@@ -9,7 +9,8 @@
 //! - `--app-id TEXT`: app_idを付ける。無ければ、付けない。
 //! - `--decoration`: 飾り(題名の帯など)をどちらの側で描くかを、xdg-decorationで尋ねる。
 //! - `--pointer`: 席のポインターを使い、届いた知らせを書く。
-//! - `--keyboard`: seat のキーボードを使い、届いたイベントを書く(`window: keyboard enter`、`window: keyboard leave`、
+//! - `--keyboard`: seat のキーボードを使い、届いたイベントを書く(`window: keyboard enter`(押されているキーが
+//!   あれば `window: keyboard enter keys 56`)、`window: keyboard leave`、
 //!   `window: key 30 pressed`、`window: modifiers 1 0 0 0`(押されている・ラッチ・ロック・グループ)、
 //!   `window: keymap 大きさ`)。
 //! - `--move-on-press`: 中身の上でボタンが押されたら、ウィンドウを動かしてほしいと頼む(xdg_toplevelのmove)。

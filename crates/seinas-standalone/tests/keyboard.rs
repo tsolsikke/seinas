@@ -180,9 +180,12 @@ fn keys_without_a_window_go_nowhere() {
     tap(&mut seinas, 30);
     seinas.pointer("key 999 press");
     seinas.pointer("key 30");
-    // 動き続けていて、後から出たウィンドウにフォーカスが付く。
+    // 動き続けていて、後から出たウィンドウにフォーカスが付く。押したままのキー(999)は、enter で伝わる。
     let window = open_window(&seinas, "一つ目");
-    expect_enter(&window, "the focus on the first window");
+    assert_eq!(
+        next_keyboard_line(&window, "enter"),
+        "window: keyboard enter keys 999"
+    );
     assert!(seinas.process.is_running());
     assert!(seinas
         .log()
