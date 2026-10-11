@@ -105,4 +105,5 @@ tools/build-musl.sh
 
 ## ライセンス
 
-MITライセンスです。`LICENSE` を見てください。第三者のライセンス文は `THIRD-PARTY/` にあります。
+自作のコードは MIT ライセンスです(`LICENSE`)。
+フォントと外部のライブラリには、それぞれのライセンスがあります(`THIRD-PARTY/README.md`)。フォントは MIT ではなく、それぞれのフォントのライセンス(SIL Open Font License 1.1)で配ります。

@@ -41,21 +41,39 @@ python3 tools/third-party.py
 
 ## フォント
 
-Seinasは、ウィンドウの題名などを描くのに、次のフォントを使います。
-フォントは、実行ファイルに埋め込まず、リポジトリにも入れていません。`tools/fetch-fonts.sh` が、版とSHA-256を固定して取得し、Seinasは実行のときにファイルとして読みます。
+Seinas が自分で描く文字(タイトルバーなど)のために、次のフォントを使います。
+フォントは、バイナリに埋め込まず、リポジトリにも入れていません。`tools/fetch-fonts.sh` がバージョンと SHA-256 を固定して取得し、Seinas は実行のときにファイルとして読みます。
+musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-musl/` には、`fonts/` の下にフォントのファイルが、`THIRD-PARTY/fonts/` の下にライセンス文と著作権表示が入ります。
 
-| フォント | 版 | 使われ方 | ライセンス | ライセンス文と著作権表示 |
-| --- | --- | --- | --- | --- |
-| BIZ UDPゴシック Regular(`BIZUDPGothic-Regular.ttf`) | 1.051 | 題名などのUIの文字 | SIL Open Font License 1.1 | `fonts/biz-udgothic-1.051/`(`OFL.txt`、`AUTHORS.txt`、`CONTRIBUTORS.txt`) |
-| GNU Unifont JP(`unifont_jp-18.0.01.otf`) | 18.0.01 | 控え(上のフォントに無い文字) | SIL Open Font License 1.1(二重ライセンスのうち、こちらを選ぶ) | `fonts/unifont-18.0.01/`(`OFL-1.1.txt`、`COPYING`) |
+この節が、フォントの出どころとライセンスの記録の置き場所です。取得元の URL と SHA-256 は `tools/fetch-fonts.sh` にあり、ほかの文書はここと `tools/fetch-fonts.sh` を指します。
 
-- BIZ UDPゴシックの取得元は、<https://github.com/googlefonts/morisawa-biz-ud-gothic> のタグ `v1.051` です。著作権表示は「Copyright 2022 The BIZ UDGothic Project Authors」で、予約されたフォント名の宣言はありません。
-- GNU Unifont JPの取得元は、GNUの配布元 <https://ftp.gnu.org/gnu/unifont/unifont-18.0.01/> です。フォントのファイルは、「SIL Open Font License 1.1」と「GNU GPL 2以降(フォントの埋め込みの例外つき)」の二重ライセンスです(上流の `COPYING` と、フォントの中のライセンスの表記に書かれています)。SeinasはOFL 1.1を選びます。`fonts/unifont-18.0.01/` の2つのファイルは、上流のソースの配布物(`unifont-18.0.01.tar.gz`)に入っているものです。
-  フォントの中の著作権表示は「Copyright © 1998-2026 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Ælla Chiana Moskopp, Rebecca Bettencourt, Ho-Seok Ee, et al.」です。
-- どちらのフォントも、手を加えずに使います。
-- `tools/fetch-fonts.sh` が取得する BIZ UDゴシック Regular(`BIZUDGothic-Regular.ttf`。端末・コード用)は、BIZ UDPゴシックと同じ配布物のもので、ライセンスも同じです。今のSeinasは、まだ使っていません。
+| フォント(上流の名前) | ファイル | バージョン | 使われ方 | 加工 | ライセンス | ライセンス文と著作権表示 |
+| --- | --- | --- | --- | --- | --- | --- |
+| BIZ UDPGothic Regular | `BIZUDPGothic-Regular.ttf` | 1.051 | UI の文字(タイトルバーなど) | なし | SIL Open Font License 1.1 | `fonts/biz-udgothic-1.051/`(`OFL.txt`、`AUTHORS.txt`、`CONTRIBUTORS.txt`) |
+| BIZ UDGothic Regular | `BIZUDGothic-Regular.ttf` | 1.051 | 端末・コードの文字(端末を作るときに使う。今のコードは読まない) | なし | SIL Open Font License 1.1 | 同上 |
+| GNU Unifont JP | `unifont_jp-18.0.01.otf` | 18.0.01 | フォールバック(上のフォントに無い文字) | なし | SIL Open Font License 1.1(二重ライセンスのうち、こちらを選ぶ。下の注記) | `fonts/unifont-18.0.01/`(`OFL-1.1.txt`、`COPYING`) |
 
-フォントのファイルをSeinasと一緒に配るときは、`fonts/` の下のライセンス文と著作権表示も一緒に配ってください。
+### BIZ UDPGothic と BIZ UDGothic
+
+- 取得元:<https://github.com/googlefonts/morisawa-biz-ud-gothic> のタグ `v1.051`(コミット 18934af56b9c003ca58c54bffbf226848cb11032)。Windows に付属するファイルではなく、OFL で公開されているものです。
+- バージョン:フォントの中の表記は `Version 1.051`。
+- 予約されたフォント名(Reserved Font Name)の宣言は、ありません。
+- 著作権表示(上流のものを、そのまま写しています):
+  - `OFL.txt` の 1 行目:`Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-mincho)`
+  - フォントの中の表記:`Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-gothic)`
+  - `OFL.txt` とフォントの中とで、URL の末尾が違います(`mincho` と `gothic`)。上流のファイルが、そうなっています。
+  - `AUTHORS.txt` に書かれた著作者:`Morisawa Inc.`、`Type Network`
+  - フォントの中の商標の表記:`BIZ UDPGothic is a trademark of Morisawa Inc.`(BIZ UDGothic のほうは、名前の部分が `BIZ UDGothic`)
+
+### GNU Unifont JP
+
+- 取得元:GNU の配布元 <https://ftp.gnu.org/gnu/unifont/unifont-18.0.01/>。同じファイルを、もう 1 つの配布元(<https://unifoundry.com/pub/unifont/unifont-18.0.01/font-builds/>)からも取り、SHA-256 が同じであることを確かめました(2026-10-05)。配布元の署名(`.sig`。鍵 95D2E9AB8740D8046387FD151A09227B1F435A33)は、鍵を取ってこられず、確かめていません。
+- バージョン:18.0.01(2026-09-16 に公開。Unicode 18.0.0 に合わせたもの)。フォントの中の名前は `Unifont-JP`。
+- 二重ライセンスの注記:上流は、フォントのファイルを「SIL Open Font License 1.1」と「GNU GPL 2 以降(フォントの埋め込みの例外つき)」の二重ライセンスで出しています。上流の `COPYING` と、フォントの中のライセンスの表記(「Dual license: SIL Open Font License version 1.1, and GNU GPL version 2 or later with the GNU Font Embedding Exception.」)の両方に書かれています(13.0.04 から)。Seinas は、OFL 1.1 を選んで使います。`fonts/unifont-18.0.01/` の 2 つのファイルは、上流のソースの配布物(`unifont-18.0.01.tar.gz`)に入っているもので、二重ライセンスの表示をそのまま残しています。
+- 予約されたフォント名の宣言は、ありません。
+- 著作権表示(フォントの中の表記):`Copyright © 1998-2026 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Ælla Chiana Moskopp, Rebecca Bettencourt, Ho-Seok Ee, et al.`
+
+フォントのファイルを Seinas と一緒に配るときは、`fonts/` の下のライセンス文と著作権表示も一緒に配ってください。Seinas 自身のコードの MIT ライセンスは、フォントには当てはまりません。
 
 ## Cのライブラリ
 

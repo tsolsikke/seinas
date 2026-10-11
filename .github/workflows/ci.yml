@@ -31,6 +31,8 @@ jobs:
           key: fonts-${{ hashFiles('tools/fetch-fonts.sh') }}
       - name: フォントを取得する(題名を描くテストが使う)
         run: tools/fetch-fonts.sh
+      - name: 既定のフォントの収録と、端末用のフォントの幅
+        run: python3 tools/font-coverage.py
       - name: ビルド(テストが使う実行ファイルを先に作る)
         run: cargo build --workspace --locked
       - name: テスト
@@ -60,13 +62,6 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools meson ninja-build bison
       - name: Rustを入れる(rust-toolchain.tomlの版)
         run: rustup show active-toolchain || rustup toolchain install
-      - name: 静的ビルド(Cのライブラリもソースから作る)
-        run: tools/build-musl.sh
-      - name: ELFの記録
-        run: |
-          tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
-          # 手元で作ったものと同じバイトになるかを比べられるよう、SHA-256を出しておく。
-          sha256sum target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min
       # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。
       # キャッシュから戻したファイルも、次の手順がSHA-256を確かめ、合わなければ取り直す。
       - name: フォントのキャッシュ
@@ -74,7 +69,21 @@ jobs:
         with:
           path: target/fonts
           key: fonts-${{ hashFiles('tools/fetch-fonts.sh') }}
-      - name: フォントを取得する(題名を描くテストが使う)
+      - name: フォントを取得する(テストと配布物が使う)
         run: tools/fetch-fonts.sh
+      - name: 静的ビルド(Cのライブラリもソースから作る)
+        run: tools/build-musl.sh
+      - name: ELFの記録
+        run: |
+          tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/zeyes-min
+          # 手元で作ったものと同じバイトになるかを比べられるよう、SHA-256を出しておく。
+          sha256sum target/x86_64-unknown-linux-musl/release/seinas-fbdev target/x86_64-unknown-linux-musl/release/seinas-standalone target/x86_64-unknown-linux-musl/release/seinas target/x86_64-unknown-linux-musl/release/zeyes-min
+      - name: 配布物にフォントとライセンスが入っていること
+        run: |
+          for f in fonts/BIZUDPGothic-Regular.ttf fonts/BIZUDGothic-Regular.ttf fonts/unifont_jp-18.0.01.otf \
+                   THIRD-PARTY/fonts/biz-udgothic-1.051/OFL.txt THIRD-PARTY/fonts/unifont-18.0.01/OFL-1.1.txt \
+                   THIRD-PARTY/fonts/unifont-18.0.01/COPYING LICENSE; do
+            test -s "target/dist/seinas-musl/$f" || { echo "missing in the dist: $f"; exit 1; }
+          done
       - name: musl向けのテスト
         run: CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$PWD/target/musl-libs/lib" cargo test --workspace --locked --target x86_64-unknown-linux-musl

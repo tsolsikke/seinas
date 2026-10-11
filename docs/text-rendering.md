@@ -126,14 +126,88 @@ Seinasは、フォントが読めなくても止まりません。原因は、�
 
 - `crates/seinas-text/tests/draw.rs`:1行を描けること、長い行を切ること、控えのフォントに切り替わること、どのフォントにも無い文字が枠になること、フォントが無い・壊れているときに落ちないこと。
 - `crates/seinas-standalone/tests/title.rs`:題名の帯が、画面に実際に描かれること(`docs/window-placement.md` の「試験」)。
+- `crates/seinas-text/tests/golden.rs`:決まった文字列の描画結果を、正解データ(golden)と比べる(`docs/golden.md`)。ASCII・かな・漢字・フォールバックに加え、見分けにくい字、円記号とバックスラッシュ、結合濁点、罫線、半角カナ、第 2 水準の漢字を含む。
 
-どちらも、`tools/fetch-fonts.sh` が置いたフォントを使います。
+どれも、`tools/fetch-fonts.sh` が置いたフォントを使います。
 
 ### まだ無いもの
 
 - 題名のほかの文字(端末、入力欄など)は、まだ描いていません。BIZ UDゴシックも、まだ読んでいません。
 - 文字の大きさや色を、設定で変える仕組みはありません。
 - 絵文字など、基本多言語面より上の文字のための控えは、入れていません。
+
+## 既定のフォントの確認(2026-10-11)
+
+既定のフォント(UI は BIZ UDPゴシック、端末・コードは BIZ UDゴシック、フォールバックは GNU Unifont JP)が、要る文字を持ち、ちゃんと描けるかを確かめた記録です。
+
+### 1. 出どころ・バージョン・ライセンス・著作権表示・ハッシュ
+
+`THIRD-PARTY/README.md` の「フォント」と、`tools/fetch-fonts.sh`(取得元の URL と SHA-256)にまとめてあります。テスト(`seinas-golden`)とビルドの手順は、フォントの SHA-256 を `tools/fetch-fonts.sh` の値と比べます。
+
+### 2. 収録
+
+`tools/font-coverage.py` で、フォントの cmap を調べました(JIS X 0208 の文字の一覧は、Python の euc_jp のコーデックから作る)。CI でも動かしています。
+
+| 対象 | 字数 | BIZ UDPゴシック | BIZ UDゴシック | GNU Unifont JP |
+| --- | --- | --- | --- | --- |
+| JIS X 0208 の非漢字(1〜8 区) | 524 | 524 | 524 | 524 |
+| JIS X 0208 の第 1 水準(16〜47 区) | 2,965 | 2,965 | 2,965 | 2,965 |
+| JIS X 0208 の第 2 水準(48〜84 区) | 3,390 | 3,390 | 3,390 | 3,390 |
+| 半角カナ(U+FF61〜FF9F) | 63 | 63 | 63 | 63 |
+| 記号(¥ \ ‾ ～ 〜 ・ 結合濁点・半濁点) | 8 | 8 | 8 | 8 |
+| 罫線(U+2500〜257F) | 128 | 32 | 32 | 128 |
+
+- JIS X 0208 の 6,879 字は、3 本とも全部持っています。
+- 罫線のうち、JIS X 0208 の 8 区にある 32 字は BIZ にあり、残りの 96 字(═ ║ ╔ など)は GNU Unifont JP で描かれます。どちらにも無い字はありません。
+
+### 3. 大きさと背景の比較
+
+`crates/seinas-text/examples/sheet.rs` で、12・14・16・18 px を、明るい背景と暗い背景で並べた画像を作り、目で見ました(`cargo run -p seinas-text --example sheet` で `target/text-sheet.ppm` ができる。リポジトリには入れていない)。
+
+- 14 px 以上は、明るい背景でも暗い背景でも、かな・漢字・英数字が読めます。
+- 12 px(ヒンティングなし)は読めますが、細い線が薄くなります。既定の 14 px 以上を守ります。
+- 罫線は、UI のフォント(プロポーショナル)では線がつながりません。罫線をつなげて描くのは、端末のフォント(等幅)の役目です。GNU Unifont JP の字(═ など)は、ドットのフォントを拡大した形で、BIZ の字より少し細く見えます。
+
+### 4. 見分けにくい字と、気をつける字
+
+- `Il1|`:I と l は形が近く(どちらも飾りの無い縦の線。l のほうが少し高い)、1 と | は見分けられます。`O0`:0 のほうが細く、見分けられます(0 に斜線や点はありません)。フォントの性質です。
+- 円記号とバックスラッシュ:U+005C は「\」(バックスラッシュ)の形で、円記号(U+00A5「¥」)と別の形で描かれます。全角の「＼」「￥」も、それぞれ別の形です。
+- 結合濁点・半濁点:「か + U+3099」は「が」と、「は + U+309A」は「ぱ」と、同じ形に描かれます(cosmic-text のシェーピングが合成するため)。
+- 罫線:上の 3 を参照。
+
+正解データ(`crates/seinas-text/tests/golden/` の confusable・yen-backslash・dakuten・box-drawing・halfwidth-kana・kanji-level2)として保存し、変わったら CI で分かるようにしてあります。
+
+### 5. 端末のフォントの幅
+
+BIZ UDゴシックの送り幅は、半角の字(ASCII の 0x21〜0x7E と半角カナ)がどれも 1,024、全角の字(第 1 水準の漢字、かな、全角の記号)がどれも 2,048 です(units_per_em は 2,048)。半角と全角は 1:2 です(`tools/font-coverage.py` で確かめる)。
+
+ただし、描くときに cosmic-text の `Hinting::Enabled`(グリフの位置をピクセルに合わせる)を使うと、奇数の大きさで 1:2 が崩れます(上の「試して分かったこと」)。端末を作るときは、セルの位置を Seinas の側で決めて描きます(運用者の決定)。
+
+### 6. フォールバックへの切り替え
+
+UI のフォントに無い字は GNU Unifont JP で、どちらにも無い字は四角の枠で描かれます(`crates/seinas-text/tests/draw.rs` と正解データ)。
+
+### 7. 配布物にフォントとライセンスが入ること
+
+`tools/build-musl.sh` の配布物 `target/dist/seinas-musl/` に、`fonts/` の下に 3 本のフォントのファイルが、`THIRD-PARTY/fonts/` の下にライセンス文と著作権表示が入ります。CI の musl のジョブで、入っていることを確かめています。
+ZeikOS のディスクイメージに置くのは、別の課題で行います。
+
+### フォントのファイルの大きさと、メモリー
+
+`crates/seinas-text/examples/memory.rs`(release で動かす)で、ファイルの大きさ、読み込んだ後のメモリー、グリフのキャッシュのメモリーを分けて測りました(2026-10-11)。
+
+| 量 | glibc | musl |
+| --- | --- | --- |
+| ファイルの大きさ(BIZ UDPゴシック + GNU Unifont JP) | 4,669,688 + 5,250,304 バイト | 同じ |
+| フォントを読み込んだ後の増え方(VmData) | +9,692 kB | +9,692 kB |
+| 短いタイトルを 1 つ描いた後の増え方(VmData) | +132 kB | +176 kB |
+| 漢字 3,000 字を 14 px で描いた後の増え方(VmData) | +1,028 kB | +1,076 kB |
+| グリフのキャッシュ(1 字あたり、VmRSS から) | 約 360 バイト | 約 400 バイト |
+
+- 読み込んだ後のメモリーは、ほぼフォントのファイルの中身そのもの(ヒープへ read したもの)です。
+- タイトルを 1 つ描いたときの VmRSS の増え方(約 1.5 MB)の大半は、初めて使うコードのページです(VmData はほとんど増えない)。
+- グリフのキャッシュは、描いた字の数に比例して増え、今は上限を置いていません。端末のように多くの字を描くようになったら、上限を考えます。
+- BIZ UDゴシック(端末用)は、まだ読み込まないので、この表に入っていません。読み込むと、ファイルの大きさ(4,667,380 バイト)のぶん増える見込みです。
 
 ## 手段の比べ
 
@@ -290,55 +364,4 @@ trials/text/run.sh
 
 ## フォントの記録
 
-### BIZ UDゴシック
-
-| 項目 | 中身 |
-| --- | --- |
-| 取得元 | <https://github.com/googlefonts/morisawa-biz-ud-gothic> のタグ `v1.051`(コミット 18934af56b9c003ca58c54bffbf226848cb11032) |
-| 取得の手順 | `tools/fetch-fonts.sh`(`target/fonts/` に置く。SHA-256が合わなければ止まる) |
-| 版 | Version 1.051(フォントの中の表記) |
-| ライセンス | SIL Open Font License, Version 1.1 |
-| 予約されたフォント名(Reserved Font Name) | 宣言は無い |
-
-| ファイル | SHA-256 |
-| --- | --- |
-| `BIZUDPGothic-Regular.ttf`(BIZ UDPGothic) | 258d7156c165f2ff774b6efee637c22c3b950de0d8a10e501137061bc8085d01 |
-| `BIZUDGothic-Regular.ttf`(BIZ UDGothic) | 7d2b48d84ef4e65c9f85bcf65fb1fb41c92b134be641fab6a7141d597c9a92b0 |
-| `OFL.txt` | e753d7155d53c747d037a445e584c8ecfca6dd79846db610417e282a736b28bc |
-| `AUTHORS.txt` | cfd728c227f41117d8c23179963b72d97c7cff01345dc755b6cb819fa1d55ba2 |
-| `CONTRIBUTORS.txt` | e7511d722f989a8cab2701b39d76e38524a25a62faaac296fc48bf04bab0f2ed |
-
-著作権表示(上流のものを、そのまま写しています):
-
-- `OFL.txt` の1行目:`Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-mincho)`
-- フォントの中の表記:`Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-gothic)`
-- `AUTHORS.txt` に書かれた著作者:`Morisawa Inc.`、`Type Network`
-- フォントの中の商標の表記:`BIZ UDPGothic is a trademark of Morisawa Inc.`(BIZ UDGothicのほうは、名前の部分が `BIZ UDGothic`)
-
-`OFL.txt` とフォントの中とで、URLの末尾が違います(`mincho` と `gothic`)。上流のファイルが、そうなっています。
-
-### GNU Unifont JP
-
-| 項目 | 中身 |
-| --- | --- |
-| 取得元 | GNUの配布元 <https://ftp.gnu.org/gnu/unifont/unifont-18.0.01/unifont_jp-18.0.01.otf> |
-| 取得の手順 | `tools/fetch-fonts.sh`(`target/fonts/` に置く。SHA-256が合わなければ止まる) |
-| 版 | 18.0.01(2026-09-16に公開。Unicode 18.0.0に合わせた版で、2026-10-05の時点でいちばん新しい) |
-| ライセンス | 「SIL Open Font License 1.1」と「GNU GPL 2以降(フォントの埋め込みの例外つき)」の二重ライセンス。SeinasはOFL 1.1を選ぶ |
-| 予約されたフォント名(Reserved Font Name) | 宣言は無い |
-| フォントの中の名前 | `Unifont-JP`(版の表記は `Version 18.0.01`) |
-
-| ファイル | SHA-256 |
-| --- | --- |
-| `unifont_jp-18.0.01.otf`(5,250,304バイト) | b411e78488d861f6b41fba514381123abb01ba7adeac8d0df8801a61891a14d3 |
-
-確かめたこと(2026-10-05):
-
-- 二重ライセンスであることは、上流のソースの配布物(`unifont-18.0.01.tar.gz`)の `COPYING` と、フォントの中のライセンスの表記(「Dual license: SIL Open Font License version 1.1, and GNU GPL version 2 or later with the GNU Font Embedding Exception.」)の両方に書かれています。上流の説明では、13.0.04から二重ライセンスになっています。
-- 同じファイルを、もう1つの配布元(<https://unifoundry.com/pub/unifont/unifont-18.0.01/font-builds/>)からも取り、SHA-256が同じであることを確かめました。
-- 配布元には、署名のファイル(`.sig`)もあります。署名の鍵は 95D2E9AB8740D8046387FD151A09227B1F435A33 と表示されましたが、鍵を取ってこられなかったので、署名そのものは確かめられていません。
-- 著作権表示(フォントの中の表記):`Copyright © 1998-2026 Roman Czyborra, Paul Hardy, Qianqian Fang, Andrew Miller, Johnnie Weaver, David Corbett, Ælla Chiana Moskopp, Rebecca Bettencourt, Ho-Seok Ee, et al.`
-
-### 置いてある場所
-
-フォントの原本は、リポジトリに入れていません。ライセンス文と著作権表示は、`THIRD-PARTY/fonts/` に置いてあります(`THIRD-PARTY/README.md` の「フォント」)。
+フォントの出どころ(取得元、バージョン、加工の有無、著作権表示、ライセンス、GNU Unifont JP の二重ライセンスの注記)は、`THIRD-PARTY/README.md` の「フォント」にまとめてあります。取得元の URL と SHA-256 は `tools/fetch-fonts.sh` にあります。同じ情報を、この文書には置きません(2026-10-11 に、ここにあった記録をそちらへまとめました)。
