@@ -112,10 +112,10 @@ def generate(out):
         f.write("# Rustクレートの一覧\n\n")
         f.write("`tools/third-party.py` が作るファイルです。手では直さないでください。\n\n")
         f.write(
-            "Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。"
+            "Cargo.lock で固定したバージョンのうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。"
             f"実行ファイルに入るものが{len(runtime)}個、ビルドのときだけ使うものが{len(build)}個です。\n\n"
         )
-        f.write("| クレート | 版 | ライセンス | 使われ方 | ライセンス文 |\n")
+        f.write("| クレート | バージョン | ライセンス | 使われ方 | ライセンス文 |\n")
         f.write("| --- | --- | --- | --- | --- |\n")
         f.write("\n".join(rows) + "\n")
 

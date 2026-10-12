@@ -2,9 +2,9 @@
 
 `tools/third-party.py` が作るファイルです。手では直さないでください。
 
-Cargo.lock で固定した版のうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。実行ファイルに入るものが104個、ビルドのときだけ使うものが20個です。
+Cargo.lock で固定したバージョンのうち、Linuxのx86-64(glibcとmusl)で使うものを載せています。実行ファイルに入るものが104個、ビルドのときだけ使うものが20個です。
 
-| クレート | 版 | ライセンス | 使われ方 | ライセンス文 |
+| クレート | バージョン | ライセンス | 使われ方 | ライセンス文 |
 | --- | --- | --- | --- | --- |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | 実行ファイルに入る | [licenses/adler2-2.0.1/](licenses/adler2-2.0.1/) |
 | appendlist | 1.4.0 | MIT | 実行ファイルに入る | [licenses/appendlist-1.4.0/](licenses/appendlist-1.4.0/) |
