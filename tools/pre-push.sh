@@ -131,10 +131,8 @@ check_whitespace() {
 }
 
 # 課題のキーは、コミットメッセージの 3 行目にだけ書く(コードと文書には書かない)。
-# 例外:docs/zeikos-requirements.md は、ZeikOS の課題への当てはめを書く文書で、キーを書くように運用者から
-# 頼まれたもの。
 check_issue_keys() {
-    hits=$(added_lines . ':!docs/zeikos-requirements.md' | grep -nE 'ZEIKOS-[0-9]+' || true)
+    hits=$(added_lines . | grep -nE 'ZEIKOS-[0-9]+' || true)
     if [ -n "$hits" ]; then
         echo "   コードか文書に、課題のキーがあります:"
         echo "$hits" | sed 's/^/     /'
