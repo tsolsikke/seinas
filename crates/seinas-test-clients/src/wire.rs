@@ -4,10 +4,11 @@
 //! ところまでを用意している。
 
 use std::{
+    collections::VecDeque,
     fs::File,
-    io::{ErrorKind, Read, Write},
+    io::{ErrorKind, Write},
     os::{
-        fd::{AsRawFd, FromRawFd},
+        fd::{AsRawFd, FromRawFd, OwnedFd},
         unix::net::UnixStream,
     },
     time::{Duration, Instant},
@@ -104,6 +105,9 @@ pub struct Wire {
     /// 状態が付いていたか。
     pub toplevel_size: Option<(u32, u32)>,
     pub toplevel_maximized: bool,
+    /// コンポジタから届いた fd(keymap など)を、届いた順に残すか。残さなければ、すぐ閉じる。
+    pub keep_fds: bool,
+    pub fds: VecDeque<OwnedFd>,
 }
 
 impl Wire {
@@ -119,8 +123,13 @@ impl Wire {
             .map_err(|e| format!("cannot send: {e}"))
     }
 
+    /// seat(wl_seat)の番号。[`Wire::watch_seat`] を呼ぶまではNone。
+    pub fn seat(&self) -> Option<u32> {
+        self.seat
+    }
+
     /// バイトと一緒に、fdを1つ送る(`SCM_RIGHTS`)。
-    fn send_with_fd(&mut self, bytes: &[u8], fd: i32) -> Result<(), String> {
+    pub fn send_with_fd(&mut self, bytes: &[u8], fd: i32) -> Result<(), String> {
         // 制御メッセージ1つぶんの領域。8バイト境界にそろえるため、u64の配列で取る。
         let mut control = [0u64; 4];
         let mut iov = libc::iovec {
@@ -189,7 +198,7 @@ impl Wire {
                 }
             }
             let mut buffer = [0u8; 4096];
-            match self.stream.read(&mut buffer) {
+            match self.receive(&mut buffer) {
                 Ok(0) => return Ok(Polled::Closed),
                 Ok(n) => self.incoming.extend(&buffer[..n]),
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
@@ -199,6 +208,46 @@ impl Wire {
                 // 切られた後の読み込みは、接続のエラーになることがある。
                 Err(_) => return Ok(Polled::Closed),
             }
+        }
+    }
+
+    /// バイトを読む。一緒に届いた fd は、`keep_fds` なら `fds` に残し、そうでなければ閉じる。
+    fn receive(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        // 制御メッセージの領域(fd を 16 個まで)。8バイト境界にそろえるため、u64の配列で取る。
+        let mut control = [0u64; 10];
+        let mut iov = libc::iovec {
+            iov_base: buffer.as_mut_ptr().cast(),
+            iov_len: buffer.len(),
+        };
+        // SAFETY: msghdrは0で始めてよい構造体で、指す先(iovとcontrol)は、recvmsgが戻るまで生きている。
+        // 届いた fd は、制御メッセージの中に書かれた数だけ読み、それぞれを1つの OwnedFd だけが持つ。
+        unsafe {
+            let mut header: libc::msghdr = std::mem::zeroed();
+            header.msg_iov = &mut iov;
+            header.msg_iovlen = 1;
+            header.msg_control = control.as_mut_ptr().cast();
+            header.msg_controllen = size_of_val(&control) as _;
+            let received =
+                libc::recvmsg(self.stream.as_raw_fd(), &mut header, libc::MSG_CMSG_CLOEXEC);
+            if received < 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mut cmsg = libc::CMSG_FIRSTHDR(&header);
+            while !cmsg.is_null() {
+                if (*cmsg).cmsg_level == libc::SOL_SOCKET && (*cmsg).cmsg_type == libc::SCM_RIGHTS {
+                    let data = libc::CMSG_DATA(cmsg).cast::<i32>();
+                    let count =
+                        ((*cmsg).cmsg_len as usize - libc::CMSG_LEN(0) as usize) / size_of::<i32>();
+                    for i in 0..count {
+                        let fd = OwnedFd::from_raw_fd(std::ptr::read_unaligned(data.add(i)));
+                        if self.keep_fds {
+                            self.fds.push_back(fd);
+                        }
+                    }
+                }
+                cmsg = libc::CMSG_NXTHDR(&header, cmsg);
+            }
+            Ok(received as usize)
         }
     }
 
@@ -615,6 +664,8 @@ pub fn connect() -> Result<Wire, String> {
         layer_size: None,
         toplevel_size: None,
         toplevel_maximized: false,
+        keep_fds: false,
+        fds: VecDeque::new(),
     })
 }
 

@@ -23,6 +23,7 @@ pub use smithay;
 mod decoration;
 mod foreign_toplevel;
 pub mod geometry;
+mod ime;
 mod interaction;
 mod ping;
 mod resize;
@@ -38,6 +39,7 @@ pub use decoration::{
     TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
+pub use ime::{ImeState, RefusedInputMethod};
 pub use interaction::{
     part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
     DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
@@ -200,6 +202,9 @@ pub struct Frontend<D: SeatHandler> {
     pub layer_shell_state: WlrLayerShellState,
     /// ウィンドウの一覧と操作(foreign-toplevel)。global は、シェルの部品にだけ見せる。
     pub foreign_toplevels: ForeignToplevelState,
+    /// IME の道(text-input-v3、input-method-v2、virtual-keyboard)。input-method と virtual-keyboard の global は、
+    /// シェルの部品にだけ見せる(ADR 0004)。
+    pub ime: ImeState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<D>,
     /// 席は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
@@ -794,6 +799,20 @@ impl<D: FrontendHost> Frontend<D> {
     /// ウィンドウ `toplevel` のクライアントに、応答なしの印が付いているか。
     pub fn is_unresponsive(&self, toplevel: &ToplevelSurface) -> bool {
         self.pings.is_unresponsive(&toplevel.client())
+    }
+
+    /// ウィンドウの画面 `surface` のコンテンツの、画面の上の矩形。IME の候補の窓を置くのに使う。ウィンドウで
+    /// なければ、大きさ 0 の矩形。
+    pub fn parent_geometry(&self, surface: &WlSurface) -> Rectangle<i32, Logical> {
+        self.windows
+            .iter()
+            .find(|window| window.item.wl_surface() == surface)
+            .map(|window| {
+                let location = content_location(window.location);
+                let size = content_size(&window.item).unwrap_or_default();
+                Rectangle::new((location.x, location.y).into(), (size.w, size.h).into())
+            })
+            .unwrap_or_default()
     }
 
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウの中身。その画面と、中身の左上の位置を返す。
@@ -1843,6 +1862,24 @@ macro_rules! delegate_frontend {
             }
         }
 
+        impl $crate::smithay::wayland::input_method::InputMethodHandler for $ty {
+            fn new_popup(&mut self, _surface: $crate::smithay::wayland::input_method::PopupSurface) {
+                $crate::FrontendHost::redraw_needed(self);
+            }
+            fn dismiss_popup(&mut self, _surface: $crate::smithay::wayland::input_method::PopupSurface) {
+                $crate::FrontendHost::redraw_needed(self);
+            }
+            fn popup_repositioned(&mut self, _surface: $crate::smithay::wayland::input_method::PopupSurface) {
+                $crate::FrontendHost::redraw_needed(self);
+            }
+            fn parent_geometry(
+                &self,
+                parent: &$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+            ) -> $crate::smithay::utils::Rectangle<i32, $crate::smithay::utils::Logical> {
+                $crate::FrontendHost::frontend(self).parent_geometry(parent)
+            }
+        }
+
         impl $crate::BuildFrontend for $ty {
             fn build_frontend(
                 display_handle: &$crate::smithay::reexports::wayland_server::DisplayHandle,
@@ -1891,6 +1928,8 @@ macro_rules! delegate_frontend {
                     );
                 // ウィンドウの一覧と操作も、シェルの部品にだけ見せる(ADR 0002)。
                 let foreign_toplevels = $crate::ForeignToplevelState::new::<Self>(display_handle);
+                // IME の道。input-method と virtual-keyboard は、キーボードがあるときだけ(ADR 0004)。
+                let ime = $crate::ImeState::new::<Self>(display_handle, keyboard.is_some());
                 $crate::Frontend {
                     display_handle: display_handle.clone(),
                     compositor_state,
@@ -1898,6 +1937,7 @@ macro_rules! delegate_frontend {
                     xdg_decoration_state,
                     layer_shell_state,
                     foreign_toplevels,
+                    ime,
                     shm_state,
                     seat_state,
                     seat,
@@ -1941,6 +1981,48 @@ macro_rules! delegate_frontend {
         ] => $crate::ForeignToplevelState);
         $crate::smithay::delegate_seat!($ty);
         $crate::smithay::delegate_output!($ty);
+        $crate::smithay::delegate_text_input_manager!($ty);
+        // input-method と virtual-keyboard は、IME を 1 つに限り、IME の要求を見るために、Smithay の手前で
+        // ImeState が受ける(`ime.rs`)。
+        $crate::smithay::reexports::wayland_server::delegate_global_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_manager_v2::ZwpInputMethodManagerV2:
+            $crate::smithay::wayland::input_method::InputMethodManagerGlobalData
+        ] => $crate::smithay::wayland::input_method::InputMethodManagerState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_manager_v2::ZwpInputMethodManagerV2: ()
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_v2::ZwpInputMethodV2:
+            $crate::smithay::wayland::input_method::InputMethodUserData<Self>
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_v2::ZwpInputMethodV2: $crate::RefusedInputMethod
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2:
+            $crate::smithay::wayland::input_method::InputMethodKeyboardUserData<Self>
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_method_keyboard_grab_v2::ZwpInputMethodKeyboardGrabV2: $crate::RefusedInputMethod
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2:
+            $crate::smithay::wayland::input_method::InputMethodPopupSurfaceUserData
+        ] => $crate::smithay::wayland::input_method::InputMethodManagerState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_input_method_v2::server::zwp_input_popup_surface_v2::ZwpInputPopupSurfaceV2: $crate::RefusedInputMethod
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_global_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1:
+            $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardManagerGlobalData
+        ] => $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1: ()
+        ] => $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1:
+            $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardUserData<Self>
+        ] => $crate::ImeState);
     };
 }
 

@@ -58,7 +58,7 @@ Smithay 0.7.0 で使えるもの(2026-10-11 に、ソースで確かめた。ま
 
 - input-method-v2 と virtual-keyboard の global は、シェルの部品のためのソケットからつないだクライアントにだけ見せる(ADR 0002 と同じ印で絞る)。IME は、全部のキーを読み、どのアプリへもキーを送れるので、強い権限だから。
 - text-input-v3 の global は、全部のクライアントに見せる(アプリが使うもの)。Smithay の部品は、公開先を絞れない。
-- IME は同時に 1 つだけにする。2 つ目の IME には、input-method-v2 の `unavailable` を送る。Smithay 0.7.0 は、これを逆に送るので(下の「足りないもの」)、Seinas の側で直すか、避ける。
+- IME は同時に 1 つだけにする。2 つ目の IME には、input-method-v2 の `unavailable` を送る。Smithay 0.7.0 は、これを逆に送るので(下の「足りないもの」)、Seinas の側で避ける:2 つ目からの `get_input_method` を Smithay へ渡さずに Seinas が受けて断る(2026-10-12 に決めた。`docs/ime.md`)。
 - Kieli は、タスクバーと同じく、起動の仕組みが起こしてシェルのソケットへつなぐ。コンポジタはプロセスを起こさない(ADR 0002 の 5)。
 
 ### 4. Seinas のショートカット
@@ -121,7 +121,7 @@ Smithay 0.7.0 で使えるもの(2026-10-11 に、ソースで確かめた。ま
 - `Seat::add_keyboard` は、xkb の名前から keymap を作るので、xkeyboard-config のファイル(Linux では `/usr/share/X11/xkb`)が要る。ZeikOS には無い。案:(a)ZeikOS に、要る分だけのファイル(evdev の rules、`jp` と `us` の symbols など)を置く、(b)Smithay に、keymap の文字列から keyboard を作る口を足す(上流に提案するか、小さなパッチ)。実装の最初に(a)の大きさを測って決める。
 - 候補の窓の描画(ウィンドウより手前の層)、置く位置の計算(画面の端での上下の入れ替え)、ポインターのヒット。
 - 注意:Smithay 0.7.0 の `add_instance` の不具合(下)は、Seinas の側で IME を 1 つに限る形で避ける(2 つ目の IME に、Smithay の取り次ぎを使わせない)。
-- IME を 1 つに限ること。Smithay 0.7.0 では、2 つ目の IME が `get_input_method` をすると、前からある IME の方へ `unavailable` を送り、新しい方には何も送らない(新しい方は覚えられず、宙に浮く。`input_method_handle.rs` の `add_instance`。ソースで確かめた)。プロトコルでは、新しい方へ送るもの。案:2 つ目のシェルの部品からの `get_input_method` を、Seinas の側で先に断る(Smithay の Dispatch の前に、手で書いた Dispatch で受ける)か、Smithay を直す。実装の刻み 2 で、動かして確かめてから決める。
+- IME を 1 つに限ること。Smithay 0.7.0 では、2 つ目の IME が `get_input_method` をすると、前からある IME の方へ `unavailable` を送り、新しい方には何も送らない(新しい方は覚えられず、宙に浮く。`input_method_handle.rs` の `add_instance`。ソースで確かめた)。プロトコルでは、新しい方へ送るもの。また、2 つ目の IME も 1 つ目と同じ keyboard の grab の入れ物を指すので、2 つ目が grab を取って手放すと、1 つ目の grab まで外れる。決定(2026-10-12):2 つ目からの `get_input_method` を、Smithay の Dispatch の前に、Seinas が書いた Dispatch で受けて断る(Seinas の側の入れ物でオブジェクトを作り、`unavailable` を送り、その後の要求は捨てる)。2 つ目の要求が Smithay の部品に届かないので、どちらの不具合も起きない。Smithay は直さない(このリポジトリの中で Smithay のバージョンを上げない)。
 - ショートカットの filter と、キーボードのフォーカスの決まり。
 - keymap を配るとき、Smithay は memfd に keymap を書いて封をする(`memfd_create` の `MFD_ALLOW_SEALING`、`fcntl` の `F_ADD_SEALS`)。
 

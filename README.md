@@ -22,6 +22,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
+| `docs/ime.md` | IME の道(見せる global、キーの道、IME を 1 つに限ること)と、テスト用の IME での試し方 |
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |

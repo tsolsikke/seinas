@@ -1,0 +1,195 @@
+//! IME の道(`docs/adr/0004-ime-keyboard-path.md`)を、テスト用の IME(`test-client ime`)とテスト用のクライアントの
+//! 出力で確かめる。
+//!
+//! 決まり:
+//! - input-method と virtual-keyboard の global は、シェルの部品のためのソケットからつないだクライアントにだけ見せる。
+//! - Seinas のショートカット(Alt+Tab)は、いつも IME へ渡す前に見る。
+//! - IME が keyboard を grab している間は、ショートカットのほかのキーを IME へ渡す。IME が virtual-keyboard で戻した
+//!   キーは、フォーカスのあるクライアントへ届く。
+//! - IME が去るか grab を手放したら、次のキーから直接の道(フォーカスのあるクライアントの wl_keyboard)にする。
+//! - IME は同時に 1 つだけ。2 つ目には unavailable を送り、1 つ目はそのまま使える。
+//!
+//! キーは、テスト用の入力インターフェース(`--test-input`)の `key` の行で送る。
+
+mod common;
+
+use common::{Compositor, TestClient};
+
+/// evdev のキーの番号。
+const KEY_X: u32 = 45;
+const KEY_Y: u32 = 21;
+const KEY_TAB: u32 = 15;
+const KEY_LEFT_ALT: u32 = 56;
+
+/// ウィンドウのキーボードの、次の行(キー、enter、leave)。修飾キーの状態と keymap の行は読み飛ばす。
+fn next_key_line(client: &TestClient, what: &str) -> String {
+    loop {
+        let line = client.next_line(what);
+        if line.starts_with("window: key ") || line.starts_with("window: keyboard ") {
+            return line;
+        }
+    }
+}
+
+/// IME の、次のキーの行。
+fn next_ime_key(ime: &TestClient, what: &str) -> String {
+    loop {
+        let line = ime.next_line(what);
+        if line.starts_with("ime: key ") {
+            return line;
+        }
+    }
+}
+
+/// キーボードを使うウィンドウを出し、フォーカスが来るまで待つ。
+fn open_window(seinas: &Compositor, title: &str) -> TestClient {
+    let window = seinas.connect_test_client(&["window", "--keyboard", "--title", title]);
+    window.wait_for_line("window: drawn");
+    assert_eq!(
+        next_key_line(&window, "the focus"),
+        "window: keyboard enter"
+    );
+    window
+}
+
+/// テスト用の IME を、シェルの部品のためのソケットへつなぎ、grab を取るまで待つ。
+fn connect_ime(seinas: &Compositor, args: &[&str]) -> TestClient {
+    let mut all = vec!["ime"];
+    all.extend(args);
+    let ime = seinas.connect_shell_client(&all);
+    ime.wait_for_line("ime: ready");
+    ime
+}
+
+/// キー `code` を押して、離す。
+fn tap(seinas: &mut Compositor, code: u32) {
+    seinas.pointer(&format!("key {code} press"));
+    seinas.pointer(&format!("key {code} release"));
+}
+
+/// ログに `text` が出るまで待つ。
+fn wait_for_log(seinas: &Compositor, text: &str) {
+    common::wait_for(text, || seinas.log().contains(text).then_some(()));
+}
+
+#[test]
+fn keys_go_through_the_ime_and_come_back_to_the_window() {
+    let mut seinas = Compositor::start_with_input("ia");
+    let window = open_window(&seinas, "窓");
+    let ime = connect_ime(&seinas, &[]);
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_ime_key(&ime, "x to the IME"), "ime: key 45 pressed");
+    assert_eq!(next_ime_key(&ime, "x to the IME"), "ime: key 45 released");
+    // IME が virtual-keyboard で戻したキーが、ウィンドウに届く。
+    assert_eq!(
+        next_key_line(&window, "x from the IME"),
+        "window: key 45 pressed"
+    );
+    assert_eq!(
+        next_key_line(&window, "x from the IME"),
+        "window: key 45 released"
+    );
+    assert!(seinas.log().contains("an input method connected"));
+}
+
+#[test]
+fn the_input_method_globals_are_only_on_the_shell_socket() {
+    let seinas = Compositor::start_with_input("ib");
+    let mut ime = seinas.connect_test_client(&["ime"]);
+    let status = ime.process.0.wait().expect("the test client ends");
+    // ふだんのソケットには input-method の global が無いので、準備の段階で失敗する(exit status 2)。
+    assert_eq!(status.code(), Some(2));
+}
+
+#[test]
+fn alt_tab_works_while_the_ime_has_the_keyboard() {
+    let mut seinas = Compositor::start_with_input("ic");
+    let first = open_window(&seinas, "一つ目");
+    let second = open_window(&seinas, "二つ目");
+    assert_eq!(next_key_line(&first, "leave"), "window: keyboard leave");
+    let ime = connect_ime(&seinas, &[]);
+    // Alt+Tab は Seinas が使う。Alt は IME へ渡り(IME がウィンドウへ戻す)、Tab は IME にも渡らない。人が打つ
+    // ときと同じく、Alt が戻ってから Tab を押す。
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
+    assert_eq!(next_ime_key(&ime, "Alt"), "ime: key 56 pressed");
+    assert_eq!(next_key_line(&second, "Alt"), "window: key 56 pressed");
+    tap(&mut seinas, KEY_TAB);
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    assert_eq!(next_ime_key(&ime, "Alt released"), "ime: key 56 released");
+    assert_eq!(
+        next_key_line(&second, "the leave"),
+        "window: keyboard leave"
+    );
+    assert_eq!(next_key_line(&first, "the enter"), "window: keyboard enter");
+    // 切り替えた先へ、次のキーが IME を通って届く。
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_ime_key(&ime, "x"), "ime: key 45 pressed");
+    loop {
+        let line = next_key_line(&first, "x on the first window");
+        // IME が戻した、Alt を離したことは、フォーカスが移った後に届く(前のウィンドウには leave が届いている
+        // ので、押されたまま残るキーは無い)。
+        if line != "window: key 56 released" {
+            assert_eq!(line, "window: key 45 pressed");
+            break;
+        }
+    }
+}
+
+#[test]
+fn keys_go_straight_to_the_window_after_the_ime_leaves() {
+    let mut seinas = Compositor::start_with_input("id");
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime.send_line("quit");
+    wait_for_log(&seinas, "the input method left");
+    tap(&mut seinas, KEY_Y);
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 pressed");
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 released");
+}
+
+#[test]
+fn keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard() {
+    let mut seinas = Compositor::start_with_input("ie");
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime.send_line("release");
+    ime.wait_for_line("ime: released");
+    wait_for_log(&seinas, "the input method released the keyboard");
+    tap(&mut seinas, KEY_Y);
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 pressed");
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 released");
+    // IME には届かない(届いていれば、sync より先に書く)。
+    ime.send_line("sync");
+    assert_eq!(ime.next_line("the sync"), "ime: synced");
+}
+
+#[test]
+fn a_second_ime_is_refused_and_the_first_keeps_working() {
+    let mut seinas = Compositor::start_with_input("if");
+    let window = open_window(&seinas, "窓");
+    let first = connect_ime(&seinas, &[]);
+    // 2 つ目は、get_input_method と grab_keyboard を送った後に unavailable を受けて終わる。
+    let mut second = seinas.connect_shell_client(&["ime"]);
+    second.wait_for_line("ime: unavailable");
+    let _ = second.process.0.wait();
+    assert!(seinas
+        .log()
+        .contains("an input method was refused (another input method is running)"));
+    // 2 つ目が grab を取って去っても、1 つ目の grab は外れない。
+    tap(&mut seinas, KEY_X);
+    assert_eq!(
+        next_ime_key(&first, "x on the first IME"),
+        "ime: key 45 pressed"
+    );
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    assert!(seinas.process.is_running());
+    // 1 つ目が去れば、次の IME を受け入れる。
+    drop(first);
+    wait_for_log(&seinas, "the input method left");
+    let third = connect_ime(&seinas, &[]);
+    tap(&mut seinas, KEY_Y);
+    assert_eq!(
+        next_ime_key(&third, "y on the third IME"),
+        "ime: key 21 pressed"
+    );
+}
