@@ -31,8 +31,8 @@ use std::{
 };
 
 use seinas_frontend::{
-    check_pings, font_dir, reap_dead_clients, BuildFrontend, Config, Frontend, FrontendHost,
-    KeyboardConfig,
+    check_pings, font_dir, geometry::Size, reap_dead_clients, BuildFrontend, Config, Frontend,
+    FrontendHost, KeyboardConfig,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -74,6 +74,21 @@ impl Seinas {
         if !self.parent.can_present() {
             // 親がまだ前の絵を使っているかもしれない。親のframeコールバックを待つ。
             return;
+        }
+        // 親の窓の大きさが変わっていたら、出力と共通のレンダラーの大きさを合わせる(ドラッグの間に届いた
+        // configure のうち、最後のものだけ)。
+        if let Some((width, height)) = self.parent.take_pending_size() {
+            match Painter::new(width, height) {
+                Ok(painter) => {
+                    self.painter = painter;
+                    self.frontend.resize_output(Size::new(width, height));
+                }
+                Err(e) => {
+                    error!("cannot resize to {width}x{height}: {e}");
+                    self.exit = true;
+                    return;
+                }
+            }
         }
         let elements = self.frontend.render_elements(self.painter.renderer());
         let mut reap_needed = false;

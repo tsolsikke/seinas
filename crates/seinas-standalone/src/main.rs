@@ -55,9 +55,10 @@ use std::{
 };
 
 use seinas_frontend::{
-    check_pings, font_dir, geometry::PointF, keyboard_input, pointer_input, reap_dead_clients,
-    set_locked_modifiers, BuildFrontend, Config, Frontend, FrontendHost, KeyboardConfig,
-    PointerInput, DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
+    check_pings, font_dir,
+    geometry::{PointF, Size},
+    keyboard_input, pointer_input, reap_dead_clients, set_locked_modifiers, BuildFrontend, Config,
+    Frontend, FrontendHost, KeyboardConfig, PointerInput, DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -159,6 +160,8 @@ enum TestInput {
     },
     /// 固定された修飾キー(入れ子の構成で、親から届く wl_keyboard の mods_locked と同じもの)。
     Locked(u32),
+    /// 出力(画面)の大きさが変わった(入れ子の構成で、親の窓の大きさが変わったときと同じもの)。fake screen だけ。
+    Output(u32, u32),
 }
 
 fn parse_test_input(line: &str, at: &mut PointF) -> Result<TestInput, String> {
@@ -174,6 +177,11 @@ fn parse_test_input(line: &str, at: &mut PointF) -> Result<TestInput, String> {
             _ => return Err(format!("key needs press or release: {line}")),
         };
         return Ok(TestInput::Key { code, pressed });
+    }
+    if let Some(rest) = line.strip_prefix("output ") {
+        let (width, height) =
+            parse_size(rest.trim()).ok_or_else(|| format!("output needs WIDTHxHEIGHT: {line}"))?;
+        return Ok(TestInput::Output(width, height));
     }
     if let Some(rest) = line.strip_prefix("locked ") {
         let mask = rest
@@ -258,6 +266,22 @@ impl Standalone {
     }
 
     /// クライアントの画面を合成して画面へ出し、クライアントへframeコールバックを返す。
+    /// 出力の大きさを `width` × `height` に変える(画面、共通のレンダラー、フロントエンド)。
+    fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
+        if (width as i32, height as i32) == self.screen.size() {
+            return Ok(());
+        }
+        if width == 0 || height == 0 {
+            return Err(format!("invalid output size: {width}x{height}").into());
+        }
+        self.screen.resize(width, height)?;
+        self.painter = Painter::new(width as i32, height as i32)?;
+        self.frontend
+            .resize_output(Size::new(width as i32, height as i32));
+        self.needs_redraw = true;
+        Ok(())
+    }
+
     fn draw(&mut self) -> Result<(), Box<dyn Error>> {
         let elements = self.frontend.render_elements(self.painter.renderer());
         let view = self.painter.paint(&elements)?;
@@ -404,6 +428,11 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                     }
                     Ok(TestInput::Locked(mask)) => {
                         set_locked_modifiers(state, mask);
+                    }
+                    Ok(TestInput::Output(width, height)) => {
+                        if let Err(e) = state.resize(width, height) {
+                            warn!("test input: {e}");
+                        }
                     }
                     Err(message) => warn!("test input: {message}"),
                 }

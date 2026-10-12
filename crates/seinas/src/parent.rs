@@ -46,6 +46,9 @@ use wayland_client::{
 use crate::Seinas;
 
 /// 親に対するクライアント側の状態。
+/// 親の窓の大きさの下限。
+const MIN_SIZE: (u32, u32) = (320, 240);
+
 pub struct Parent {
     compositor: CompositorState,
     registry_state: RegistryState,
@@ -62,12 +65,15 @@ pub struct Parent {
     cursor: Option<Cursor>,
     width: i32,
     height: i32,
+    /// 親の configure で求められた大きさで、まだ合わせていないもの。次に描くときに合わせる。
+    pending_size: Option<(i32, i32)>,
     configured: bool,
     frame_pending: bool,
 }
 
 impl Parent {
-    /// 親にウィンドウを1つ開く。大きさは `width` × `height` に固定する。
+    /// 親にウィンドウを1つ開く。最初の大きさは `width` × `height`。親の configure で大きさが変わる
+    /// ([`Parent::take_pending_size`])。
     pub fn new(
         globals: &GlobalList,
         qh: &QueueHandle<Seinas>,
@@ -81,8 +87,8 @@ impl Parent {
         let window = xdg_shell.create_window(surface, WindowDecorations::RequestServer, qh);
         window.set_title("Seinas");
         window.set_app_id("seinas");
-        window.set_min_size(Some((width as u32, height as u32)));
-        window.set_max_size(Some((width as u32, height as u32)));
+        // 小さすぎると、タイトルバーとタスクバーが入らないので、下限を置く。上限は置かない。
+        window.set_min_size(Some(MIN_SIZE));
         window.commit();
         // バッファ2枚ぶん。親が1枚を使っている間に、もう1枚へ描けるようにする。
         let pool = SlotPool::new((width * height * 4 * 2) as usize, &shm)?;
@@ -100,9 +106,27 @@ impl Parent {
             cursor: None,
             width,
             height,
+            pending_size: None,
             configured: false,
             frame_pending: false,
         })
+    }
+
+    /// 親の configure で求められた大きさのうち、まだ合わせていないもの(最後に届いたもの)を取り出し、親へ出す
+    /// バッファの大きさをそれに合わせる。呼ぶ側は、出力と共通のレンダラーの大きさも合わせる。
+    ///
+    /// 窓の大きさを変えている間(ドラッグの間)、親は configure を続けて送ってくる。届くたびではなく、描くとき
+    /// (親の frame callback で次の絵を出してよくなったとき)に、最後の大きさにだけ合わせる。こうすると、
+    /// 出力を変える回数(クライアントへの configure と、壁紙などの再描画)が、親へ絵を出す回数を越えない。
+    pub fn take_pending_size(&mut self) -> Option<(i32, i32)> {
+        let size = self.pending_size.take()?;
+        if size == (self.width, self.height) {
+            return None;
+        }
+        (self.width, self.height) = size;
+        // 前の大きさのバッファは使わない(pool は、要れば伸びる)。
+        self.buffer = None;
+        Some(size)
     }
 
     /// いま絵を出してよいか。親の最初のconfigureの前と、frameコールバックを待っている間は出さない。
@@ -221,13 +245,15 @@ impl WindowHandler for Seinas {
         configure: WindowConfigure,
         _serial: u32,
     ) {
-        // 大きさは固定。親が別の大きさを求めても、同じ大きさのバッファを出し続ける。
+        // 大きさの指定があれば、次に描くときに合わせる(指定が無ければ、今の大きさのまま)。
         if let (Some(w), Some(h)) = configure.new_size {
-            if (w.get() as i32, h.get() as i32) != (self.parent.width, self.parent.height) {
-                warn!(
-                    "the parent configured {w}x{h}; keeping {}x{} (resizing is not supported)",
-                    self.parent.width, self.parent.height
-                );
+            let size = (
+                (w.get() as i32).max(MIN_SIZE.0 as i32),
+                (h.get() as i32).max(MIN_SIZE.1 as i32),
+            );
+            if size != (self.parent.width, self.parent.height) {
+                self.parent.pending_size = Some(size);
+                self.needs_redraw = true;
             }
         }
         if !self.parent.configured {

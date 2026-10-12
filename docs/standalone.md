@@ -87,8 +87,9 @@ wl_seatは、ふだんは公開しません(入力の装置を扱わないため
 | `key CODE press` | キー `CODE`(evdev のキーの番号。30 は A、42 は左の Shift)が押された |
 | `key CODE release` | キー `CODE` が離された |
 | `locked MASK` | 固定された修飾キー(Caps Lock、Num Lock)の状態が `MASK` になった。入れ子の構成で、親から届く wl_keyboard の modifiers の mods_locked と同じもの(jp106 では、Caps Lock が 2、Num Lock が 16) |
+| `output WxH` | 出力(画面)の大きさが `W` × `H` になった。入れ子の構成で、親の窓の大きさが変わったときと同じ道(フロントエンドの `resize_output`)を通る。fake screen のときだけ働く(fbdev の装置の大きさは変えない) |
 
-- イベントは、入れ子の構成で親のWaylandから届くものと同じ道(フロントエンドの `pointer_input`、`keyboard_input`、`set_locked_modifiers`)を通ります。raise、動かす、閉じる、サイズ変更、最大化・最小化、キーボードのフォーカス、クライアントへ渡す、の決まりは、同じものが働きます。
+- イベントは、入れ子の構成で親のWaylandから届くものと同じ道(フロントエンドの `pointer_input`、`keyboard_input`、`set_locked_modifiers`、`resize_output`)を通ります。raise、動かす、閉じる、サイズ変更、最大化・最小化、キーボードのフォーカス、クライアントへ渡す、の決まりは、同じものが働きます。
 - 読めない行は、ログに出して捨てます。
 - 標準入力は、別のスレッドで読みます(この口を開いたときだけ、スレッドが1本増えます)。標準入力が閉じられると、そのスレッドは終わり、Seinasは動き続けます。
 

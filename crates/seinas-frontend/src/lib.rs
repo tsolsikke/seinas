@@ -213,6 +213,8 @@ pub struct Frontend<D: SeatHandler> {
     pub switcher: Option<Switcher>,
     /// 画面(wl_output)。
     pub output: Output,
+    /// xdg-output の global(wl_output の論理の大きさと位置を、クライアントに伝える)。
+    pub output_manager: smithay::wayland::output::OutputManagerState,
     /// 画面の大きさ。
     pub size: Size,
     /// 使える範囲(画面から、layer surface の exclusive zone を除いた矩形)。layer surface が変わったときに
@@ -366,6 +368,35 @@ impl<D: FrontendHost> Frontend<D> {
                 window.item.send_pending_configure();
             }
         }
+        true
+    }
+
+    /// 出力(画面)の大きさを `size` に変える。変わったらtrue(呼ぶ側が、再描画と、描く先の大きさを合わせる)。
+    ///
+    /// wl_output と xdg-output のモード(大きさ)を送り直し、layer surface を並べ直す(大きさの変わった layer
+    /// surface には configure が届く)。使える範囲を求め直し、ウィンドウを新しい範囲に合わせる(最大化している
+    /// ウィンドウには新しい大きさを configure で伝え、スロットのウィンドウはそのスロットへ、動かされたウィンドウは
+    /// タイトルバーが範囲に入るように戻す)。
+    pub fn resize_output(&mut self, size: Size) -> bool {
+        use smithay::output::Mode;
+        if size == self.size || size.w <= 0 || size.h <= 0 {
+            return false;
+        }
+        let mode = |size: Size| Mode {
+            size: (size.w, size.h).into(),
+            refresh: 60_000,
+        };
+        let old = mode(self.size);
+        let new = mode(size);
+        self.output
+            .change_current_state(Some(new), None, None, None);
+        self.output.set_preferred(new);
+        // 古いモードは、これからつなぐクライアントに見せない(大きさを変え続けても、モードが溜まらない)。
+        self.output.delete_mode(old);
+        self.size = size;
+        info!("output: {}x{}", size.w, size.h);
+        layer_map_for_output(&self.output).arrange();
+        self.update_usable_area();
         true
     }
 
@@ -1854,6 +1885,10 @@ macro_rules! delegate_frontend {
                 };
                 let output = $crate::new_output(config.width, config.height);
                 output.create_global::<Self>(display_handle);
+                let output_manager =
+                    $crate::smithay::wayland::output::OutputManagerState::new_with_xdg_output::<Self>(
+                        display_handle,
+                    );
                 // ウィンドウの一覧と操作も、シェルの部品にだけ見せる(ADR 0002)。
                 let foreign_toplevels = $crate::ForeignToplevelState::new::<Self>(display_handle);
                 $crate::Frontend {
@@ -1871,6 +1906,7 @@ macro_rules! delegate_frontend {
                     shortcuts: $crate::Shortcuts::seinas(),
                     switcher: None,
                     output,
+                    output_manager,
                     size: $crate::geometry::Size::new(config.width, config.height),
                     usable: $crate::geometry::Rect::from_size($crate::geometry::Size::new(
                         config.width,

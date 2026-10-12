@@ -55,6 +55,19 @@ impl Screen {
     }
 
     /// ログに出すための、画面の説明。
+    /// 画面の大きさを変える。fake screen だけができる(fbdev の装置の大きさは、Seinas からは変えない)。
+    pub fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
+        match self {
+            Screen::Device { .. } => {
+                Err("the size of a framebuffer device cannot be changed".into())
+            }
+            Screen::Fake { screen, .. } => {
+                *screen = FakeScreen::new(width, height)?;
+                Ok(())
+            }
+        }
+    }
+
     pub fn describe(&self) -> String {
         match self {
             Screen::Device { path, .. } => path.display().to_string(),
