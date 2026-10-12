@@ -212,7 +212,7 @@ if [ "$(rank "$tier")" -ge 4 ]; then
         tools/check-deps.sh seinas-fbdev seinas-text cosmic-text swash fontdb &&
         tools/check-deps.sh seinas-render seinas-text cosmic-text swash fontdb &&
         tools/check-deps.sh seinas-standalone png && tools/check-deps.sh seinas png &&
-        tools/check-deps.sh seinas-taskbar png' >/dev/null
+        tools/check-deps.sh seinas-taskbar png'
     step "musl の静的ビルド" tools/build-musl.sh
     step "musl のテスト" env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$root/target/musl-libs/lib" \
         cargo test --workspace --locked --target x86_64-unknown-linux-musl
