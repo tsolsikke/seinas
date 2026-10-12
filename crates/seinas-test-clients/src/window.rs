@@ -24,12 +24,17 @@
 //! - `--follow-size`: configure で届く大きさか、maximized の状態が変わったら、届いた大きさで再描画する(既定は、
 //!   大きさを変えない)。最初の configure の大きさには従わない(`--size` の大きさで出す)。
 //! - `--min-size WxH`、`--max-size WxH`: コンテンツの最小と最大の大きさを、コンポジタに伝える。
+//! - `--text-input`: text-input-v3 を使う(`--keyboard` も付けたことになる)。enter が届くたびに、有効にして
+//!   カーソルの矩形を送り、commit する。届いたイベントを `window: text-input enter`、`window: text-input leave`、
+//!   `window: preedit あい`、`window: commit あい`、`window: delete 1 0`、`window: text-input done` の形で書く。
+//! - `--cursor X,Y,W,H`: text-input で送るカーソルの矩形(コンテンツの左上が原点。既定は 10,20,2,16)。
 //! - `--resize-on-press EDGE`: コンテンツの上でボタンが押されたら、辺 `EDGE`(top・bottom・left・right・
 //!   top-left・top-right・bottom-left・bottom-right)でサイズ変更してほしいと頼む(xdg_toplevel の resize)。
 //!   `--pointer` も付けたことになる。
 //!
 //! 標準入力から `title TEXT` の行が届くと、タイトルを `TEXT` に変える。`maximize`、`unmaximize`、`minimize` の行が
-//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`pong` の行は、`--ignore-ping` で
+//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`cursor X Y W H` の行は、text-input の
+//! カーソルの矩形を変えて commit する。`pong` の行は、`--ignore-ping` で
 //! 返していない ping に pong を返し、`window: ponged` を書く。`sync` の行が届くと、それまでの
 //! 頼みをコンポジタが処理し終えたときに `window: synced` を書く。
 //!
@@ -54,13 +59,16 @@ use std::{
 };
 
 use crate::wire::{
-    commit_buffer_with, connect, open_window_with, protocol_error, Polled, WindowSetup, XDG_SURFACE,
+    commit_buffer_with, connect, open_window_with, protocol_error, Event, Polled, WindowSetup,
+    Wire, XDG_SURFACE,
 };
 
 /// ウィンドウの大きさと色(橙)。
 const WIDTH: i32 = 200;
 const HEIGHT: i32 = 150;
 const PIXEL: [u8; 4] = [0x00, 0x80, 0xff, 0xff]; // B, G, R, X
+/// text-input で送るカーソルの矩形の既定(x、y、幅、高さ)。
+const CURSOR: [i32; 4] = [10, 20, 2, 16];
 
 /// 起動のときの指定。
 #[derive(Default)]
@@ -75,6 +83,8 @@ struct Options {
     pixel: Option<[u8; 4]>,
     follow_size: bool,
     resize_on_press: Option<u32>,
+    text_input: bool,
+    cursor: [i32; 4],
 }
 
 /// 引数を読む。
@@ -89,6 +99,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--decoration" => options.setup.decoration = true,
             "--pointer" => options.pointer = true,
             "--keyboard" => options.keyboard = true,
+            "--text-input" => (options.keyboard, options.text_input) = (true, true),
+            "--cursor" => {
+                let text = value()?;
+                let numbers: Vec<i32> = text.split(',').filter_map(|n| n.parse().ok()).collect();
+                options.cursor = numbers
+                    .try_into()
+                    .map_err(|_| format!("--cursor needs X,Y,W,H: {text}"))?;
+            }
             "--move-on-press" => (options.pointer, options.move_on_press) = (true, true),
             "--ignore-close" => options.ignore_close = true,
             "--ignore-ping" => (options.ignore_close, options.ignore_ping) = (true, true),
@@ -120,7 +138,10 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
 
 /// コンポジタに切られるか、閉じるように頼まれるまで動く。そうなったらtrueを返す。
 pub fn run(args: &[String]) -> Result<bool, String> {
-    let options = parse_options(args)?;
+    let mut options = parse_options(args)?;
+    if options.cursor == [0; 4] {
+        options.cursor = CURSOR;
+    }
     let mut wire = connect()?;
     wire.print_configures = true;
     // プールは、ウィンドウを出している間、持ち続ける。
@@ -139,6 +160,19 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut sync = None;
     if options.pointer || options.keyboard {
         wire.watch_seat(options.pointer, options.keyboard)?;
+    }
+    let mut text_input = None;
+    if options.text_input {
+        let manager = wire.bind("zwp_text_input_manager_v3", 1)?;
+        let seat = wire.seat().ok_or("no seat")?;
+        // zwp_text_input_manager_v3.get_text_input(新しい番号、seat)
+        let id = wire.new_id();
+        wire.send(&crate::message(
+            manager,
+            1,
+            &[id.to_le_bytes(), seat.to_le_bytes()].concat(),
+        ))?;
+        text_input = Some(id);
     }
     wire.ignore_ping = options.ignore_ping;
     println!("window: drawn");
@@ -166,6 +200,10 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 }
                 if let Some(error) = protocol_error(&event) {
                     return Err(format!("protocol error: {error}"));
+                }
+                if Some(event.object) == text_input {
+                    text_input_event(&mut wire, &event, options.cursor)?;
+                    continue;
                 }
                 wire.answer(&event)?;
                 if let (true, Some(serial)) =
@@ -218,6 +256,17 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             if let Some(opcode) = opcode {
                 wire.send(&crate::message(crate::wire::TOPLEVEL, opcode, &[]))?;
             }
+            if let (Some(id), Some(rest)) = (text_input, command.strip_prefix("cursor ")) {
+                let numbers: Vec<i32> = rest
+                    .split_whitespace()
+                    .filter_map(|n| n.parse().ok())
+                    .collect();
+                if let Ok(cursor) = <[i32; 4]>::try_from(numbers) {
+                    options.cursor = cursor;
+                    send_cursor(&mut wire, id, cursor)?;
+                    wire.send(&crate::message(id, 7, &[]))?;
+                }
+            }
             if command == "pong" && wire.pong()? {
                 println!("window: ponged");
                 let _ = std::io::stdout().flush();
@@ -230,4 +279,58 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             }
         }
     }
+}
+
+fn say(text: &str) {
+    println!("window: {text}");
+    let _ = std::io::stdout().flush();
+}
+
+/// zwp_text_input_v3.set_cursor_rectangle(x、y、幅、高さ)。
+fn send_cursor(wire: &mut Wire, text_input: u32, cursor: [i32; 4]) -> Result<(), String> {
+    let body: Vec<u8> = cursor.iter().flat_map(|n| n.to_le_bytes()).collect();
+    wire.send(&crate::message(text_input, 6, &body))
+}
+
+/// 文字列の引数(null なら None)と、その次の位置。
+fn string_at(event: &Event, at: usize) -> Option<(Option<String>, usize)> {
+    let length = event.u32_at(at)? as usize;
+    if length == 0 {
+        return Some((None, at + 4));
+    }
+    let text = event.body.get(at + 4..at + 4 + length - 1)?;
+    Some((
+        Some(String::from_utf8_lossy(text).into_owned()),
+        at + 4 + length.next_multiple_of(4),
+    ))
+}
+
+/// text-input のイベントを書き、enter なら、有効にしてカーソルの矩形を送る。
+fn text_input_event(wire: &mut Wire, event: &Event, cursor: [i32; 4]) -> Result<(), String> {
+    match event.opcode {
+        0 => {
+            say("text-input enter");
+            // enable → set_cursor_rectangle → commit
+            wire.send(&crate::message(event.object, 1, &[]))?;
+            send_cursor(wire, event.object, cursor)?;
+            wire.send(&crate::message(event.object, 7, &[]))?;
+        }
+        1 => say("text-input leave"),
+        2 => {
+            let text = string_at(event, 0).and_then(|(text, _)| text);
+            say(&format!("preedit {}", text.unwrap_or_default()));
+        }
+        3 => {
+            let text = string_at(event, 0).and_then(|(text, _)| text);
+            say(&format!("commit {}", text.unwrap_or_default()));
+        }
+        4 => say(&format!(
+            "delete {} {}",
+            event.u32_at(0).unwrap_or(0),
+            event.u32_at(4).unwrap_or(0)
+        )),
+        5 => say("text-input done"),
+        _ => {}
+    }
+    Ok(())
 }

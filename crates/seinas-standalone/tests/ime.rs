@@ -193,3 +193,154 @@ fn a_second_ime_is_refused_and_the_first_keeps_working() {
         "ime: key 21 pressed"
     );
 }
+
+/// evdev のキーの番号(IME が変換中の文字にするもの)。
+const KEY_A: u32 = 30;
+const KEY_I: u32 = 23;
+const KEY_ENTER: u32 = 28;
+
+/// text-input の次の行(enter、leave、preedit、commit、delete、done)。
+fn next_text_line(client: &TestClient, what: &str) -> String {
+    loop {
+        let line = client.next_line(what);
+        let text = ["text-input ", "preedit ", "commit ", "delete "]
+            .iter()
+            .any(|prefix| line.starts_with(&format!("window: {prefix}")));
+        if text {
+            return line;
+        }
+    }
+}
+
+/// text-input の、done のほかの次の行。
+fn next_text_change(client: &TestClient, what: &str) -> String {
+    loop {
+        let line = next_text_line(client, what);
+        if line != "window: text-input done" {
+            return line;
+        }
+    }
+}
+
+/// IME の、次の activate か deactivate の行。
+fn next_activation(ime: &TestClient, what: &str) -> String {
+    loop {
+        let line = ime.next_line(what);
+        if line == "ime: activate" || line == "ime: deactivate" {
+            return line;
+        }
+    }
+}
+
+/// IME が、activate を受けて done で効かせるまで待つ(deactivate が先に届くことがある)。
+fn wait_for_activate(ime: &TestClient, what: &str) {
+    while next_activation(ime, what) != "ime: activate" {}
+    ime.wait_for_line("ime: done");
+}
+
+/// テスト用の IME をつなぎ、フォーカスのある text-input のウィンドウで activate になるまで待つ(ウィンドウが
+/// 先にあると、activate は ready より先に届くことがある。activate が届いたときには、IME は virtual-keyboard の
+/// keymap を送り終えている)。
+fn connect_ime_to_window(seinas: &Compositor) -> TestClient {
+    let ime = seinas.connect_shell_client(&["ime"]);
+    wait_for_activate(&ime, "activate");
+    ime
+}
+
+/// text-input を使うウィンドウを出し、描かれるまで待つ。
+fn open_text_window(seinas: &Compositor, title: &str) -> TestClient {
+    let window = seinas.connect_test_client(&["window", "--text-input", "--title", title]);
+    window.wait_for_line("window: drawn");
+    window
+}
+
+#[test]
+fn preedit_and_commit_reach_the_window() {
+    let mut seinas = Compositor::start_with_input("ig");
+    let window = open_text_window(&seinas, "窓");
+    // IME がつながると、フォーカスのあるウィンドウの text-input に enter が届き、ウィンドウが有効にすると、
+    // IME に activate が届く。
+    let _ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    tap(&mut seinas, KEY_I);
+    assert_eq!(next_text_line(&window, "あい"), "window: preedit あい");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    tap(&mut seinas, KEY_ENTER);
+    assert_eq!(next_text_line(&window, "commit"), "window: commit あい");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    // IME が使ったキーは、ウィンドウの wl_keyboard には届かない。使わなかったキーは、IME から戻る。
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+}
+
+#[test]
+fn a_window_opened_after_the_ime_gets_the_text_input() {
+    let mut seinas = Compositor::start_with_input("ih");
+    let ime = connect_ime(&seinas, &[]);
+    let window = open_text_window(&seinas, "窓");
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    wait_for_activate(&ime, "activate");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+}
+
+#[test]
+fn focus_changes_move_the_text_input_and_the_activation() {
+    let mut seinas = Compositor::start_with_input("ii");
+    // 最小化は、戻す手段(ウィンドウの一覧を受け取るシェルの部品)があるときだけできる。
+    let _list = seinas.connect_shell_client(&["toplevels"]);
+    let mut first = open_text_window(&seinas, "一つ目");
+    let second = open_text_window(&seinas, "二つ目");
+    let ime = connect_ime_to_window(&seinas);
+    assert_eq!(
+        next_text_change(&second, "enter"),
+        "window: text-input enter"
+    );
+
+    // Alt+Tab:二つ目に leave、IME に deactivate、一つ目に enter、IME に activate。
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
+    ime.wait_for_line("ime: key 56 pressed");
+    tap(&mut seinas, KEY_TAB);
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    assert_eq!(
+        next_text_change(&second, "leave"),
+        "window: text-input leave"
+    );
+    assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
+    assert_eq!(
+        next_text_change(&first, "enter"),
+        "window: text-input enter"
+    );
+    wait_for_activate(&ime, "activate on the first");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(
+        next_text_change(&first, "あ on the first"),
+        "window: preedit あ"
+    );
+
+    // 最小化:一つ目に leave、二つ目に enter。変換中の文字は、新しく打ち直す。
+    first.send_line("minimize");
+    assert_eq!(
+        next_text_change(&first, "leave"),
+        "window: text-input leave"
+    );
+    assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
+    assert_eq!(
+        next_text_change(&second, "enter"),
+        "window: text-input enter"
+    );
+    wait_for_activate(&ime, "activate on the second again");
+    tap(&mut seinas, KEY_I);
+    assert_eq!(
+        next_text_change(&second, "い on the second"),
+        "window: preedit い"
+    );
+
+    // 閉じる:フォーカスのあるウィンドウが無くなる(一つ目は最小化している)ので、IME は deactivate になる。
+    drop(second);
+    assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
+    ime.wait_for_line("ime: done");
+}

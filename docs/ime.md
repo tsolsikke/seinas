@@ -21,6 +21,24 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 
 Alt+Tab の最中も、Alt は IME へ渡ります。IME が戻した、Alt を離したことは、フォーカスが移った後で、新しいフォーカスのクライアントへ届くことがあります。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントはありません。
 
+## 文字の受け渡し
+
+- IME の commit_string・preedit・delete_surrounding_text は、IME の commit で、フォーカスのあるクライアントの、有効な text-input へまとめて渡します(text-input の done)。Smithay 0.7.0 の部品のままです。
+- アプリが送る、有効・無効、周りの文字、カーソルの矩形、入力の種類は、アプリの commit で IME へ渡します(IME の done)。
+
+## フォーカスが変わったとき
+
+キーボードのフォーカスが変わると(新しいウィンドウ、クリック、Alt+Tab、最小化、閉じる)、次のものが届きます。
+
+| 相手 | 届くもの |
+| --- | --- |
+| 前のフォーカスのクライアント | text-input の leave |
+| IME | deactivate と done |
+| 新しいフォーカスのクライアント | text-input の enter(IME がつないでいるときだけ) |
+| IME | 新しいクライアントが text-input を有効にして commit したら、activate と done |
+
+IME がつながったときも、フォーカスのあるクライアントに text-input の enter が届きます。フォーカスのあるウィンドウが無くなったとき(全部を最小化した、最後のウィンドウを閉じた)は、IME に deactivate と done が届きます。
+
 ## IME は同時に 1 つ
 
 IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を断ります。
@@ -47,6 +65,9 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `keys_go_straight_to_the_window_after_the_ime_leaves` | IME が去ったら、直接の道になる |
 | `keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard` | IME が grab を手放したら、直接の道になる |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
+| `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
+| `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
+| `focus_changes_move_the_text_input_and_the_activation` | Alt+Tab・最小化・閉じるで、leave・enter と deactivate・activate が届き、変換中の文字が新しいフォーカスのウィンドウに届く |
 
 ### テスト用の IME
 
@@ -57,6 +78,15 @@ WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime
 ```
 
 - keyboard を grab し、grab で届いた keymap を、そのまま virtual-keyboard の keymap にします。
+- IME が有効(activate を受けた)なら、`a`・`i`・`u` を変換中の文字の「あ」「い」「う」にし、変換中の文字があるときの Enter で確定します。
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
+
+### テスト用のアプリ
+
+`test-client window --text-input` は、ふだんのソケットへつなぎ、text-input-v3 を使います。enter が届くたびに有効にして、カーソルの矩形(`--cursor X,Y,W,H`。既定は 10,20,2,16)を送ります。届いた enter・leave・preedit・commit・done を、`window: preedit あい` のような行で標準出力に書きます。
+
+```bash
+WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input
+```
