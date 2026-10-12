@@ -21,6 +21,8 @@
 //! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
+//! - `--ime-timeout MS`: IME へ送ったキーの返事を待つ時間(ミリ秒。既定は 1000)。過ぎたら、IME が応答しないと
+//!   見なして、次のキーから直接の道にする(`docs/ime.md`)。
 //! - `--test-input`: 試験のための入力の口を開く。標準入力から、ポインターの動きとボタンを1行ずつ読む
 //!   (下の「試験のための入力の口」)。これを付けたときだけ、席(wl_seat)とポインターを公開する。
 //!
@@ -55,10 +57,11 @@ use std::{
 };
 
 use seinas_frontend::{
-    check_pings, font_dir,
+    check_ime, check_pings, font_dir,
     geometry::{PointF, Size},
     keyboard_input, pointer_input, reap_dead_clients, set_locked_modifiers, BuildFrontend, Config,
-    Frontend, FrontendHost, KeyboardConfig, PointerInput, DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
+    Frontend, FrontendHost, KeyboardConfig, PointerInput, DEFAULT_IME_TIMEOUT,
+    DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -83,7 +86,7 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 const RIGHT_BUTTON: u32 = 0x111;
 
 const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS]";
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--ime-timeout MS]";
 
 struct Options {
     device: PathBuf,
@@ -96,6 +99,8 @@ struct Options {
     test_input: bool,
     /// 閉じるように頼んだクライアントの pong を待つ時間(テストで短くするため)。
     ping_timeout: Duration,
+    /// IME へ送ったキーの返事を待つ時間(テストで変えるため)。
+    ime_timeout: Duration,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -111,6 +116,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         font_config: None,
         test_input: false,
         ping_timeout: DEFAULT_PING_TIMEOUT,
+        ime_timeout: DEFAULT_IME_TIMEOUT,
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -137,6 +143,13 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
                     .parse()
                     .map_err(|_| format!("invalid --ping-timeout value: {text}"))?;
                 options.ping_timeout = Duration::from_millis(ms);
+            }
+            "--ime-timeout" => {
+                let text = value("--ime-timeout")?;
+                let ms = text
+                    .parse()
+                    .map_err(|_| format!("invalid --ime-timeout value: {text}"))?;
+                options.ime_timeout = Duration::from_millis(ms);
             }
             other => return Err(format!("unknown argument: {other}")),
         }
@@ -353,6 +366,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             font_dir: font_dir(options.fonts),
             font_config: options.font_config.clone(),
             ping_timeout: options.ping_timeout,
+            ime_timeout: options.ime_timeout,
         },
     );
     let painter = Painter::new(width, height)?;
@@ -456,6 +470,8 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         }
         // 閉じるように頼んだクライアントの pong の期限を確かめる。
         check_pings(&mut state, Instant::now());
+        // IME へ送ったキーの返事の期限を確かめる。
+        check_ime(&mut state, Instant::now());
         // 接続を切ったクライアント(応答なしで閉じるボタンを押したもの)のクリーンアップも、ここで行う。
         let reap = std::mem::take(&mut state.frontend.reap_requested);
         if std::mem::take(&mut state.reap_needed) || reap {
@@ -464,15 +480,18 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         if let Err(e) = state.frontend.display_handle.flush_clients() {
             error!("failed to flush the clients: {e}");
         }
-        // 再描画が残っていれば、次に描いてよい時刻まで待つ。無ければ、何か起きるまで待つ。pong の期限が
-        // あれば、そこまでで起きる。
+        // 再描画が残っていれば、次に描いてよい時刻まで待つ。無ければ、何か起きるまで待つ。pong の期限と、
+        // IME の返事の期限があれば、そこまでで起きる。
         let redraw = state.needs_redraw.then(|| state.until_next_frame());
-        let ping = state
-            .frontend
-            .pings
-            .next_deadline()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        let timeout = match (redraw, ping) {
+        let deadline = [
+            state.frontend.pings.next_deadline(),
+            state.frontend.ime.next_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let timeout = match (redraw, deadline) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
         };

@@ -344,3 +344,81 @@ fn focus_changes_move_the_text_input_and_the_activation() {
     assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
     ime.wait_for_line("ime: done");
 }
+
+/// 修飾キー(左の Shift)。
+const KEY_LEFT_SHIFT: u32 = 42;
+
+/// テストで使う、IME が応答しないと見なすまでの時間(ミリ秒)。
+const IME_TIMEOUT: u64 = 300;
+
+/// IME が応答しないと見なすまでの時間を短くして起動する。
+fn start_with_ime_timeout(name: &str) -> Compositor {
+    Compositor::start_with_input_and(name, &["--ime-timeout", &IME_TIMEOUT.to_string()])
+}
+
+fn sleep_ms(ms: u64) {
+    std::thread::sleep(std::time::Duration::from_millis(ms));
+}
+
+#[test]
+fn an_unresponsive_ime_is_bypassed_and_comes_back() {
+    let mut seinas = start_with_ime_timeout("ij");
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &["--ignore-keys"]);
+    // 修飾キーだけの押下は、返事が無くても数えない。
+    for _ in 0..3 {
+        tap(&mut seinas, KEY_LEFT_SHIFT);
+        assert_eq!(next_ime_key(&ime, "Shift"), "ime: key 42 pressed");
+        assert_eq!(next_ime_key(&ime, "Shift"), "ime: key 42 released");
+        sleep_ms(IME_TIMEOUT);
+    }
+    assert!(!seinas.log().contains("did not answer"));
+    // ほかのキーに返事が無ければ、応答しないと見なす。
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_ime_key(&ime, "x"), "ime: key 45 pressed");
+    wait_for_log(&seinas, "the input method did not answer a key in 300 ms");
+    // 次のキーから、直接の道。返事の無かったキー(x)は、ウィンドウへ送り直さない。
+    tap(&mut seinas, KEY_Y);
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 pressed");
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 released");
+    ime.send_line("sync");
+    loop {
+        let line = ime.next_line("the sync");
+        assert!(!line.starts_with("ime: key 21"), "y reached the IME");
+        if line == "ime: synced" {
+            break;
+        }
+    }
+    // IME から要求が届いたら、次のキーから IME を通る道に戻る。
+    ime.send_line("answer");
+    ime.wait_for_line("ime: answered");
+    wait_for_log(&seinas, "the input method answered again");
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_ime_key(&ime, "x again"), "ime: key 45 pressed");
+    assert_eq!(
+        next_key_line(&window, "x from the IME"),
+        "window: key 45 pressed"
+    );
+}
+
+#[test]
+fn an_ime_that_answers_is_not_bypassed() {
+    // 混んだ CI でも返事が間に合うよう、既定の時間(1,000 ms)で動かす。
+    let mut seinas = Compositor::start_with_input("ik");
+    let window = open_text_window(&seinas, "窓");
+    let _ime = connect_ime_to_window(&seinas);
+    assert_eq!(
+        next_text_change(&window, "enter"),
+        "window: text-input enter"
+    );
+    // 変換中の文字にしたキー(input-method の要求で答える)と、戻したキー(virtual-keyboard の要求で答える)。
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_change(&window, "あ"), "window: preedit あ");
+    sleep_ms(1500);
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    sleep_ms(1500);
+    tap(&mut seinas, KEY_I);
+    assert_eq!(next_text_change(&window, "あい"), "window: preedit あい");
+    assert!(!seinas.log().contains("did not answer"));
+}

@@ -21,6 +21,18 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 
 Alt+Tab の最中も、Alt は IME へ渡ります。IME が戻した、Alt を離したことは、フォーカスが移った後で、新しいフォーカスのクライアントへ届くことがあります。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントはありません。
 
+## 応答しない IME
+
+IME が固まっても、キーボードが使えなくならないようにします(ADR 0004 の 2)。
+
+- キーの押下を IME へ送ってから 1,000 ms(仮の値)の間に、その IME のクライアントから要求が 1 つも届かなければ、応答しないと見なします。keyboard の grab を外し、次のキーから直接の道にします。ログに `the input method did not answer a key in 1000 ms; keys go straight to the applications` を出します。
+- 修飾キーだけの押下は、数えません(返事を待ち始めません)。
+- input-method の要求のほか、同じクライアントからの virtual-keyboard の要求も、返事として数えます。
+- 返事を待ち始めるのは、待っていないときの最初の押下です。続けて押したキーで、期限は延びません。
+- 応答しないと見なした後に、その IME から要求が届いたら、grab を戻し、次のキーから IME を通る道に戻します。ログに `the input method answered again; keys go through it again` を出します。外している間に IME が grab を手放していたら、戻しません。
+- 返事の無かったキーは、アプリへ送り直しません(同じキーが 2 度届かないように)。
+- 待つ時間は、seinas-standalone の `--ime-timeout MS` で変えられます(テストのため)。期限は、イベントループの待ち時間で待ち、タイマーの fd は作りません。
+
 ## 文字の受け渡し
 
 - IME の commit_string・preedit・delete_surrounding_text は、IME の commit で、フォーカスのあるクライアントの、有効な text-input へまとめて渡します(text-input の done)。Smithay 0.7.0 の部品のままです。
@@ -67,6 +79,8 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
+| `an_unresponsive_ime_is_bypassed_and_comes_back` | `--ime-timeout 300` で、Shift だけの押下を 3 回(合わせて 300 ms を超える)しても応答しないと見なさず、返事の無い x の後に直接の道になり、IME が要求を送ったら IME を通る道に戻る |
+| `an_ime_that_answers_is_not_bypassed` | 変換中の文字(input-method の要求)と、戻したキー(virtual-keyboard の要求)で答える IME は、間を空けて打っても応答しないと見なされない |
 | `focus_changes_move_the_text_input_and_the_activation` | Alt+Tab・最小化・閉じるで、leave・enter と deactivate・activate が届き、変換中の文字が新しいフォーカスのウィンドウに届く |
 
 ### テスト用の IME
@@ -81,6 +95,7 @@ WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime
 - IME が有効(activate を受けた)なら、`a`・`i`・`u` を変換中の文字の「あ」「い」「う」にし、変換中の文字があるときの Enter で確定します。
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
+- `--ignore-keys` を付けると、キーを受けても何も返しません(応答しない IME のまね)。標準入力の `answer` で、ふつうの動きに戻り、input-method の commit を 1 つ送ります。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
 
 ### テスト用のアプリ

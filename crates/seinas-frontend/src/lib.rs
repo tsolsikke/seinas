@@ -39,7 +39,7 @@ pub use decoration::{
     TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
-pub use ime::{ImeState, RefusedInputMethod};
+pub use ime::{check_ime, ImeState, RefusedInputMethod, DEFAULT_IME_TIMEOUT};
 pub use interaction::{
     part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
     DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
@@ -143,6 +143,9 @@ pub struct Config {
     /// 閉じるように頼んだクライアントの pong を待つ時間。過ぎたら応答なしにする(既定は
     /// [`DEFAULT_PING_TIMEOUT`])。
     pub ping_timeout: Duration,
+    /// IME へ送ったキーの返事を待つ時間。過ぎたら、IME が応答しないと見なして直接の道にする(既定は
+    /// [`DEFAULT_IME_TIMEOUT`])。
+    pub ime_timeout: Duration,
 }
 
 /// キーボードの keymap(xkb の名前)と、押し続けたときの繰り返しの設定。
@@ -1329,8 +1332,8 @@ pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
 
 /// キーの押下か解放を受ける。`code` は evdev のキーの番号、`time` は起動からの時間(ミリ秒)。
 ///
-/// 先に Seinas のショートカットを見て(IME とアプリへ渡す前)、使わなければ、キーボードのフォーカスのある
-/// クライアントへ渡す。使ったショートカットを返す。最小化しているウィンドウには、フォーカスが無いので届かない。
+/// 先に Seinas のショートカットを見て(IME とアプリへ渡す前)、使わなければ、IME が keyboard を grab していれば
+/// IME へ、していなければキーボードのフォーカスのあるクライアントへ渡す(`ime.rs`)。使ったショートカットを返す。最小化しているウィンドウには、フォーカスが無いので届かない。
 ///
 /// Alt+Tab での切り替え(`docs/window-placement.md` の「Alt+Tab」):
 /// - Alt+Tab・Alt+Shift+Tab は、切り替えを始めるか、次・前の候補へ進める。Tab はクライアントへ渡さない。
@@ -1350,6 +1353,8 @@ pub fn keyboard_input<D: FrontendHost>(
     } else {
         KeyState::Released
     };
+    // フィルターを通って、grab(IME)かクライアントへ渡したキーの keysym。
+    let mut forwarded = None;
     let used = keyboard
         .input(
             state,
@@ -1378,11 +1383,20 @@ pub fn keyboard_input<D: FrontendHost>(
                             modifiers,
                         }))
                     }
-                    Decision::Forward => FilterResult::Forward,
+                    Decision::Forward => {
+                        forwarded = Some(sym);
+                        FilterResult::Forward
+                    }
                 }
             },
         )
         .flatten();
+    // IME へ渡したキーの押下なら、返事を待ち始める(修飾キーだけの押下は数えない)。
+    if let (true, Some(sym)) = (pressed, forwarded) {
+        if !is_modifier_key(sym) {
+            ime::key_sent(state, &keyboard, Instant::now());
+        }
+    }
     let frontend = state.frontend_mut();
     let changed = match used {
         Some(shortcut) if shortcut == SWITCH_NEXT => frontend.switch_windows(false),
@@ -1929,7 +1943,11 @@ macro_rules! delegate_frontend {
                 // ウィンドウの一覧と操作も、シェルの部品にだけ見せる(ADR 0002)。
                 let foreign_toplevels = $crate::ForeignToplevelState::new::<Self>(display_handle);
                 // IME の道。input-method と virtual-keyboard は、キーボードがあるときだけ(ADR 0004)。
-                let ime = $crate::ImeState::new::<Self>(display_handle, keyboard.is_some());
+                let ime = $crate::ImeState::new::<Self>(
+                    display_handle,
+                    keyboard.is_some(),
+                    config.ime_timeout,
+                );
                 $crate::Frontend {
                     display_handle: display_handle.clone(),
                     compositor_state,
