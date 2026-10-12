@@ -236,7 +236,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         // 閉じるように頼んだクライアントの pong の期限を確かめる(ループは 16 ミリ秒ごとに回る)。
         check_pings(&mut state, Instant::now());
-        // 接続を切ったクライアント(応答なしで閉じるボタンを押したもの)の後片付けも、ここで行う。
+        // 接続を切ったクライアント(応答なしで閉じるボタンを押したもの)のクリーンアップも、ここで行う。
         let reap = std::mem::take(&mut state.frontend.reap_requested);
         if std::mem::take(&mut state.reap_needed) || reap {
             reap_dead_clients(&mut display.borrow_mut(), &mut state);

@@ -68,7 +68,7 @@ musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-m
 ### テストのための TTC
 
 - `crates/seinas-text/tests/data/two-faces.ttc`(7,696 バイト)は、BIZ UDPGothic と BIZ UDGothic の Regular(1.051)から、fontTools で数文字だけを残し、face が 2 つの TTC にしたものです。テストだけが使い、配布物には入りません。
-- OFL 1.1 の変えた版(Modified Version)として、同じ OFL 1.1 で配ります。予約されたフォント名の宣言が無いので、名前は元のままです。ライセンス文と著作権表示は、隣の `OFL.txt`(上流のもの)。作り方は、隣の `README.md` と `tools/make-test-ttc.sh`。
+- OFL 1.1 の変えたバージョン(Modified Version)として、同じ OFL 1.1 で配ります。予約されたフォント名の宣言が無いので、名前は元のままです。ライセンス文と著作権表示は、隣の `OFL.txt`(上流のもの)。作り方は、隣の `README.md` と `tools/make-test-ttc.sh`。
 
 ### GNU Unifont JP
 

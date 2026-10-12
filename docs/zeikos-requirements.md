@@ -64,7 +64,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | socket(AF_UNIX、SOCK_STREAM\|SOCK_CLOEXEC) | S N T Z | 一部 | `socket_from_ring3` 1399 行(1403 行) | SOCK_STREAM だけを受け、SOCK_CLOEXEC・SOCK_NONBLOCK が付くと EINVAL。wayland-rs はいつも SOCK_CLOEXEC を付けるので、今は失敗する | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
 | bind(ファイルシステムの上のパス)、ソケットのパスの stat | S N | 一部 | `bind_from_ring3` 2004 行、`read_socket_name` 1349 行 | 名前はカーネルの表に入るだけで、ファイルシステムに inode を作らない(stat で見えない)。名前は 31 バイトまで | flock とパスへの bind |
 | listen(backlog -1) | S N | 有る | `listen_from_ring3` 2043 行 | backlog は見ない | — |
-| accept4(SOCK_CLOEXEC)と、待っている接続が無いときの EAGAIN、ioctl(FIONBIO) | S N | 無い | 288 番が無い(accept は `accept_from_ring3` 2065 行で、いつも待つ)、`sys_ioctl` 6253 行(端末のほかは ENOTTY) | wayland-server は non-blocking の accept4 を使い、EAGAIN を「もう無い」の合図にする | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
+| accept4(SOCK_CLOEXEC)と、待っている接続が無いときの EAGAIN、ioctl(FIONBIO) | S N | 無い | 288 番が無い(accept は `accept_from_ring3` 2065 行で、いつも待つ)、`sys_ioctl` 6253 行(端末のほかは ENOTTY) | wayland-server は non-blocking の accept4 を使い、EAGAIN を「もう無い」という意味に使う | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
 | connect | N T Z | 有る | `connect_from_ring3` 2122 行 | — | — |
 | sendto・sendmsg(MSG_DONTWAIT\|MSG_NOSIGNAL)、recvmsg(MSG_DONTWAIT\|MSG_CMSG_CLOEXEC)、SCM_RIGHTS での memfd の受け渡し | S N T Z | 一部 | `sendmsg_from_ring3` 3201 行、`recvmsg_from_ring3` 3251 行、`read_msghdr` 3112 行、`write_to_socket` 2235 行 | 旗を読まず、いつも待つ(recvmsg は旗の引数を読まない。送る側も、いっぱいなら待つ)。iovlen は 1、fd は 1 通に 1 つで memfd だけ | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
 | 相手が切ったとき recvmsg が 0 を返すこと | S N T Z | 有る | `read_from_socket` 2168 行 | — | — |
@@ -93,7 +93,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
-| clone(0x7d0f00。CLONE_DETACHED を含む)、prctl(PR_SET_NAME)、gettid、スレッドごとのシグナルマスクと代替スタック | S N | 無い | 56 番(clone)・157 番(prctl)が無い。gettid は 881 行でいつも 1 | Smithay が、最初のクライアントが切れたときに shm の後片付けのスレッド(名前は「Shm dropping th…」)を作る。作れないと panic する | スレッド |
+| clone(0x7d0f00。CLONE_DETACHED を含む)、prctl(PR_SET_NAME)、gettid、スレッドごとのシグナルマスクと代替スタック | S N | 無い | 56 番(clone)・157 番(prctl)が無い。gettid は 881 行でいつも 1 | Smithay が、最初のクライアントが切れたときに shm のクリーンアップのスレッド(名前は「Shm dropping th…」)を作る。作れないと panic する | スレッド |
 | futex(FUTEX_WAIT_BITSET_PRIVATE。上のスレッドが待つ) | S N | 一部 | `sys_futex` 5559 行 | 値が合うと、待たずにプロセスを止める(終了 137) | スレッド |
 | futex(FUTEX_WAKE_PRIVATE。wayland-client などの notify) | S N T Z | 一部 | `sys_futex` 5559 行 | いつも 0 を返す。スレッドが 1 本なら、これで足りる | futex の WAKE |
 
@@ -146,7 +146,7 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 
 | 所 | 構成 | いつ | 無いとき |
 | --- | --- | --- | --- |
-| Smithay の shm の後片付けのスレッド(「Shm dropping th…」) | S N | 最初のクライアントが切れて、その pool を手放すとき | panic でコンポジタが落ちる(つないで描くまでは動く) |
+| Smithay の shm のクリーンアップのスレッド(「Shm dropping th…」) | S N | 最初のクライアントが切れて、その pool を手放すとき | panic でコンポジタが落ちる(つないで描くまでは動く) |
 | テスト用の入力インターフェースのスレッド(`--test-input`) | S | 起動のとき | ZeikOS では使わない |
 
 ほかの構成(タスクバー、zeyes-min)は、スレッドを作りません。

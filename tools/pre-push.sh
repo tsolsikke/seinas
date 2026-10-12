@@ -140,13 +140,12 @@ check_issue_keys() {
     fi
 }
 
-# 古い言い方(docs/terminology.md)は、新しく書いた行に使わない。読み方の問題なので、表示するだけにする
-# (同じ字を含む別の言葉に当たることがあるため)。
+# 古い言い方(docs/terminology.md の対応表)は、新しく書いた行に使わない。言葉の一覧は、対応表から
+# tools/old-terms.py が作る。読み方の問題なので、表示するだけにする(同じ字を含む別の言葉に当たることがあるため)。
 check_terms() {
-    pattern='題名|帯|試験|画素|知らせ|席|手前に出す|選ばれている|受け口|裏側|描き直|控え|写す|写し|並び|掴|置き場所|中身|外形|後片付け|後始末|作業ツリー|道の名前|鍵のファイル|待ち受け|焦点'
-    hits=$(added_lines . ':!docs/terminology.md' ':!tools/pre-push.sh' | grep -nE "$pattern" || true)
+    hits=$(git diff "$base"...HEAD -U0 | python3 tools/old-terms.py)
     if [ -n "$hits" ]; then
-        echo "   ・新しく書いた行に、古い言い方かもしれない字があります(docs/terminology.md を見て、直すか、そのままでよいかを決める):"
+        echo "   ・新しく書いた行に、古い言い方かもしれない言葉があります(docs/terminology.md を見て、直すか、そのままでよいかを決める):"
         echo "$hits" | cut -c1-200 | sed 's/^/   ・  /'
     fi
     return 0

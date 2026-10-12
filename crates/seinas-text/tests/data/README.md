@@ -24,4 +24,4 @@ pyftsubset target/fonts/BIZUDGothic-Regular.ttf --text='Seinasi タイトル' \
 
 ### ライセンス
 
-元のフォントは SIL Open Font License 1.1(Copyright 2022 The BIZ UDGothic Project Authors)。このファイルは、元のフォントから文字を減らした、変えた版で、同じ OFL 1.1 で配る。ライセンス文と著作権表示は、隣の `OFL.txt`(上流のもの)。元のフォントに予約したフォント名(Reserved Font Name)は無いので、名前は元のままにしてある。
+元のフォントは SIL Open Font License 1.1(Copyright 2022 The BIZ UDGothic Project Authors)。このファイルは、元のフォントから文字を減らした、変えたバージョンで、同じ OFL 1.1 で配る。ライセンス文と著作権表示は、隣の `OFL.txt`(上流のもの)。元のフォントに予約したフォント名(Reserved Font Name)は無いので、名前は元のままにしてある。

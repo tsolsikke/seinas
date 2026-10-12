@@ -229,7 +229,7 @@ pub struct Frontend<D: SeatHandler> {
     pub interaction: Interaction,
     /// 閉じるように頼んだクライアントへの ping の答えを待つ一覧と、応答なしの印。
     pub pings: Pings<ShellClient>,
-    /// 接続を切ったクライアントの後片付けを、バックエンドに頼む([`reap_dead_clients`])。
+    /// 接続を切ったクライアントのクリーンアップを、バックエンドに頼む([`reap_dead_clients`])。
     pub reap_requested: bool,
     /// 最大化の予告の枠(上・下・左・右の 4 本)。
     pub maximize_marks: [SolidColorBuffer; 4],
@@ -737,7 +737,7 @@ impl<D: FrontendHost> Frontend<D> {
     /// ウィンドウ `id` の閉じるボタンが押された。応答なしの印が付いたクライアントなら、Wayland の接続を切る
     /// (プロセスは kill しない)。そうでなければ、閉じるように頼む([`Frontend::request_close`])。
     ///
-    /// 切ったクライアントのウィンドウは、接続の後片付け(バックエンドが [`reap_dead_clients`] で行う)で、全部
+    /// 切ったクライアントのウィンドウは、接続のクリーンアップ(バックエンドが [`reap_dead_clients`] で行う)で、全部
     /// 消える。
     pub fn close_button(&mut self, id: WindowId) {
         let Some(window) = self.windows.get(id) else {
