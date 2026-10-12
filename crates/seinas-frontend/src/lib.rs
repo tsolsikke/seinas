@@ -24,6 +24,7 @@ mod decoration;
 mod foreign_toplevel;
 pub mod geometry;
 mod ime;
+mod ime_popup;
 mod interaction;
 mod ping;
 mod resize;
@@ -39,7 +40,10 @@ pub use decoration::{
     TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
-pub use ime::{check_ime, ImeState, RefusedInputMethod, DEFAULT_IME_TIMEOUT};
+pub use ime::{
+    check_ime, popup_hidden, popup_shown, ImeState, RefusedInputMethod, DEFAULT_IME_TIMEOUT,
+};
+pub use ime_popup::popup_location;
 pub use interaction::{
     part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
     DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
@@ -818,6 +822,30 @@ impl<D: FrontendHost> Frontend<D> {
             .unwrap_or_default()
     }
 
+    /// 見せている IME の候補の窓と、画面の上の位置(左上)。親のウィンドウが見えていない(最小化している)ときと、
+    /// 候補の窓がまだ絵を出していないときはNone。
+    ///
+    /// 位置は、親のウィンドウのいまのコンテンツの位置に、アプリが伝えたカーソルの矩形を足し、[`popup_location`] で
+    /// 決める(ウィンドウを動かしたときも、出力の大きさが変わったときも、描くたびに求め直す)。
+    pub fn ime_popup(&self) -> Option<(WlSurface, Point)> {
+        let popup = self.ime.popup.as_ref().filter(|popup| popup.alive())?;
+        let parent = popup.get_parent()?;
+        let window = self
+            .windows
+            .iter()
+            .find(|window| !window.minimized && window.item.wl_surface() == &parent.surface)?;
+        let content = content_location(window.location);
+        let size: SmithaySize<i32, Logical> =
+            with_renderer_surface_state(popup.wl_surface(), |state| state.surface_size())??;
+        let cursor = popup.text_input_rectangle();
+        let cursor = Rect::new(
+            (content.x + cursor.loc.x, content.y + cursor.loc.y).into(),
+            (cursor.size.w, cursor.size.h).into(),
+        );
+        let location = popup_location(self.size, cursor, Size::new(size.w, size.h));
+        Some((popup.wl_surface().clone(), location))
+    }
+
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウの中身。その画面と、中身の左上の位置を返す。
     ///
     /// 点がタイトルバーの上にあるときは、Noneを返す(タイトルバーはSeinasのもので、クライアントには渡さない)。
@@ -842,10 +870,16 @@ impl<D: FrontendHost> Frontend<D> {
         })
     }
 
-    /// 画面の上の点 `point` で、ポインターのイベントを受け取る画面。手前から順に、overlay と top の
-    /// layer surface、ウィンドウの中身、bottom と background の layer surface。
+    /// 画面の上の点 `point` で、ポインターのイベントを受け取る画面。手前から順に、overlay の layer surface、
+    /// IME の候補の窓、top の layer surface、ウィンドウのコンテンツ、bottom と background の layer surface。
     pub fn surface_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
-        if let Some(found) = self.layer_under(point, &[Layer::Overlay, Layer::Top]) {
+        if let Some(found) = self.layer_under(point, &[Layer::Overlay]) {
+            return Some(found);
+        }
+        if let Some(found) = self.ime_popup_under(point) {
+            return Some(found);
+        }
+        if let Some(found) = self.layer_under(point, &[Layer::Top]) {
             return Some(found);
         }
         if self.windows.index_at(point, window_size).is_some() {
@@ -855,10 +889,34 @@ impl<D: FrontendHost> Frontend<D> {
         self.layer_under(point, &[Layer::Bottom, Layer::Background])
     }
 
-    /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay と top の layer surface、
-    /// ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
+    /// 点 `point` にある IME の候補の窓と、その左上の位置。
+    fn ime_popup_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
+        let (surface, location) = self.ime_popup()?;
+        let size = with_renderer_surface_state(&surface, |state| state.surface_size())??;
+        Rect::new(location, Size::new(size.w, size.h))
+            .contains(point)
+            .then(|| (surface, location.to_f64()))
+    }
+
+    /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay の layer surface、IME の候補の窓、
+    /// top の layer surface、ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
-        let mut elements = self.layer_elements(renderer, &[Layer::Overlay, Layer::Top]);
+        let mut elements = self.layer_elements(renderer, &[Layer::Overlay]);
+        if let Some((surface, location)) = self.ime_popup() {
+            elements.extend(
+                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                    renderer,
+                    &surface,
+                    (location.x, location.y),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                )
+                .into_iter()
+                .map(WindowElement::Surface),
+            );
+        }
+        elements.extend(self.layer_elements(renderer, &[Layer::Top]));
         // 最大化の予告は、使える範囲の内側に沿った枠で、ウィンドウより手前に描く。
         if self.interaction.maximize_preview().is_some() {
             elements.extend(self.maximize_mark_elements().map(WindowElement::Mark));
@@ -977,10 +1035,12 @@ impl<D: FrontendHost> Frontend<D> {
     /// クライアントへframeコールバックを返す(「次の絵を描いてよい」の合図)。
     pub fn send_frame_callbacks(&self, elapsed: Duration) {
         let time = elapsed.as_millis() as u32;
-        let layers: Vec<WlSurface> = layer_map_for_output(&self.output)
+        let mut layers: Vec<WlSurface> = layer_map_for_output(&self.output)
             .layers()
             .map(|layer| layer.wl_surface().clone())
             .collect();
+        // IME の候補の窓は、見せているときだけ。
+        layers.extend(self.ime_popup().map(|(surface, _)| surface));
         // 最小化しているウィンドウには返さない(描いていないので)。
         let windows = self
             .windows
@@ -1877,11 +1937,11 @@ macro_rules! delegate_frontend {
         }
 
         impl $crate::smithay::wayland::input_method::InputMethodHandler for $ty {
-            fn new_popup(&mut self, _surface: $crate::smithay::wayland::input_method::PopupSurface) {
-                $crate::FrontendHost::redraw_needed(self);
+            fn new_popup(&mut self, surface: $crate::smithay::wayland::input_method::PopupSurface) {
+                $crate::popup_shown(self, surface);
             }
-            fn dismiss_popup(&mut self, _surface: $crate::smithay::wayland::input_method::PopupSurface) {
-                $crate::FrontendHost::redraw_needed(self);
+            fn dismiss_popup(&mut self, surface: $crate::smithay::wayland::input_method::PopupSurface) {
+                $crate::popup_hidden(self, surface);
             }
             fn popup_repositioned(&mut self, _surface: $crate::smithay::wayland::input_method::PopupSurface) {
                 $crate::FrontendHost::redraw_needed(self);

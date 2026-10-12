@@ -25,6 +25,9 @@
 //!   いる grab のオブジェクトだけが無くなり、次のキーで Smithay が `unwrap` で止まる。
 //!
 //! 2 つ目の要求が Smithay の部品に一度も届かなければ、どちらも起きない。
+//!
+//! 候補の窓(input popup surface)は、見せるときと隠すときに Smithay が呼ぶ([`popup_shown`]、[`popup_hidden`])。置く
+//! 位置は、描くときに、親のウィンドウのいまの位置と、カーソルの矩形と、画面の大きさから求める(`ime_popup.rs`)。
 
 use std::time::{Duration, Instant};
 
@@ -55,7 +58,7 @@ use smithay::{
         input_method::{
             InputMethodHandler, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
             InputMethodManagerGlobalData, InputMethodManagerState, InputMethodPopupSurfaceUserData,
-            InputMethodSeat, InputMethodUserData,
+            InputMethodSeat, InputMethodUserData, PopupSurface,
         },
         text_input::{TextInputManagerState, TextInputUserData},
         virtual_keyboard::{
@@ -85,6 +88,8 @@ pub struct ImeState {
     /// 応答しないと見なして、keyboard の grab を外しているか。外した grab は `suspended` に残す。
     unresponsive: bool,
     suspended: Option<InputMethodKeyboardGrab>,
+    /// 見せている候補の窓。IME が有効で、親(フォーカスのあるウィンドウ)があるときだけ。
+    pub popup: Option<PopupSurface>,
 }
 
 /// Smithay へ通した IME のクライアントと、そのオブジェクトが残っているか。
@@ -132,6 +137,7 @@ impl ImeState {
             deadline: None,
             unresponsive: false,
             suspended: None,
+            popup: None,
         }
     }
 
@@ -241,6 +247,25 @@ fn answered<D: FrontendHost>(state: &mut D, client: &ClientId) {
         }
     }
     info!("the input method answered again; keys go through it again");
+}
+
+/// 候補の窓を見せる(Smithay の `InputMethodHandler::new_popup`)。[`delegate_frontend!`] が使う。
+///
+/// [`delegate_frontend!`]: crate::delegate_frontend
+pub fn popup_shown<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
+    state.frontend_mut().ime.popup = Some(popup);
+    state.redraw_needed();
+}
+
+/// 候補の窓を隠す(Smithay の `InputMethodHandler::dismiss_popup`)。[`delegate_frontend!`] が使う。
+///
+/// [`delegate_frontend!`]: crate::delegate_frontend
+pub fn popup_hidden<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
+    let ime = &mut state.frontend_mut().ime;
+    if ime.popup.as_ref() == Some(&popup) {
+        ime.popup = None;
+    }
+    state.redraw_needed();
 }
 
 /// 新しい IME を断る理由。断らなければNone。

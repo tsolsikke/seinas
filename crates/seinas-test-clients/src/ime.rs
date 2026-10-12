@@ -10,6 +10,8 @@
 //!
 //! 引数:
 //!
+//! - `--popup WxH`: 大きさ WxH の候補の窓(input popup surface)を、紫(8000ff)の単色で出す。コンポジタから届いた
+//!   カーソルの矩形を `ime: popup rectangle X Y W H` の形で書く。
 //! - `--ignore-keys`: キーを受けても、何も返さない(応答しない IME のまね)。標準入力の `answer` の行で、ふつうの
 //!   動きに戻り、input-method の commit を 1 つ送る。
 //!
@@ -62,9 +64,15 @@ fn kana(key: u32) -> Option<char> {
 /// 接続を切られるか、`quit` の行が届くまで動く。断られたら(unavailable)falseを返す。
 pub fn run(args: &[String]) -> Result<bool, String> {
     let mut ignore_keys = false;
-    for arg in args {
+    let mut popup_size = None;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
         match arg.as_str() {
             "--ignore-keys" => ignore_keys = true,
+            "--popup" => {
+                let size = args.next().ok_or("--popup needs WxH")?;
+                popup_size = Some(crate::layer::parse_size(size)?);
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -92,6 +100,14 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     // zwp_input_method_v2.grab_keyboard(新しい番号)
     let grab = wire.new_id();
     wire.send(&message(input_method, 5, &grab.to_le_bytes()))?;
+    // 候補の窓の pool は、出している間、持ち続ける。
+    let (popup, _pool) = match popup_size {
+        Some((width, height)) => {
+            let (popup, pool) = open_popup(&mut wire, input_method, width as i32, height as i32)?;
+            (Some(popup), Some(pool))
+        }
+        None => (None, None),
+    };
 
     let (sender, commands) = mpsc::channel();
     std::thread::spawn(move || {
@@ -132,6 +148,17 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 (object, _) if Some(object) == sync => {
                     sync = None;
                     say("synced");
+                }
+                // zwp_input_popup_surface_v2.text_input_rectangle(x、y、幅、高さ)
+                (object, 0) if Some(object) == popup => {
+                    let at = |index: usize| event.u32_at(index * 4).unwrap_or(0) as i32;
+                    say(&format!(
+                        "popup rectangle {} {} {} {}",
+                        at(0),
+                        at(1),
+                        at(2),
+                        at(3)
+                    ));
                 }
                 (object, opcode) if object == input_method => match opcode {
                     0 => {
@@ -264,4 +291,59 @@ fn send_preedit(
     // zwp_input_method_v2.set_preedit_string → commit(serial)
     wire.send(&message(input_method, 1, &body))?;
     wire.send(&message(input_method, 3, &serial.to_le_bytes()))
+}
+
+/// 候補の窓の色(B, G, R, X。紫)。
+const POPUP_PIXEL: [u8; 4] = [0xff, 0x00, 0x80, 0xff];
+
+/// 候補の窓(input popup surface)を作り、`width` × `height` の単色の絵を出す。返すのは、popup surface の番号と
+/// pool(memfd)。
+fn open_popup(
+    wire: &mut crate::wire::Wire,
+    input_method: u32,
+    width: i32,
+    height: i32,
+) -> Result<(u32, std::fs::File), String> {
+    let compositor = wire.bind("wl_compositor", 1)?;
+    let shm = wire.bind("wl_shm", 1)?;
+    // wl_compositor.create_surface → zwp_input_method_v2.get_input_popup_surface(新しい番号、surface)
+    let surface = wire.new_id();
+    wire.send(&message(compositor, 0, &surface.to_le_bytes()))?;
+    let popup = wire.new_id();
+    wire.send(&message(
+        input_method,
+        4,
+        &[popup.to_le_bytes(), surface.to_le_bytes()].concat(),
+    ))?;
+    // wl_shm.create_pool → wl_shm_pool.create_buffer(xrgb8888)
+    let stride = width * 4;
+    let file = crate::wire::make_pool(width, height, POPUP_PIXEL)?;
+    let pool = wire.new_id();
+    wire.send_with_fd(
+        &message(
+            shm,
+            0,
+            &[pool.to_le_bytes(), (stride * height).to_le_bytes()].concat(),
+        ),
+        file.as_raw_fd(),
+    )?;
+    let buffer = wire.new_id();
+    let mut create = buffer.to_le_bytes().to_vec();
+    for value in [0, width, height, stride, 1] {
+        create.extend(value.to_le_bytes());
+    }
+    wire.send(&message(pool, 0, &create))?;
+    // wl_surface.attach → damage → commit
+    wire.send(&message(
+        surface,
+        1,
+        &[buffer.to_le_bytes(), [0; 4], [0; 4]].concat(),
+    ))?;
+    let damage: Vec<u8> = [0, 0, width, height]
+        .iter()
+        .flat_map(|n| n.to_le_bytes())
+        .collect();
+    wire.send(&message(surface, 2, &damage))?;
+    wire.send(&message(surface, 6, &[]))?;
+    Ok((popup, file))
 }

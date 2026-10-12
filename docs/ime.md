@@ -51,6 +51,16 @@ IME が固まっても、キーボードが使えなくならないようにし�
 
 IME がつながったときも、フォーカスのあるクライアントに text-input の enter が届きます。フォーカスのあるウィンドウが無くなったとき(全部を最小化した、最後のウィンドウを閉じた)は、IME に deactivate と done が届きます。
 
+## 候補の窓
+
+IME の候補の窓(input popup surface)は、Seinas が置きます(ADR 0004 の 5)。
+
+- 見せるのは、IME が有効で、親(text-input のフォーカスのあるウィンドウ)があるときだけです。フォーカスが移って IME が deactivate になると隠し、新しいウィンドウで activate になると、そのウィンドウを親にして見せます。
+- 置く位置は、親のウィンドウのコンテンツの左上に、アプリが伝えたカーソルの矩形(`set_cursor_rectangle`)を足した所の下で、左の端をカーソルにそろえます。画面の下の端からはみ出すなら、カーソルの矩形の上に置きます。それでもはみ出す分は、画面の中へ寄せます(右の端、左の端、上の端)。
+- 位置は、描くたびに求め直します。ウィンドウを動かしたとき、カーソルの矩形が変わったとき、出力の大きさが変わったときも、画面の中に収まります。
+- 重ね方は、overlay の layer surface の下、top の layer surface とウィンドウの上です。ポインターのイベントも、同じ順で候補の窓が受けます(候補を押して選べるように)。
+- 親のウィンドウが最小化しているときは、描きません。
+
 ## IME は同時に 1 つ
 
 IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を断ります。
@@ -81,6 +91,10 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
 | `an_unresponsive_ime_is_bypassed_and_comes_back` | `--ime-timeout 300` で、Shift だけの押下を 3 回(合わせて 300 ms を超える)しても応答しないと見なさず、返事の無い x の後に直接の道になり、IME が要求を送ったら IME を通る道に戻る |
 | `an_ime_that_answers_is_not_bypassed` | 変換中の文字(input-method の要求)と、戻したキー(virtual-keyboard の要求)で答える IME は、間を空けて打っても応答しないと見なされない |
+| `the_candidate_window_follows_the_cursor_inside_the_output` | 候補の窓(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |
+| `the_candidate_window_goes_above_the_cursor_at_the_bottom_edge` | 下に入らないときは、カーソルの矩形の上に出る |
+| `the_candidate_window_stays_inside_a_resized_output` | 出力の高さを縮めると、下から上へ移る |
+| `the_candidate_window_hides_when_the_focus_leaves` | フォーカスが text-input を使わないウィンドウへ移ると、候補の窓が消える |
 | `focus_changes_move_the_text_input_and_the_activation` | Alt+Tab・最小化・閉じるで、leave・enter と deactivate・activate が届き、変換中の文字が新しいフォーカスのウィンドウに届く |
 
 ### テスト用の IME
@@ -95,6 +109,7 @@ WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime
 - IME が有効(activate を受けた)なら、`a`・`i`・`u` を変換中の文字の「あ」「い」「う」にし、変換中の文字があるときの Enter で確定します。
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
+- `--popup WxH` を付けると、その大きさの候補の窓を、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
 - `--ignore-keys` を付けると、キーを受けても何も返しません(応答しない IME のまね)。標準入力の `answer` で、ふつうの動きに戻り、input-method の commit を 1 つ送ります。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
 
@@ -105,3 +120,21 @@ WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime
 ```bash
 WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input
 ```
+
+位置の決まり(`popup_location`)のユニットテストは、`cargo test -p seinas-frontend --lib ime_popup` です。
+
+### 入れ子の構成で試す手順(運用者の方へ)
+
+入れ子の構成(WSLg の中の `seinas`)では、キーを親の窓から打つので、CI ではなく手で確かめます。IME には、テスト用の IME を使います(fcitx5 などを入れる必要はありません)。
+
+1. ビルドする:`cargo build --workspace --locked` と `tools/fetch-fonts.sh`。
+2. 端末 1 で、入れ子の Seinas を起動する:`target/debug/seinas`。ふだんのソケットは `seinas-0`、シェルの部品のためのソケットは `seinas-0-shell` です(どちらも `XDG_RUNTIME_DIR` の下)。
+3. 端末 2 で、テスト用のアプリを出す:`WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input --title あ`。
+4. 端末 3 で、テスト用の IME をつなぐ:`WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime --popup 40x30`。端末 3 に `ime: ready` と `ime: activate` が出ます。
+5. Seinas の窓をクリックしてキーボードのフォーカスを渡し、`a`、`i`、Enter を打つ。端末 2 に `window: preedit あ`、`window: preedit あい`、`window: commit あい` が出て、Seinas の窓の中、アプリのウィンドウのカーソルの矩形(コンテンツの左上から 10, 20)の下に、紫の候補の窓が出ていることを見る。
+6. `x` を打つ。端末 3 に `ime: key 45 pressed`、端末 2 に `window: key 45 pressed` が出る(IME が戻したキー)。
+7. Alt+Tab を試すなら、端末 2 と同じものをもう 1 つ出してから、Seinas の窓の中で Alt+Tab を打つ。切り替えたウィンドウに `window: text-input enter` が出て、候補の窓がそのウィンドウへ移る。
+8. 端末 3 で `quit` を打ち、IME を終える。端末 1 のログに `the input method left` が出て、`x` が端末 2 に直接届く(端末 3 には出ない)。
+9. Seinas の窓の大きさを、親の側で小さくする。候補の窓が、Seinas の窓の中に収まったままであることを見る(手順 4 と 5 をもう一度行ってから)。
+
+うまくいかないとき:端末 3 で `the compositor does not offer zwp_input_method_manager_v2` と出たら、`WAYLAND_DISPLAY` が `seinas-0-shell` になっているかを確かめてください(ふだんのソケットからは見えません)。

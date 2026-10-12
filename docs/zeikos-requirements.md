@@ -77,6 +77,8 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | open(O_RDONLY\|O_LARGEFILE\|O_CLOEXEC)、stat、fstat、read、close | S N T | 有る | `sys_open` 4869 行、`sys_stat` 6164 行、`sys_fstat` 5828 行、`sys_read` 4038 行 | — | — |
 | ロックファイル:open(O_RDWR\|O_CREAT\|O_TRUNC)と flock(LOCK_EX\|LOCK_NB) | S N | 無い | `sys_open` 4892〜4897 行(O_RDWR は EROFS)、73 番(flock)が無い | wayland-server が、ソケットのパスに `.lock` を付けたファイルで、同じ名前のコンポジタが 2 つ動かないようにする | flock とパスへの bind |
 | faccessat2(AT_FDCWD、xkb の置き場、R_OK\|X_OK、AT_EACCESS) | S N | 無い | 439 番が無い | xkbcommon が、xkb のファイルの置き場を確かめる | 新しい課題の候補 |
+| 一時ファイル:open(`$XDG_RUNTIME_DIR` のディレクトリ、O_RDWR\|O_TMPFILE\|O_CLOEXEC)、write、fcntl(F_DUPFD_CLOEXEC)、close(IME の keyboard の grab と、バージョン 7 より古い wl_keyboard へ、封をしない keymap を渡すとき) | S N | 無い | `sys_open`(O_RDWR は EROFS。2026-10-12 に、HEAD が 809e5de の zeikos のソースで確かめた) | Smithay 0.7.0 は、IME の grab へは、いつもこの形で渡す。tempfile は、O_TMPFILE が使えなければ、名前を付けて作って unlink する形に切り替える(そのときは O_CREAT\|O_EXCL と unlink が要る) | 新しい課題の候補 |
+| クライアントから受け取った keymap の fd の mmap(PROT_READ、MAP_PRIVATE。IME の virtual-keyboard) | S N | 一部 | `mmap_from_ring3` と `shm_of`(memfd のほかは EBADF。MAP_PRIVATE と MAP_SHARED を分けない。2026-10-12 に、HEAD が 809e5de のソースで確かめた) | IME が memfd で渡せば通る(読むだけなので、分けなくても困らない)。Smithay が grab で渡した一時ファイルを、IME がそのまま戻すと EBADF | ファイルの mmap(新しい課題の候補) |
 | 4 MiB を越えるファイルを読む(ext2 の 2 段目の間接ブロック) | S N T | 無い | `common/src/ext2.rs` 364 行、`uses_unsupported_indirection` 487 行 | 同梱のフォントは 3 本とも越える(4,667,380・4,669,688・5,250,304 バイト)。フォントが無くても、コンポジタとタスクバーは文字を出さずに動く | 4 MiB を越えるファイル |
 | getdents64 と open(O_DIRECTORY)(フォントの置き場を調べるとき。設定でフォントを指定したときだけ) | S N T | 有る | `sys_getdents64` 5002 行 | — | — |
 | 書けるファイルシステム(ロックファイル、ソケットの置き場) | S N | 一部 | ext2 の書き込み、`/tmp` は `kernel/build.rs` 1447 行で作る | 書けるのは O_WRONLY の形だけ。ソケットの「パス」はファイルにならない | flock とパスへの bind |
@@ -106,12 +108,12 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 ### 数の要約
 
-使う構成ごとの、「無い」と「一部」の行の数(上の表の 42 行を、使う構成ごとに数える。fbdev と入力の装置の行は、seinas-standalone に入れる):
+使う構成ごとの、「無い」と「一部」の行の数(上の表の 44 行を、使う構成ごとに数える。fbdev と入力の装置の行は、seinas-standalone に入れる):
 
 | 構成 | 無い | 一部 |
 | --- | --- | --- |
-| seinas-standalone | 12 | 13 |
-| seinas(入れ子) | 14 | 13 |
+| seinas-standalone | 13 | 14 |
+| seinas(入れ子) | 15 | 14 |
 | seinas-taskbar | 8 | 9 |
 | zeyes-min | 5 | 9 |
 
@@ -124,7 +126,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | AF_UNIX の listen(ふだん・シェルの部品) | 2 | 2 | — | — |
 | AF_UNIX の接続 | クライアントの数(この例で 3) | 親へ 1 + 子の数 | 1 | 1 |
 | ロックファイル(`<ソケット>.lock`。開いたまま) | 2 | 2 | — | — |
-| memfd(keymap と、クライアントから受け取った pool) | 1 + pool の数 | keymap 2 + 自分の pool 1 | pool 1 | pool 1 |
+| memfd(keymap と、クライアントから受け取った pool) | 1 + pool の数(IME がつながると、virtual-keyboard の keymap の 1 と、候補の窓の pool が増える) | keymap 2 + 自分の pool 1 | pool 1 | pool 1 |
 | epoll | 3(calloop、wayland-backend、その複製) | 3 | 1 | 1 |
 | eventfd | 1 | 1 | 1 | 1 |
 | timerfd | 1 | 1 | 1 | 1 |
@@ -193,7 +195,12 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 9. faccessat2(xkbcommon)。
 10. 入力の装置(マウスと、Linux の /dev/input/event* の形)。Seinas の側の、seinas-standalone が装置から入力を読む作りと合わせて決める。
 11. pread64(入れ子の構成だけ。低い)。
+12. IME の道:`$XDG_RUNTIME_DIR` の O_TMPFILE の一時ファイル(Smithay が IME の grab へ keymap を渡す形)と、クライアントから受け取った memfd でない fd の mmap。プロセスは IME の 1 本が増える(上の 5)。
 
 ## 壁紙
 
 seinas-wallpaper(`docs/wallpaper.md`)が要るものは、zeyes-min と同じ形に、設定と画像のファイルの open(O_RDONLY\|O_LARGEFILE\|O_CLOEXEC)・fstat・read を足したもの(syscall は 33 種類)です。スレッドは作らず、fd は AF_UNIX の接続・memfd・epoll・eventfd・timerfd が 1 つずつです。違いは、画像が 4 MiB を越えると「4 MiB を越えるファイル」のまとまりが要ることと、出力の大きさの pool(800x600 で 1,920,000 バイト。上の「共有メモリーの量」の候補)が要ることです。syscall・fd・メモリーの記録は、`docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。
+
+## IME
+
+IME の道(`docs/ime.md`)で、コンポジタに増えるものは、上の表の「一時ファイル」と「クライアントから受け取った keymap の fd の mmap」の 2 行です。syscall の種類は増えません(41 種類のまま)。fd は、IME がつながると 3 つ増えます(IME の接続、候補の窓の pool、virtual-keyboard の keymap の memfd)。IME は、シェルの部品と同じく、コンポジタの外のプログラムで、シェルの部品のソケット(`WAYLAND_DISPLAY=<名前>-shell`)へつなぎます。プロセスは 1 本増えます。記録は `docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。

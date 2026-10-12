@@ -623,7 +623,7 @@ pub fn protocol_error(event: &Event) -> Option<String> {
 /// memfdを作り、単色の絵で埋める。
 ///
 /// MFD_ALLOW_SEALINGを付けないので、このmemfdは封印できず、後から縮められる。
-fn make_pool(width: i32, height: i32, pixel: [u8; 4]) -> Result<File, String> {
+pub fn make_pool(width: i32, height: i32, pixel: [u8; 4]) -> Result<File, String> {
     // SAFETY: 名前は終端のある文字列。返ってきたfdは、このFileだけが持つ。
     let fd = unsafe { libc::memfd_create(c"seinas-test".as_ptr(), libc::MFD_CLOEXEC) };
     if fd < 0 {
