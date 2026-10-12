@@ -174,3 +174,30 @@ fn the_taskbar_minimizes_and_restores_a_window() {
             && indicator(shot) != TASKBAR_BACKGROUND
     });
 }
+
+#[test]
+fn the_clock_offset_comes_from_the_config_file_or_the_argument() {
+    let seinas = Compositor::start("tf");
+    let wait_for_log =
+        |text: &str| wait_for(text, || seinas.taskbar_log().contains(text).then_some(()));
+    // 設定が無ければ、既定の +09:00。
+    let taskbar = seinas.connect_taskbar_to(&seinas.shell_socket(), &[]);
+    wait_for_log("the clock is UTC+09:00 (from the default)");
+    drop(taskbar);
+    // taskbar.conf の 1 行で、UTC にする。
+    let dir = seinas.config_dir().join("seinas");
+    std::fs::create_dir_all(&dir).expect("the config directory");
+    std::fs::write(dir.join("taskbar.conf"), "utc-offset = UTC\n").expect("the config");
+    let taskbar = seinas.connect_taskbar_to(&seinas.shell_socket(), &[]);
+    wait_for_log("the clock is UTC+00:00 (from taskbar.conf)");
+    drop(taskbar);
+    // 起動オプションは、設定より優先する。
+    let taskbar = seinas.connect_taskbar_to(&seinas.shell_socket(), &["--utc-offset", "-05:30"]);
+    wait_for_log("the clock is UTC-05:30 (from --utc-offset)");
+    drop(taskbar);
+    // 読めない値は、ログに出して既定で動く。
+    std::fs::write(dir.join("taskbar.conf"), "utc-offset = Asia/Tokyo\n").expect("the config");
+    let _taskbar = seinas.connect_taskbar_to(&seinas.shell_socket(), &[]);
+    wait_for_log("utc-offset must be UTC or from -12:00 to +14:00");
+    wait_for_log("the clock is UTC+09:00 (from the default)");
+}

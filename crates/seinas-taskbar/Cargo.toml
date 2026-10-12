@@ -13,6 +13,8 @@ wayland-client = { workspace = true }
 # foreign-toplevel(zwlr_foreign_toplevel_manager_v1)のクライアントの型。smithay-client-toolkit がすでに使っている版。
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 seinas-text = { path = "../seinas-text" }
+# 設定のファイル(taskbar.conf)の読み方。フォントと壁紙の設定と同じもの。
+seinas-config = { path = "../seinas-config" }
 # 壁の時計(clock_gettime)を、失敗を見分けて読むのに使う。
 libc = { workspace = true }
 

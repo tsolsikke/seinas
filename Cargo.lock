@@ -735,6 +735,7 @@ name = "seinas-taskbar"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "seinas-config",
  "seinas-golden",
  "seinas-text",
  "smithay-client-toolkit",

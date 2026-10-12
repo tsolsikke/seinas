@@ -3,7 +3,7 @@
 //! バイナリ(`src/main.rs`)が、layer-shell と foreign-toplevel のクライアントとして動き、ここの関数で
 //! 描いて、ポインターの位置からボタンを選ぶ。決まりの説明は `docs/taskbar.md` にある。
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use seinas_text::{Canvas, Line, TextPainter};
 
@@ -261,17 +261,101 @@ pub fn until_next_minute(now: Option<Duration>) -> Duration {
     Duration::from_secs(60) - into_minute + MARGIN
 }
 
-/// 時差の指定(`+09:00`、`-05:30`、`+9`)を、秒にする。
+/// 設定のファイルの名前(置き場は `$XDG_CONFIG_HOME/seinas/`)。
+pub const CONFIG_FILE: &str = "taskbar.conf";
+/// 時差の範囲(秒)。-12:00 から +14:00 まで(世界で使われている時差の範囲)。
+pub const MIN_UTC_OFFSET: i32 = -12 * 3600;
+pub const MAX_UTC_OFFSET: i32 = 14 * 3600;
+
+/// 時差の指定(`+09:00`、`-05:30`、`+9`、`UTC`)を、秒にする。範囲は -12:00〜+14:00、分は 0・15・30・45 だけ。
+/// 読めない値と、範囲の外の値はNone。
 pub fn parse_utc_offset(text: &str) -> Option<i32> {
+    if text.eq_ignore_ascii_case("utc") {
+        return Some(0);
+    }
     let (sign, rest) = match text.as_bytes().first()? {
         b'+' => (1, &text[1..]),
         b'-' => (-1, &text[1..]),
         _ => return None,
     };
     let (hours, minutes) = rest.split_once(':').unwrap_or((rest, "0"));
+    if hours.is_empty() || hours.len() > 2 || minutes.is_empty() || minutes.len() > 2 {
+        return None;
+    }
     let (hours, minutes): (i32, i32) = (hours.parse().ok()?, minutes.parse().ok()?);
-    ((0..=14).contains(&hours) && (0..60).contains(&minutes))
-        .then_some(sign * (hours * 3600 + minutes * 60))
+    if !(0..60).contains(&minutes) || minutes % 15 != 0 {
+        return None;
+    }
+    let offset = sign * (hours * 3600 + minutes * 60);
+    (MIN_UTC_OFFSET..=MAX_UTC_OFFSET)
+        .contains(&offset)
+        .then_some(offset)
+}
+
+/// 時差を `+09:00` の形の文字にする。
+pub fn format_utc_offset(offset: i32) -> String {
+    let sign = if offset < 0 { '-' } else { '+' };
+    let minutes = offset.unsigned_abs() / 60;
+    format!("{sign}{:02}:{:02}", minutes / 60, minutes % 60)
+}
+
+/// タスクバーの設定のファイル(`taskbar.conf`)を読み、`utc-offset` の時差を返す(書いていなければNone)。読めない
+/// 行・知らないキー・読めない値は、理由のリストに入れる(読めない値は、無いものとして扱う)。
+pub fn read_config(path: &Path) -> (Option<i32>, Vec<String>) {
+    let (entries, problems) = seinas_config::read(path);
+    let mut offset = None;
+    let mut notes: Vec<String> = problems
+        .into_iter()
+        .map(|p| match p.line {
+            0 => p.reason,
+            line => format!("{}, line {line}: {}", path.display(), p.reason),
+        })
+        .collect();
+    for entry in entries {
+        match entry.key.as_str() {
+            "utc-offset" => match parse_utc_offset(&entry.value) {
+                Some(value) => offset = Some(value),
+                None => notes.push(format!(
+                    "{}, line {}: utc-offset must be UTC or from -12:00 to +14:00 in steps of 15 minutes: {}",
+                    path.display(),
+                    entry.line,
+                    entry.value
+                )),
+            },
+            other => notes.push(format!(
+                "{}, line {}: unknown key: {other}",
+                path.display(),
+                entry.line
+            )),
+        }
+    }
+    (offset, notes)
+}
+
+/// 時計の時差を決める。起動オプション `--utc-offset` の値 `argument`、設定のファイルの値 `config`、環境変数 `TZ`
+/// の値 `tz` の順に見て、使えるものが無ければ [`DEFAULT_UTC_OFFSET`]。読めない起動オプションは、理由を
+/// `notes` に入れて、無いものとして扱う。返すのは、時差と、どこから決めたか。
+pub fn choose_offset(
+    argument: Option<&str>,
+    config: Option<i32>,
+    tz: Option<&str>,
+    notes: &mut Vec<String>,
+) -> (i32, &'static str) {
+    if let Some(text) = argument {
+        match parse_utc_offset(text) {
+            Some(offset) => return (offset, "--utc-offset"),
+            None => notes.push(format!(
+                "invalid --utc-offset: {text} (use UTC or +HH:MM from -12:00 to +14:00 in steps of 15 minutes)"
+            )),
+        }
+    }
+    if let Some(offset) = config {
+        return (offset, CONFIG_FILE);
+    }
+    if let Some(offset) = tz.and_then(offset_from_tz) {
+        return (offset, "TZ");
+    }
+    (DEFAULT_UTC_OFFSET, "the default")
 }
 
 /// POSIX の TZ のうち、夏時間の無い簡単な形(`JST-9`、`UTC0`、`<+09>-9`、`UTC`)から、時差(秒)を求める。
@@ -381,12 +465,94 @@ mod tests {
     }
 
     #[test]
-    fn offsets_come_from_an_argument_or_a_simple_tz() {
+    fn utc_offsets_are_read_within_the_range_in_steps_of_15_minutes() {
         assert_eq!(parse_utc_offset("+09:00"), Some(9 * 3600));
         assert_eq!(parse_utc_offset("-05:30"), Some(-(5 * 3600 + 1800)));
+        assert_eq!(parse_utc_offset("+05:45"), Some(5 * 3600 + 45 * 60));
         assert_eq!(parse_utc_offset("+9"), Some(9 * 3600));
-        assert_eq!(parse_utc_offset("09:00"), None);
+        assert_eq!(parse_utc_offset("+00:00"), Some(0));
+        assert_eq!(parse_utc_offset("UTC"), Some(0));
+        assert_eq!(parse_utc_offset("utc"), Some(0));
+        // 範囲の端。
+        assert_eq!(parse_utc_offset("+14:00"), Some(14 * 3600));
+        assert_eq!(parse_utc_offset("-12:00"), Some(-12 * 3600));
+        assert_eq!(parse_utc_offset("+14:15"), None);
+        assert_eq!(parse_utc_offset("-12:15"), None);
         assert_eq!(parse_utc_offset("+15:00"), None);
+        // 15 分刻みでない分と、読めない形。
+        assert_eq!(parse_utc_offset("+05:20"), None);
+        assert_eq!(parse_utc_offset("+05:60"), None);
+        for bad in [
+            "09:00", "", "+", "+:30", "+09:", "+009:00", "JST", "+9h", "UTC+9",
+        ] {
+            assert_eq!(parse_utc_offset(bad), None, "{bad}");
+        }
+        assert_eq!(format_utc_offset(9 * 3600), "+09:00");
+        assert_eq!(format_utc_offset(-(5 * 3600 + 1800)), "-05:30");
+        assert_eq!(format_utc_offset(0), "+00:00");
+    }
+
+    #[test]
+    fn the_offset_comes_from_the_argument_the_config_tz_and_the_default() {
+        let mut notes = Vec::new();
+        let mut choose = |argument: Option<&str>, config: Option<i32>, tz: Option<&str>| {
+            choose_offset(argument, config, tz, &mut notes)
+        };
+        assert_eq!(
+            choose(None, None, None),
+            (DEFAULT_UTC_OFFSET, "the default")
+        );
+        assert_eq!(choose(None, None, Some("UTC0")), (0, "TZ"));
+        assert_eq!(
+            choose(None, Some(-5 * 3600), Some("UTC0")),
+            (-5 * 3600, CONFIG_FILE)
+        );
+        assert_eq!(
+            choose(Some("UTC"), Some(-5 * 3600), None),
+            (0, "--utc-offset")
+        );
+        // 読めない起動オプションは、理由を残して、次のものを使う。
+        assert_eq!(
+            choose(Some("+25:00"), None, None),
+            (DEFAULT_UTC_OFFSET, "the default")
+        );
+        assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn the_config_file_sets_the_offset_and_reports_bad_lines() {
+        let dir = std::env::temp_dir().join(format!("seinas-taskbar-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(CONFIG_FILE);
+        std::fs::write(&path, "# 時計\nutc-offset = UTC\n").unwrap();
+        assert_eq!(read_config(&path), (Some(0), Vec::new()));
+        std::fs::write(&path, "utc-offset = -05:30\n").unwrap();
+        assert_eq!(read_config(&path).0, Some(-(5 * 3600 + 1800)));
+        // 読めない値は、無いものとして扱い(既定で動く)、理由を返す。
+        std::fs::write(&path, "utc-offset = Asia/Tokyo\ncolor = red\n").unwrap();
+        let (offset, notes) = read_config(&path);
+        assert_eq!(offset, None);
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(notes[0].contains("line 1"), "{notes:?}");
+        // ファイルが無ければ、何も無い。
+        assert_eq!(read_config(&dir.join("missing.conf")), (None, Vec::new()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_clock_shows_the_default_offset_and_utc() {
+        // 2026-10-12 03:34:56 UTC。
+        let now = Some(Duration::from_secs(1_791_776_096));
+        assert_eq!(clock_text(now, DEFAULT_UTC_OFFSET), "12:34");
+        assert_eq!(clock_text(now, parse_utc_offset("UTC").unwrap()), "03:34");
+        assert_eq!(
+            clock_text(now, parse_utc_offset("-05:30").unwrap()),
+            "22:04"
+        );
+    }
+
+    #[test]
+    fn offsets_come_from_a_simple_tz() {
         assert_eq!(offset_from_tz("JST-9"), Some(9 * 3600));
         assert_eq!(offset_from_tz("<+0530>-5:30"), Some(5 * 3600 + 1800));
         assert_eq!(offset_from_tz("EST5"), Some(-5 * 3600));

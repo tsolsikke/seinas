@@ -415,6 +415,8 @@ impl Compositor {
                 .arg(font_dir())
                 .env("WAYLAND_DISPLAY", socket)
                 .env_remove("SEINAS_FONTS")
+                // 時計の時差は、引数と設定のファイルで決める(外の TZ に左右されない)。
+                .env_remove("TZ")
                 .env("XDG_CONFIG_HOME", &self.dir)
                 .stderr(log)
                 .spawn()

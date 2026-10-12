@@ -8,15 +8,17 @@
 //!
 //! - `--fonts DIR`:同梱のフォントの置き場(無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`)。
 //! - `--font-config PATH`:フォントの設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`。ADR 0003)。
-//! - `--utc-offset ±HH:MM`:時計の時差(無ければ環境変数 `TZ` の簡単な形、それも無ければ +09:00)。
+//! - `--utc-offset ±HH:MM`(か `UTC`):時計の時差(無ければ設定のファイルの `utc-offset`、それも無ければ環境変数
+//!   `TZ` の簡単な形、それも無ければ +09:00)。
+//! - `--config PATH`:タスクバーの設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/taskbar.conf`)。
 //!
 //! 決まりの説明は `docs/taskbar.md` にある。
 
 use std::{error::Error, path::PathBuf, process::ExitCode, sync::Arc};
 
 use seinas_taskbar::{
-    action_for, button_at, clock_text, offset_from_tz, paint, parse_utc_offset, until_next_minute,
-    wall_clock, Action, Entry, DEFAULT_UTC_OFFSET, HEIGHT,
+    action_for, button_at, choose_offset, clock_text, format_utc_offset, paint, read_config,
+    until_next_minute, wall_clock, Action, Entry, CONFIG_FILE, HEIGHT,
 };
 use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
@@ -474,30 +476,25 @@ struct Options {
     fonts: PathBuf,
     /// フォントの設定のファイル(`--font-config`)。Noneなら、既定の場所(ADR 0003)。
     font_config: Option<PathBuf>,
-    offset: i32,
+    /// `--utc-offset` の値(読むのは、設定のファイルと合わせて決めるとき)。
+    utc_offset: Option<String>,
+    /// タスクバーの設定のファイル(`--config`)。Noneなら、既定の場所。
+    config: Option<PathBuf>,
 }
 
-fn parse_options(
-    args: &[String],
-    fonts_env: Option<String>,
-    tz: Option<String>,
-) -> Result<Options, String> {
+fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, String> {
     let mut fonts = None;
     let mut font_config = None;
-    let mut offset = None;
+    let mut utc_offset = None;
+    let mut config = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().cloned().ok_or(format!("{arg} needs a value"));
         match arg.as_str() {
             "--fonts" => fonts = Some(PathBuf::from(value()?)),
             "--font-config" => font_config = Some(PathBuf::from(value()?)),
-            "--utc-offset" => {
-                let text = value()?;
-                offset = Some(
-                    parse_utc_offset(&text)
-                        .ok_or_else(|| format!("invalid --utc-offset: {text} (use +HH:MM)"))?,
-                );
-            }
+            "--utc-offset" => utc_offset = Some(value()?),
+            "--config" => config = Some(PathBuf::from(value()?)),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -506,19 +503,39 @@ fn parse_options(
             .or_else(|| fonts_env.map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from(DEFAULT_FONT_DIR)),
         font_config,
-        offset: offset
-            .or_else(|| tz.as_deref().and_then(offset_from_tz))
-            .unwrap_or(DEFAULT_UTC_OFFSET),
+        utc_offset,
+        config,
     })
+}
+
+/// 時計の時差を、起動オプション・設定のファイル・環境変数 `TZ` から決め、決めたことと、読めなかったものを
+/// ログに出す。
+fn clock_offset(options: &Options, tz: Option<&str>) -> i32 {
+    let mut notes = Vec::new();
+    let config = options
+        .config
+        .clone()
+        .or_else(|| seinas_config::default_file(CONFIG_FILE))
+        .and_then(|path| {
+            let (offset, problems) = read_config(&path);
+            notes.extend(problems);
+            offset
+        });
+    let (offset, from) = choose_offset(options.utc_offset.as_deref(), config, tz, &mut notes);
+    for note in notes {
+        eprintln!("seinas-taskbar: {note}");
+    }
+    eprintln!(
+        "seinas-taskbar: the clock is UTC{} (from {from})",
+        format_utc_offset(offset)
+    );
+    offset
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let options = parse_options(
-        &args,
-        std::env::var(FONTS_ENV).ok(),
-        std::env::var("TZ").ok(),
-    )?;
+    let options = parse_options(&args, std::env::var(FONTS_ENV).ok())?;
+    let offset = clock_offset(&options, std::env::var("TZ").ok().as_deref());
     let (text, messages) = TextPainter::load_setup(&FontSetup {
         bundled_dir: options.fonts.clone(),
         config_file: options.font_config.clone(),
@@ -578,8 +595,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         hot: None,
         toplevels: Vec::new(),
         text,
-        offset: options.offset,
-        clock: clock_text(wall_clock(), options.offset),
+        offset,
+        clock: clock_text(wall_clock(), offset),
     };
     // 時計は、分が変わった少し後に起きて再描画する。時刻が取れないときは、60 秒ごとに読み直す。
     event_loop
@@ -628,26 +645,22 @@ mod tests {
     }
 
     #[test]
-    fn the_offset_comes_from_the_argument_then_tz_then_the_default() {
-        let offset = |list: &[&str], tz: Option<&str>| {
-            parse_options(&args(list), None, tz.map(str::to_owned)).map(|o| o.offset)
-        };
-        assert_eq!(offset(&[], None), Ok(DEFAULT_UTC_OFFSET));
-        assert_eq!(offset(&[], Some("UTC0")), Ok(0));
-        // 読めない TZ(データベースの名前など)は、既定に戻る。
-        assert_eq!(offset(&[], Some("Asia/Tokyo")), Ok(DEFAULT_UTC_OFFSET));
-        assert_eq!(
-            offset(&["--utc-offset", "-05:00"], Some("UTC0")),
-            Ok(-5 * 3600)
-        );
-        assert!(offset(&["--utc-offset", "9"], None).is_err());
-        assert!(offset(&["--bogus"], None).is_err());
+    fn the_offset_and_the_config_come_from_the_arguments() {
+        let options = parse_options(
+            &args(&["--utc-offset", "UTC", "--config", "/c/taskbar.conf"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(options.utc_offset.as_deref(), Some("UTC"));
+        assert_eq!(options.config, Some(PathBuf::from("/c/taskbar.conf")));
+        assert!(parse_options(&args(&["--bogus"]), None).is_err());
+        assert!(parse_options(&args(&["--utc-offset"]), None).is_err());
     }
 
     #[test]
     fn the_fonts_come_from_the_argument_then_the_environment() {
         let fonts = |list: &[&str], env: Option<&str>| {
-            parse_options(&args(list), env.map(str::to_owned), None).map(|o| o.fonts)
+            parse_options(&args(list), env.map(str::to_owned)).map(|o| o.fonts)
         };
         assert_eq!(fonts(&[], None), Ok(PathBuf::from("target/fonts")));
         assert_eq!(fonts(&[], Some("/f")), Ok(PathBuf::from("/f")));

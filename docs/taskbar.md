@@ -15,7 +15,8 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 | --- | --- |
 | `--fonts DIR` | フォントの置き場。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(コンポジタと同じ) |
 | `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`docs/text-rendering.md` の「利用者が選んだフォント」)。コンポジタと同じファイルを読む |
-| `--utc-offset ±HH:MM` | 時計の時差。無ければ環境変数 `TZ` の簡単な形、それも無ければ `+09:00`(下の「時計」) |
+| `--utc-offset ±HH:MM` か `UTC` | 時計の時差。設定のファイルより優先する(下の「時計」) |
+| `--config PATH` | タスクバーの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/taskbar.conf`(`XDG_CONFIG_HOME` が無ければ `~/.config/seinas/taskbar.conf`) |
 
 ## 見た目と並べ方
 
@@ -43,7 +44,20 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 - 時:分を 24 時間で出します(`12:34`)。
 - 時刻は、壁の時計(`clock_gettime(CLOCK_REALTIME)`)から読みます。std の `SystemTime::now` は、失敗すると panic するので使いません。
 - 時刻が取れないときは、`--:--` を出します。取れないときとは、`clock_gettime` が失敗したときと、2020-01-01 より前を指しているとき(合わせられていない壁の時計)です。ZeikOS には、まだ壁の時計が無いので、今はこの表示になる見込みです。
-- 時差は、`--utc-offset` があればそれ、無ければ環境変数 `TZ` の、夏時間の無い簡単な形(`JST-9`、`UTC0`、`<+09>-9` など)、それも無ければ `+09:00` です。タイムゾーンのデータベース(`/usr/share/zoneinfo`)は読みません(ZeikOS に無いため)。`Asia/Tokyo` のような名前は読めないので、`+09:00` になります。
+- 時差は、次の順に決めます。起動のときに、決めた時差と、どこから決めたかをログに出します(`the clock is UTC+09:00 (from the default)` など)。
+  1. 起動オプション `--utc-offset`
+  2. 設定のファイル `taskbar.conf` の `utc-offset` の行
+  3. 環境変数 `TZ` の、夏時間の無い簡単な形(`JST-9`、`UTC0`、`<+09>-9` など)
+  4. 既定の `+09:00`(日本時間。今までの見た目を変えない)
+- 設定のファイルは、フォントの設定と同じ 1 行に `キー = 値` の形式です(読み方は `crates/seinas-config`)。日本時間から UTC へ切り替えるには、次の 1 行を書いて、タスクバーを起動し直します。
+
+  ```text
+  utc-offset = UTC
+  ```
+
+- 書ける値は `UTC`(`+00:00` と同じ)か、`+HH:MM`・`-HH:MM`(`+9` のように時だけでもよい)です。範囲は `-12:00` から `+14:00` まで、分は 0・15・30・45 だけです(例:`+00:00`、`-05:30`、`+05:45`)。
+- 読めない値(範囲の外、15 分刻みでない、形が違う)は、ログに出して、無いものとして扱います(次の順のものか、既定の `+09:00` で動く)。起動オプションの読めない値も同じです。知らないキーも、ログに出して飛ばします。
+- 地域の名前(`Asia/Tokyo` など)と夏時間は扱いません。タイムゾーンのデータベース(tzdata、`/usr/share/zoneinfo`)が ZeikOS に無いためです。夏時間のある地域では、夏と冬で `utc-offset` を書き換えてください。
 - 既定の時差は +09:00 で、`crates/seinas-taskbar/src/lib.rs` の定数 `DEFAULT_UTC_OFFSET` の 1 か所で決めています。WSL には TZ が無いことが多く、UTC にすると、入れ子で見たときに 9 時間ずれるためです。
 - 分が変わった少し後(5 ミリ秒後)に起きて、再描画します。時刻が取れないときは、60 秒ごとに読み直します。起きるのには、イベントループ(calloop)のタイマーを使います(timerfd が 1 つ)。
 
@@ -58,6 +72,6 @@ musl で静的にリンクした `seinas-taskbar` を、`seinas-standalone` と 
 
 ## テスト
 
-- 並べ方、押した点からのボタンの選び方、押したときに頼むこと、時計の表示と次に起きるまでの時間、時差の読み方は、`crates/seinas-taskbar` のユニットテストで確かめています。
+- 並べ方、押した点からのボタンの選び方、押したときに頼むこと、時計の表示(既定の +09:00 と UTC)と次に起きるまでの時間、時差の読み方(範囲、15 分刻み、読めない値)、設定のファイル、時差を決める順は、`crates/seinas-taskbar` のユニットテストで確かめています。
 - 絵は、正解データ(`crates/seinas-taskbar/tests/golden.rs`)と比べます(`docs/golden.md`)。
-- 実際に動かして、`crates/seinas-standalone/tests/taskbar.rs` が、ピクセルで確かめます(画面の下にあって、configure の大きさが小さくなること、ウィンドウのボタンが並んで activated のものが分かること、押すと raise されること、閉じたウィンドウのボタンが消えること、ふだんのソケットではつなげないこと)。
+- 実際に動かして、`crates/seinas-standalone/tests/taskbar.rs` が、ピクセルで確かめます(画面の下にあって、configure の大きさが小さくなること、ウィンドウのボタンが並んで activated のものが分かること、押すと raise されること、閉じたウィンドウのボタンが消えること、ふだんのソケットではつなげないこと、時計の時差が設定のファイルと起動オプションで変わり、読めない値では既定で動くこと)。
