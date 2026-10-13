@@ -11,6 +11,10 @@
 //! - IME は同時に 1 つだけ:2 つ目からの `get_input_method` は、Smithay へ渡さずにここで受け、Seinas の側の
 //!   入れ物([`RefusedInputMethod`])で作って、すぐ `unavailable` を送る。その後の要求は、何もせずに捨てる。
 //! - IME が去ったこと、keyboard の grab を手放したことをログに出す。
+//! - virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーの
+//!   ときだけ渡す。Alt+Tab で Alt を離すと、Seinas はその場でフォーカスを移すが、IME が戻す「Alt を離した」は
+//!   後から届くので、そのままでは、押したことを知らない新しいフォーカスのクライアントへ届いてしまうため。前の
+//!   フォーカスのクライアントには leave が届いているので、押されたまま残るクライアントは無い。
 //! - 応答しない IME:キーの押下(修飾キーだけのものは数えない)を IME へ送ってから、決めた時間(既定は
 //!   [`DEFAULT_IME_TIMEOUT`])の間に、その IME のクライアントから要求(input-method と virtual-keyboard のどちらでも
 //!   よい)が 1 つも届かなければ、応答しないと見なして keyboard の grab を外す(次のキーから直接の道)。その後に
@@ -29,7 +33,10 @@
 //! 候補の窓(input popup surface)は、見せるときと隠すときに Smithay が呼ぶ([`popup_shown`]、[`popup_hidden`])。置く
 //! 位置は、描くときに、親のウィンドウのいまの位置と、カーソルの矩形と、画面の大きさから求める(`ime_popup.rs`)。
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashSet,
+    time::{Duration, Instant},
+};
 
 use smithay::utils::SERIAL_COUNTER;
 use smithay::{
@@ -51,7 +58,8 @@ use smithay::{
             },
         },
         wayland_server::{
-            backend::ClientId, Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch,
+            backend::ClientId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch,
+            DisplayHandle, GlobalDispatch,
         },
     },
     wayland::{
@@ -90,6 +98,10 @@ pub struct ImeState {
     suspended: Option<InputMethodKeyboardGrab>,
     /// 見せている候補の窓。IME が有効で、親(フォーカスのあるウィンドウ)があるときだけ。
     pub popup: Option<PopupSurface>,
+    /// virtual-keyboard で「押した」を渡したキー(evdev の番号)と、そのときのキーボードのフォーカス。フォーカスが
+    /// 変わったら空にする(前のクライアントには leave が届き、押したキーは離したことになる)。
+    vk_pressed: HashSet<u32>,
+    vk_focus: Option<WlSurface>,
 }
 
 /// Smithay へ通した IME のクライアントと、そのオブジェクトが残っているか。
@@ -138,7 +150,16 @@ impl ImeState {
             unresponsive: false,
             suspended: None,
             popup: None,
+            vk_pressed: HashSet::new(),
+            vk_focus: None,
         }
+    }
+
+    /// キーボードのフォーカスを動かしたときに呼ぶ(同じクライアントへの leave と enter のし直しも含む)。
+    /// virtual-keyboard で「押した」を渡したキーの記録を空にする。
+    pub fn keyboard_focus_moved(&mut self) {
+        self.vk_pressed.clear();
+        self.vk_focus = None;
     }
 
     /// 次に [`check_ime`] で確かめる時刻(IME へ送ったキーの返事の期限)。
@@ -427,13 +448,56 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        if let zwp_virtual_keyboard_v1::Request::Key { key, state: 0, .. } = request {
+            if !take_vk_press(state, key) {
+                // 押したことを渡していないキーの「離した」は、渡さない(返事としては数える)。
+                answered(state, &client.id());
+                return;
+            }
+        }
+        let press = match request {
+            zwp_virtual_keyboard_v1::Request::Key { key, state: 1, .. } => Some(key),
+            _ => None,
+        };
         <VirtualKeyboardManagerState as Dispatch<
             ZwpVirtualKeyboardV1,
             VirtualKeyboardUserData<D>,
             D,
         >>::request(state, client, resource, request, data, dhandle, data_init);
+        if let Some(key) = press {
+            note_vk_press(state, key);
+        }
         answered(state, &client.id());
     }
+}
+
+/// いまのキーボードのフォーカス。
+fn current_focus<D: FrontendHost>(state: &D) -> Option<WlSurface> {
+    state.frontend().keyboard.as_ref()?.current_focus()
+}
+
+/// virtual-keyboard で、キー `key` の「押した」をいまのフォーカスへ渡した後に呼ぶ。
+fn note_vk_press<D: FrontendHost>(state: &mut D, key: u32) {
+    let focus = current_focus(state);
+    let ime = &mut state.frontend_mut().ime;
+    if ime.vk_focus != focus {
+        ime.vk_pressed.clear();
+        ime.vk_focus = focus.clone();
+    }
+    if focus.is_some() {
+        ime.vk_pressed.insert(key);
+    }
+}
+
+/// virtual-keyboard で、キー `key` の「離した」が届いた。いまのフォーカスへ「押した」を渡したキーなら、記録から
+/// 外してtrue(「離した」を渡す)。
+fn take_vk_press<D: FrontendHost>(state: &mut D, key: u32) -> bool {
+    let focus = current_focus(state);
+    let ime = &mut state.frontend_mut().ime;
+    if focus.is_none() || ime.vk_focus != focus {
+        return false;
+    }
+    ime.vk_pressed.remove(&key)
 }
 
 impl<D> Dispatch<ZwpInputMethodV2, RefusedInputMethod, D> for ImeState

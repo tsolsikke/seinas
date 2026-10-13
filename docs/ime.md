@@ -19,7 +19,11 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 3. IME が virtual-keyboard で戻したキーは、キーボードのフォーカスのあるクライアントへ届きます。
 4. IME が去ったか、grab を手放したら、次のキーから直接の道(フォーカスのあるクライアントの `wl_keyboard`)にします。ログに `the input method left`、`the input method released the keyboard` を出します。
 
-Alt+Tab の最中も、Alt は IME へ渡ります。IME が戻した、Alt を離したことは、フォーカスが移った後で、新しいフォーカスのクライアントへ届くことがあります。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントはありません。
+Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas はその場でフォーカスを移しますが、IME が virtual-keyboard で戻す「Alt を離した」は、その後で届きます。
+
+- virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡します。Seinas は、virtual-keyboard で「押した」を渡したキーを覚え、キーボードのフォーカスを動かしたら(同じクライアントへの leave と enter のし直しも含む)、記録を空にします。Smithay の `forwarded_pressed_keys` は、Smithay の外から読めず、virtual-keyboard のキーも入らないので使いません。
+- そのため、新しいフォーカスのクライアントには、押したことを知らない Alt の「離した」が届きません。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントもありません。
+- 渡さなかった「離した」も、IME の返事としては数えます(下の「応答しない IME」)。
 
 ## 応答しない IME
 
@@ -83,7 +87,8 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | --- | --- |
 | `keys_go_through_the_ime_and_come_back_to_the_window` | キーが IME を通り、IME が virtual-keyboard で戻したキーがウィンドウに届く |
 | `the_input_method_globals_are_only_on_the_shell_socket` | ふだんのソケットには、input-method の global が無い |
-| `alt_tab_works_while_the_ime_has_the_keyboard` | IME が grab している間も、Alt+Tab が効き、Tab は IME に渡らない |
+| `alt_tab_works_while_the_ime_has_the_keyboard` | IME が grab している間も、Alt+Tab が効き、Tab は IME に渡らない。切り替えた先には、IME が戻した「Alt を離した」が届かない |
+| `alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press` | Alt+Tab で行き来しても、IME が戻した Alt の押す・離すは、押したことを受けたウィンドウにだけ届き、切り替えた先で押して離した Alt は両方とも届く |
 | `keys_go_straight_to_the_window_after_the_ime_leaves` | IME が去ったら、直接の道になる |
 | `keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard` | IME が grab を手放したら、直接の道になる |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |

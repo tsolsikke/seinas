@@ -124,15 +124,46 @@ fn alt_tab_works_while_the_ime_has_the_keyboard() {
     // 切り替えた先へ、次のキーが IME を通って届く。
     tap(&mut seinas, KEY_X);
     assert_eq!(next_ime_key(&ime, "x"), "ime: key 45 pressed");
-    loop {
-        let line = next_key_line(&first, "x on the first window");
-        // IME が戻した、Alt を離したことは、フォーカスが移った後に届く(前のウィンドウには leave が届いている
-        // ので、押されたまま残るキーは無い)。
-        if line != "window: key 56 released" {
-            assert_eq!(line, "window: key 45 pressed");
-            break;
-        }
-    }
+    // IME が戻した「Alt を離した」は、フォーカスが移った後に届くが、Alt を押したことを知らない一つ目には渡さない。
+    assert_eq!(
+        next_key_line(&first, "x on the first window"),
+        "window: key 45 pressed"
+    );
+}
+
+#[test]
+fn alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press() {
+    let mut seinas = Compositor::start_with_input("ip");
+    let first = open_window(&seinas, "一つ目");
+    let second = open_window(&seinas, "二つ目");
+    assert_eq!(next_key_line(&first, "leave"), "window: keyboard leave");
+    let ime = connect_ime(&seinas, &[]);
+    // 二つ目が、IME から戻った Alt の押下を受け、Alt+Tab で leave を受ける。
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
+    assert_eq!(next_ime_key(&ime, "Alt"), "ime: key 56 pressed");
+    assert_eq!(next_key_line(&second, "Alt"), "window: key 56 pressed");
+    tap(&mut seinas, KEY_TAB);
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    assert_eq!(next_ime_key(&ime, "Alt released"), "ime: key 56 released");
+    assert_eq!(next_key_line(&second, "leave"), "window: keyboard leave");
+    assert_eq!(next_key_line(&first, "enter"), "window: keyboard enter");
+    // 一つ目には、Alt を離したことが届かない(次に届くのは x)。
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&first, "x"), "window: key 45 pressed");
+    assert_eq!(next_key_line(&first, "x"), "window: key 45 released");
+    // 一つ目で押して離した Alt は、両方とも IME から届く(ふつうの道は変わらない)。
+    tap(&mut seinas, KEY_LEFT_ALT);
+    assert_eq!(next_key_line(&first, "Alt"), "window: key 56 pressed");
+    assert_eq!(next_key_line(&first, "Alt"), "window: key 56 released");
+    // 戻す:一つ目が Alt の押下を受けて leave、二つ目に enter。二つ目にも、Alt を離したことは届かない。
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
+    assert_eq!(next_key_line(&first, "Alt"), "window: key 56 pressed");
+    tap(&mut seinas, KEY_TAB);
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    assert_eq!(next_key_line(&first, "leave"), "window: keyboard leave");
+    assert_eq!(next_key_line(&second, "enter"), "window: keyboard enter");
+    tap(&mut seinas, KEY_Y);
+    assert_eq!(next_key_line(&second, "y"), "window: key 21 pressed");
 }
 
 #[test]

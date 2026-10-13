@@ -1386,6 +1386,7 @@ pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
     };
     let target = frontend.keyboard_focus_target();
     if keyboard.current_focus() != target {
+        state.frontend_mut().ime.keyboard_focus_moved();
         keyboard.set_focus(state, target, SERIAL_COUNTER.next_serial());
     }
 }
@@ -1507,6 +1508,7 @@ pub fn set_locked_modifiers<D: FrontendHost>(state: &mut D, locked: u32) -> bool
     keyboard.set_modifier_state(modifiers);
     // Smithay は、ここで変えた修飾キーの状態をクライアントへ送らないので、enter で送り直す。
     if let Some(focus) = keyboard.current_focus() {
+        state.frontend_mut().ime.keyboard_focus_moved();
         keyboard.set_focus(state, None, SERIAL_COUNTER.next_serial());
         keyboard.set_focus(state, Some(focus), SERIAL_COUNTER.next_serial());
     }
