@@ -12,6 +12,7 @@
 //!
 //! - `--popup WxH`: 大きさ WxH の候補の窓(input popup surface)を、紫(8000ff)の単色で出す。コンポジタから届いた
 //!   カーソルの矩形を `ime: popup rectangle X Y W H` の形で書く。
+//! - `--popup-text`: 候補の窓に、候補(変換中の文字と、そのカタカナ)を白い文字で書く(スクリーンショットのため)。
 //! - `--ignore-keys`: キーを受けても、何も返さない(応答しない IME のまね)。標準入力の `answer` の行で、ふつうの
 //!   動きに戻り、input-method の commit を 1 つ送る。
 //!
@@ -65,10 +66,12 @@ fn kana(key: u32) -> Option<char> {
 pub fn run(args: &[String]) -> Result<bool, String> {
     let mut ignore_keys = false;
     let mut popup_size = None;
+    let mut popup_text = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--ignore-keys" => ignore_keys = true,
+            "--popup-text" => popup_text = true,
             "--popup" => {
                 let size = args.next().ok_or("--popup needs WxH")?;
                 popup_size = Some(crate::layer::parse_size(size)?);
@@ -101,10 +104,16 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let grab = wire.new_id();
     wire.send(&message(input_method, 5, &grab.to_le_bytes()))?;
     // 候補の窓の pool は、出している間、持ち続ける。
-    let (popup, _pool) = match popup_size {
+    let (popup, mut popup_view) = match popup_size {
         Some((width, height)) => {
-            let (popup, pool) = open_popup(&mut wire, input_method, width as i32, height as i32)?;
-            (Some(popup), Some(pool))
+            let (popup, view) = open_popup(
+                &mut wire,
+                input_method,
+                width as i32,
+                height as i32,
+                popup_text,
+            )?;
+            (Some(popup), Some(view))
         }
         None => (None, None),
     };
@@ -219,6 +228,9 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                         if let Some(kana) = kana(key) {
                             preedit.push(kana);
                             send_preedit(&mut wire, input_method, &preedit, serial)?;
+                            if let Some(view) = &mut popup_view {
+                                view.show(&mut wire, &preedit)?;
+                            }
                             say(&format!("preedit {preedit}"));
                             used.insert(key);
                             continue;
@@ -229,6 +241,9 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                             wire.send(&message(input_method, 3, &serial.to_le_bytes()))?;
                             say(&format!("commit {preedit}"));
                             preedit.clear();
+                            if let Some(view) = &mut popup_view {
+                                view.show(&mut wire, &preedit)?;
+                            }
                             used.insert(key);
                             continue;
                         }
@@ -296,43 +311,60 @@ fn send_preedit(
 /// 候補の窓の色(B, G, R, X。紫)。
 const POPUP_PIXEL: [u8; 4] = [0xff, 0x00, 0x80, 0xff];
 
-/// 候補の窓(input popup surface)を作り、`width` × `height` の単色の絵を出す。返すのは、popup surface の番号と
-/// pool(memfd)。
-fn open_popup(
-    wire: &mut crate::wire::Wire,
-    input_method: u32,
+/// 候補の窓の絵と、描き直すためのもの。
+struct PopupView {
+    surface: u32,
+    shm: u32,
     width: i32,
     height: i32,
-) -> Result<(u32, std::fs::File), String> {
-    let compositor = wire.bind("wl_compositor", 1)?;
-    let shm = wire.bind("wl_shm", 1)?;
-    // wl_compositor.create_surface → zwp_input_method_v2.get_input_popup_surface(新しい番号、surface)
-    let surface = wire.new_id();
-    wire.send(&message(compositor, 0, &surface.to_le_bytes()))?;
-    let popup = wire.new_id();
-    wire.send(&message(
-        input_method,
-        4,
-        &[popup.to_le_bytes(), surface.to_le_bytes()].concat(),
-    ))?;
-    // wl_shm.create_pool → wl_shm_pool.create_buffer(xrgb8888)
-    let stride = width * 4;
-    let file = crate::wire::make_pool(width, height, POPUP_PIXEL)?;
-    let pool = wire.new_id();
-    wire.send_with_fd(
-        &message(
-            shm,
-            0,
-            &[pool.to_le_bytes(), (stride * height).to_le_bytes()].concat(),
-        ),
-        file.as_raw_fd(),
-    )?;
-    let buffer = wire.new_id();
-    let mut create = buffer.to_le_bytes().to_vec();
-    for value in [0, width, height, stride, 1] {
-        create.extend(value.to_le_bytes());
+    /// 文字を描くときだけ(`--popup-text`)。
+    painter: Option<seinas_text::TextPainter>,
+    /// 出した絵の pool(コンポジタが使い終わるまで持つ)。
+    pools: Vec<std::fs::File>,
+}
+
+impl PopupView {
+    /// 候補(変換中の文字 `preedit` と、そのカタカナ)を書いた絵を出す。文字を描かないときは、何もしない。
+    fn show(&mut self, wire: &mut crate::wire::Wire, preedit: &str) -> Result<(), String> {
+        let Some(painter) = &mut self.painter else {
+            return Ok(());
+        };
+        let purple = [POPUP_PIXEL[2], POPUP_PIXEL[1], POPUP_PIXEL[0]];
+        let mut pixels = crate::text::canvas(self.width, self.height, purple);
+        if !preedit.is_empty() {
+            let katakana: String = preedit
+                .chars()
+                .map(|c| char::from_u32(c as u32 + 0x60).unwrap_or(c))
+                .collect();
+            for (i, candidate) in [preedit.to_owned(), katakana].iter().enumerate() {
+                let line = format!("{} {candidate}", i + 1);
+                let top = 4 + i as i32 * 24;
+                crate::text::draw(
+                    painter,
+                    &mut pixels,
+                    self.width,
+                    &line,
+                    8,
+                    top,
+                    24,
+                    [0xff; 3],
+                );
+            }
+        }
+        let (buffer, pool) = wire.new_buffer_from(self.shm, self.width, self.height, &pixels)?;
+        self.pools.push(pool);
+        commit_surface(wire, self.surface, buffer, self.width, self.height)
     }
-    wire.send(&message(pool, 0, &create))?;
+}
+
+/// `surface` に `buffer` を付け、全体を damage にして commit する。
+fn commit_surface(
+    wire: &mut crate::wire::Wire,
+    surface: u32,
+    buffer: u32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
     // wl_surface.attach → damage → commit
     wire.send(&message(
         surface,
@@ -344,6 +376,42 @@ fn open_popup(
         .flat_map(|n| n.to_le_bytes())
         .collect();
     wire.send(&message(surface, 2, &damage))?;
-    wire.send(&message(surface, 6, &[]))?;
-    Ok((popup, file))
+    wire.send(&message(surface, 6, &[]))
+}
+
+/// 候補の窓(input popup surface)を作り、`width` × `height` の紫の単色の絵を出す。返すのは、popup surface の番号と、
+/// 描き直すためのもの。`text` なら、候補の文字を描く(フォントを読む)。
+fn open_popup(
+    wire: &mut crate::wire::Wire,
+    input_method: u32,
+    width: i32,
+    height: i32,
+    text: bool,
+) -> Result<(u32, PopupView), String> {
+    let compositor = wire.bind("wl_compositor", 1)?;
+    let shm = wire.bind("wl_shm", 1)?;
+    // wl_compositor.create_surface → zwp_input_method_v2.get_input_popup_surface(新しい番号、surface)
+    let surface = wire.new_id();
+    wire.send(&message(compositor, 0, &surface.to_le_bytes()))?;
+    let popup = wire.new_id();
+    wire.send(&message(
+        input_method,
+        4,
+        &[popup.to_le_bytes(), surface.to_le_bytes()].concat(),
+    ))?;
+    let purple = [POPUP_PIXEL[2], POPUP_PIXEL[1], POPUP_PIXEL[0]];
+    let pixels = crate::text::canvas(width, height, purple);
+    let (buffer, pool) = wire.new_buffer_from(shm, width, height, &pixels)?;
+    commit_surface(wire, surface, buffer, width, height)?;
+    Ok((
+        popup,
+        PopupView {
+            surface,
+            shm,
+            width,
+            height,
+            painter: text.then(crate::text::painter),
+            pools: vec![pool],
+        },
+    ))
 }

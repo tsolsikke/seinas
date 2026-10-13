@@ -26,7 +26,7 @@ pub const TIMEOUT: Duration = Duration::from_secs(30);
 const REGISTRY: u32 = 2;
 const SYNC: u32 = 3;
 const COMPOSITOR: u32 = 4;
-const SHM: u32 = 5;
+pub const SHM: u32 = 5;
 pub const WM_BASE: u32 = 6;
 pub const SURFACE: u32 = 7;
 pub const XDG_SURFACE: u32 = 8;
@@ -394,6 +394,36 @@ impl Wire {
         Ok((buffer, pool_file))
     }
 
+    /// `width` × `height` の、ピクセルが `pixels`(B, G, R, X)の新しいバッファ(と、そのための pool)を、shm の
+    /// オブジェクト `shm` で作る。返すのは、バッファの番号と pool(memfd。捨てると閉じる)。
+    pub fn new_buffer_from(
+        &mut self,
+        shm: u32,
+        width: i32,
+        height: i32,
+        pixels: &[u8],
+    ) -> Result<(u32, File), String> {
+        let stride = width * 4;
+        let pool_file = make_pool_from(pixels)?;
+        let pool = self.new_id();
+        self.send_with_fd(
+            &message(
+                shm,
+                0,
+                &[pool.to_le_bytes(), (stride * height).to_le_bytes()].concat(),
+            ),
+            pool_file.as_raw_fd(),
+        )?;
+        let buffer = self.new_id();
+        let mut create_buffer = buffer.to_le_bytes().to_vec();
+        for value in [0, width, height, stride] {
+            create_buffer.extend(value.to_le_bytes());
+        }
+        create_buffer.extend(FORMAT_XRGB8888.to_le_bytes());
+        self.send(&message(pool, 0, &create_buffer))?;
+        Ok((buffer, pool_file))
+    }
+
     /// 題名を付ける(xdg_toplevel.set_title)。commitすると、コンポジタに伝わる。
     pub fn set_title(&mut self, title: &str) -> Result<(), String> {
         self.send(&message(TOPLEVEL, 2, &string(title)))
@@ -618,6 +648,22 @@ pub fn protocol_error(event: &Event) -> Option<String> {
         "object {object}, code {code}, \"{}\"",
         String::from_utf8_lossy(text)
     ))
+}
+
+/// memfd を作り、バイト `bytes` を書く。
+pub fn make_pool_from(bytes: &[u8]) -> Result<File, String> {
+    // SAFETY: 名前は終端のある文字列。返ってきたfdは、このFileだけが持つ。
+    let fd = unsafe { libc::memfd_create(c"seinas-test".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err(format!(
+            "memfd_create failed: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let mut file = unsafe { File::from_raw_fd(fd) };
+    file.write_all(bytes)
+        .map_err(|e| format!("cannot fill the pool: {e}"))?;
+    Ok(file)
 }
 
 /// memfdを作り、単色の絵で埋める。

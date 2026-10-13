@@ -131,3 +131,22 @@ Seinas のウィンドウを閉じるか、script の端末で Ctrl+C を押し�
 ```
 
 script が SIGKILL などで途中で終わったときも、子のプロセスは止まります(PR_SET_PDEATHSIG)。残った一時的な場所は、`python3 tools/check-leftovers.py --clean` で消せます。
+
+## スクリーンショット(ヘッドレス)
+
+入れ子で動かさずに、Sprint Review に使うスクリーンショット(PNG、1280x720、場面ごとに 1 枚)を作れます。fake screen で動かすので、Windows の側には何も出ません。
+
+```bash
+python3 tools/review-shots.py <出力先のディレクトリ>
+```
+
+| ファイル | 場面 |
+| --- | --- |
+| `1-desktop.png` | 壁紙・タスクバー(時計は UTC+09:00)・日本語のタイトルのウィンドウ 3 つ |
+| `2-maximized.png` | 最大化したウィンドウ |
+| `3-switcher.png` | ウィンドウの切り替えの一覧(Alt+Tab の最中) |
+| `4-ime.png` | IME の変換中の文字(下線つき)と、候補の窓(候補の文字つき) |
+| `5-not-responding.png` | 応答なしのタイトルと、暗い赤の閉じるボタン |
+
+- 文字入力のウィンドウは `test-client window --show-text`(確定した文字と変換中の文字を描く)、IME は `test-client ime --popup 150x56 --popup-text`(候補の窓に候補を書く)です。
+- 終わるときに、起こしたものを全部止め、作業用の場所を消し、`tools/check-leftovers.py` で残りが 0 であることを確かめます。画像は、出力先にだけ書きます(リポジトリには入れません)。

@@ -32,6 +32,7 @@
 mod ime;
 mod layer;
 mod shrink;
+mod text;
 mod toplevels;
 mod window;
 mod wire;

@@ -27,6 +27,8 @@
 //! - `--text-input`: text-input-v3 を使う(`--keyboard` も付けたことになる)。enter が届くたびに、有効にして
 //!   カーソルの矩形を送り、commit する。届いたイベントを `window: text-input enter`、`window: text-input leave`、
 //!   `window: preedit あい`、`window: commit あい`、`window: delete 1 0`、`window: text-input done` の形で書く。
+//! - `--show-text`: text-input で確定した文字と変換中の文字を、コンテンツに描く(`--text-input` も付けたことになる。
+//!   スクリーンショットのため)。カーソルの矩形は、変換中の文字の終わりに合わせて送る。
 //! - `--cursor X,Y,W,H`: text-input で送るカーソルの矩形(コンテンツの左上が原点。既定は 10,20,2,16)。
 //! - `--resize-on-press EDGE`: コンテンツの上でボタンが押されたら、辺 `EDGE`(top・bottom・left・right・
 //!   top-left・top-right・bottom-left・bottom-right)でサイズ変更してほしいと頼む(xdg_toplevel の resize)。
@@ -85,6 +87,7 @@ struct Options {
     resize_on_press: Option<u32>,
     text_input: bool,
     cursor: [i32; 4],
+    show_text: bool,
 }
 
 /// 引数を読む。
@@ -100,6 +103,9 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
             "--pointer" => options.pointer = true,
             "--keyboard" => options.keyboard = true,
             "--text-input" => (options.keyboard, options.text_input) = (true, true),
+            "--show-text" => {
+                (options.keyboard, options.text_input, options.show_text) = (true, true, true)
+            }
             "--cursor" => {
                 let text = value()?;
                 let numbers: Vec<i32> = text.split(',').filter_map(|n| n.parse().ok()).collect();
@@ -153,6 +159,16 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let pool = open_window_with(&mut wire, width, height, pixel, &options.setup)?;
     // 再描画したときの pool も、持ち続ける(前のバッファを、コンポジタがまだ使っているかもしれないため)。
     let mut pools = vec![pool];
+    // 文字を描くときの状態(`--show-text`)。
+    let mut view = options.show_text.then(TextView::new);
+    if let Some(view) = &mut view {
+        let (pixels, cursor) = view.paint(width, height, pixel);
+        options.cursor = cursor;
+        let (buffer, pool) = wire.new_buffer_from(crate::wire::SHM, width, height, &pixels)?;
+        pools.push(pool);
+        let callback = wire.new_id();
+        commit_buffer_with(&mut wire, buffer, width, height, callback)?;
+    }
     let mut drawn = (width, height);
     // 最後に従うかどうかを決めた、configure の大きさと maximized の状態。
     let mut seen = (wire.toplevel_size, wire.toplevel_maximized);
@@ -203,6 +219,21 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 }
                 if Some(event.object) == text_input {
                     text_input_event(&mut wire, &event, options.cursor)?;
+                    if let Some(view) = &mut view {
+                        if view.event(&event) {
+                            // done で変わった文字を再描画し、カーソルの矩形を送り直す。
+                            let (pixels, cursor) = view.paint(drawn.0, drawn.1, pixel);
+                            options.cursor = cursor;
+                            let (w, h) = drawn;
+                            let (buffer, pool) =
+                                wire.new_buffer_from(crate::wire::SHM, w, h, &pixels)?;
+                            pools.push(pool);
+                            let callback = wire.new_id();
+                            commit_buffer_with(&mut wire, buffer, w, h, callback)?;
+                            send_cursor(&mut wire, event.object, cursor)?;
+                            wire.send(&crate::message(event.object, 7, &[]))?;
+                        }
+                    }
                     continue;
                 }
                 wire.answer(&event)?;
@@ -226,7 +257,13 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 let wanted = seen.0.map(|(w, h)| (w as i32, h as i32));
                 if let (true, true, Some((w, h))) = (options.follow_size, changed, wanted) {
                     if w > 0 && h > 0 && (w, h) != drawn {
-                        let (buffer, pool) = wire.new_buffer(w, h, pixel)?;
+                        let (buffer, pool) = match &mut view {
+                            Some(view) => {
+                                let (pixels, _) = view.paint(w, h, pixel);
+                                wire.new_buffer_from(crate::wire::SHM, w, h, &pixels)?
+                            }
+                            None => wire.new_buffer(w, h, pixel)?,
+                        };
                         pools.push(pool);
                         let callback = wire.new_id();
                         commit_buffer_with(&mut wire, buffer, w, h, callback)?;
@@ -333,4 +370,104 @@ fn text_input_event(wire: &mut Wire, event: &Event, cursor: [i32; 4]) -> Result<
         _ => {}
     }
     Ok(())
+}
+
+/// `--show-text` のウィンドウに描く文字(確定した文字と、変換中の文字)。text-input の done で効かせる。
+struct TextView {
+    painter: seinas_text::TextPainter,
+    committed: String,
+    preedit: String,
+    pending_commit: String,
+    pending_preedit: String,
+}
+
+/// 文字の色と、変換中の文字の下線の色。
+const TEXT: [u8; 3] = [0x18, 0x18, 0x18];
+/// 行の高さと、2 行の上の端。
+const TEXT_LINE: i32 = 24;
+const COMMITTED_TOP: i32 = 8;
+const PREEDIT_TOP: i32 = 40;
+const TEXT_LEFT: i32 = 10;
+
+impl TextView {
+    fn new() -> Self {
+        TextView {
+            painter: crate::text::painter(),
+            committed: String::new(),
+            preedit: String::new(),
+            pending_commit: String::new(),
+            pending_preedit: String::new(),
+        }
+    }
+
+    /// text-input のイベントを覚える。done で文字が変わったらtrue。
+    fn event(&mut self, event: &Event) -> bool {
+        match event.opcode {
+            2 => {
+                self.pending_preedit = string_at(event, 0)
+                    .and_then(|(text, _)| text)
+                    .unwrap_or_default();
+                false
+            }
+            3 => {
+                let text = string_at(event, 0).and_then(|(text, _)| text);
+                self.pending_commit.push_str(&text.unwrap_or_default());
+                false
+            }
+            5 => {
+                self.committed
+                    .push_str(&std::mem::take(&mut self.pending_commit));
+                self.preedit = std::mem::take(&mut self.pending_preedit);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// `width` × `height` の絵(地は `pixel` の色)と、変換中の文字の終わりのカーソルの矩形。
+    fn paint(&mut self, width: i32, height: i32, pixel: [u8; 4]) -> (Vec<u8>, [i32; 4]) {
+        let painter = &mut self.painter;
+        let mut pixels = crate::text::canvas(width, height, [pixel[2], pixel[1], pixel[0]]);
+        let committed = format!("確定:{}", self.committed);
+        crate::text::draw(
+            painter,
+            &mut pixels,
+            width,
+            &committed,
+            TEXT_LEFT,
+            COMMITTED_TOP,
+            TEXT_LINE,
+            TEXT,
+        );
+        let label = crate::text::draw(
+            painter,
+            &mut pixels,
+            width,
+            "入力中:",
+            TEXT_LEFT,
+            PREEDIT_TOP,
+            TEXT_LINE,
+            TEXT,
+        );
+        let x = TEXT_LEFT + label;
+        let drawn = crate::text::draw(
+            painter,
+            &mut pixels,
+            width,
+            &self.preedit,
+            x,
+            PREEDIT_TOP,
+            TEXT_LINE,
+            TEXT,
+        );
+        if drawn > 0 {
+            crate::text::fill(
+                &mut pixels,
+                width,
+                (x, PREEDIT_TOP + TEXT_LINE - 3, drawn, 1),
+                TEXT,
+            );
+        }
+        (pixels, [x + drawn, PREEDIT_TOP, 2, TEXT_LINE])
+    }
 }
