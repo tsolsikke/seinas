@@ -694,6 +694,7 @@ dependencies = [
 name = "seinas-frontend"
 version = "0.1.0"
 dependencies = [
+ "seinas-config",
  "seinas-golden",
  "seinas-text",
  "smithay",

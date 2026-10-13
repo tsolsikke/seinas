@@ -22,6 +22,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
+| `docs/config.md` | 設定のファイルの一覧と、`seinas.conf`(ウィンドウの切り替えのキー)の書き方、届いたキーの確かめ方(`--log-keys`) |
 | `docs/ime.md` | IME の道(見せる global、キーの道、応答しない IME、文字の受け渡し、フォーカス、候補の窓、IME を 1 つに限ること)と、テスト用の IME での試し方 |
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
@@ -114,6 +115,8 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-test-clients --bin t
 
 クライアントのウィンドウの上には、Seinasが題名の帯を描きます。zeyes-minの題名は「zeyes」で、`--title TEXT` で変えられます。
 帯を掴んで動かすと、ウィンドウが動きます。帯の右の端の「×」を押すと、閉じます。
+
+ウィンドウの切り替えは、Alt+Tab です。入れ子では Windows が Alt+Tab を先に使うので、Alt+F6(前へは Alt+Shift+F6)も使えます。キーは `~/.config/seinas/seinas.conf` で変えられ、届いたキーは `--log-keys` で確かめられます(`docs/config.md`)。
 
 Seinasのウィンドウを閉じると、Seinasは終わります。
 

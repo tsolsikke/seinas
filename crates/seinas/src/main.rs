@@ -18,7 +18,8 @@
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
 //!
-//! 制限: 大きさは800x600に固定で、親からのサイズ変更には応じない。入力はポインターだけを渡す。
+//! 引数:`--fonts DIR`、`--font-config PATH`(フォントの設定)、`--config PATH`(Seinas の設定。ウィンドウの切り替えの
+//! キーなど。無ければ `$XDG_CONFIG_HOME/seinas/seinas.conf`)、`--log-keys`(届いたキーをログに出す)。
 
 mod parent;
 
@@ -131,28 +132,39 @@ impl FrontendHost for Seinas {
 
 seinas_frontend::delegate_frontend!(Seinas);
 
-/// 引数を読む。受け付けるのは `--fonts DIR`(同梱のフォントの置き場)と `--font-config PATH`
-/// (フォントの設定のファイル)だけ。
-fn parse_fonts(
-    mut args: impl Iterator<Item = String>,
-) -> Result<(Option<PathBuf>, Option<PathBuf>), String> {
-    let (mut fonts, mut config) = (None, None);
+/// 起動の引数。
+#[derive(Default)]
+struct Options {
+    /// 同梱のフォントの置き場(`--fonts DIR`)。
+    fonts: Option<PathBuf>,
+    /// フォントの設定のファイル(`--font-config PATH`)。
+    font_config: Option<PathBuf>,
+    /// Seinas の設定のファイル(`--config PATH`。ウィンドウの切り替えのキーなど)。Noneなら既定の場所。
+    config: Option<PathBuf>,
+    /// 届いたキーを、修飾キーと keysym の名前でログに出す(`--log-keys`)。
+    log_keys: bool,
+}
+
+const USAGE: &str = "usage: seinas [--fonts DIR] [--font-config PATH] [--config PATH] [--log-keys]";
+
+/// 引数を読む。
+fn parse_options(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
+    let mut options = Options::default();
     while let Some(arg) = args.next() {
+        let mut value = |name: &str| {
+            args.next()
+                .map(PathBuf::from)
+                .ok_or_else(|| format!("{name} needs a value"))
+        };
         match arg.as_str() {
-            "--fonts" => fonts = Some(PathBuf::from(args.next().ok_or("--fonts needs a value")?)),
-            "--font-config" => {
-                config = Some(PathBuf::from(
-                    args.next().ok_or("--font-config needs a value")?,
-                ))
-            }
-            other => {
-                return Err(format!(
-                    "unknown argument: {other} (usage: seinas [--fonts DIR] [--font-config PATH])"
-                ))
-            }
+            "--fonts" => options.fonts = Some(value("--fonts")?),
+            "--font-config" => options.font_config = Some(value("--font-config")?),
+            "--config" => options.config = Some(value("--config")?),
+            "--log-keys" => options.log_keys = true,
+            other => return Err(format!("unknown argument: {other} ({USAGE})")),
         }
     }
-    Ok((fonts, config))
+    Ok(options)
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -160,7 +172,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_writer(std::io::stderr)
         .init();
 
-    let (fonts, font_config) = parse_fonts(std::env::args().skip(1))?;
+    let options = parse_options(std::env::args().skip(1))?;
 
     let mut event_loop: EventLoop<Seinas> = EventLoop::try_new()?;
 
@@ -181,10 +193,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             pointer: true,
             // keymap は、親の keymap が届いたら、それに置き換える(parent.rs)。届くまでは xkbcommon の既定。
             keyboard: Some(KeyboardConfig::default()),
-            font_dir: font_dir(fonts),
-            font_config,
+            font_dir: font_dir(options.fonts),
+            font_config: options.font_config,
             ping_timeout: seinas_frontend::DEFAULT_PING_TIMEOUT,
             ime_timeout: seinas_frontend::DEFAULT_IME_TIMEOUT,
+            // 入れ子の構成なので、切り替えの既定に Alt+F6 と Alt+Shift+F6 を足す(親の側の Windows が Alt+Tab を
+            // 先に使うため)。
+            switch_keys: seinas_frontend::read_switch_keys(
+                options
+                    .config
+                    .or_else(seinas_frontend::default_config_file)
+                    .as_deref(),
+                true,
+            ),
+            log_keys: options.log_keys,
         },
     );
     let painter = Painter::new(WIDTH, HEIGHT)?;

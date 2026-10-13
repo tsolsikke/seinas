@@ -26,6 +26,7 @@ pub mod geometry;
 mod ime;
 mod ime_popup;
 mod interaction;
+mod key_binding;
 mod ping;
 mod resize;
 mod shortcuts;
@@ -48,13 +49,17 @@ pub use interaction::{
     part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
     DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
 };
+pub use key_binding::{
+    default_config_file, describe, parse_shortcut, read_switch_keys, switch_keys_from, CONFIG_FILE,
+};
 pub use ping::{Pings, DEFAULT_PING_TIMEOUT};
 pub use resize::{
     anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
     MIN_CONTENT_SIZE, RESIZE_BORDER,
 };
 pub use shortcuts::{
-    is_modifier_key, keysym, Decision, Modifiers, Shortcut, Shortcuts, SWITCH_NEXT, SWITCH_PREVIOUS,
+    is_modifier_key, keysym, Action, Decision, Modifiers, Shortcut, Shortcuts, SwitchKeys,
+    SWITCH_NEXT, SWITCH_NEXT_NESTED, SWITCH_PREVIOUS, SWITCH_PREVIOUS_NESTED,
 };
 pub use stack::{
     next_slot, slot_count, slot_location, Placed, Restore, Stack, WindowId, CASCADE_STEP,
@@ -150,6 +155,11 @@ pub struct Config {
     /// IME へ送ったキーの返事を待つ時間。過ぎたら、IME が応答しないと見なして直接の道にする(既定は
     /// [`DEFAULT_IME_TIMEOUT`])。
     pub ime_timeout: Duration,
+    /// ウィンドウの切り替えのキー(既定は [`SwitchKeys::defaults`]。設定は [`read_switch_keys`])。
+    pub switch_keys: SwitchKeys,
+    /// 届いたキーを、修飾キーと keysym の名前でログに出すか(`--log-keys`。入れ子の構成で、どの組み合わせが
+    /// Seinas まで届くかを確かめるため)。
+    pub log_keys: bool,
 }
 
 /// キーボードの keymap(xkb の名前)と、押し続けたときの繰り返しの設定。
@@ -223,6 +233,10 @@ pub struct Frontend<D: SeatHandler> {
     pub shortcuts: Shortcuts,
     /// Alt+Tab での切り替えの最中なら、その状態。
     pub switcher: Option<Switcher>,
+    /// 切り替えを始めたキーの修飾キー(Shift を除く)。どれも離したら、切り替えを決める。
+    pub switch_hold: Modifiers,
+    /// 届いたキーをログに出すか([`Config::log_keys`])。
+    pub log_keys: bool,
     /// 画面(wl_output)。
     pub output: Output,
     /// xdg-output の global(wl_output の論理の大きさと位置を、クライアントに伝える)。
@@ -1394,19 +1408,22 @@ pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
 /// キーの押下か解放を受ける。`code` は evdev のキーの番号、`time` は起動からの時間(ミリ秒)。
 ///
 /// 先に Seinas のショートカットを見て(IME とアプリへ渡す前)、使わなければ、IME が keyboard を grab していれば
-/// IME へ、していなければキーボードのフォーカスのあるクライアントへ渡す(`ime.rs`)。使ったショートカットを返す。最小化しているウィンドウには、フォーカスが無いので届かない。
+/// IME へ、していなければキーボードのフォーカスのあるクライアントへ渡す(`ime.rs`)。行ったことを返す。最小化して
+/// いるウィンドウには、フォーカスが無いので届かない。
 ///
-/// Alt+Tab での切り替え(`docs/window-placement.md` の「Alt+Tab」):
-/// - Alt+Tab・Alt+Shift+Tab は、切り替えを始めるか、次・前の候補へ進める。Tab はクライアントへ渡さない。
+/// ウィンドウの切り替え(`docs/window-placement.md` の「Alt+Tab」。キーは設定で変えられる):
+/// - 次へ・前へのキー(既定は Alt+Tab・Alt+Shift+Tab。入れ子では Alt+F6・Alt+Shift+F6 も)は、切り替えを始めるか、
+///   次・前の候補へ進める。そのキーはクライアントへ渡さない。
 /// - 切り替えの最中は、修飾キーのほかのキーを渡さない。Esc は、取り消し。
-/// - Alt を離したら決める。Alt を離したことは、先にフォーカスのあるクライアントへ渡し、その後でフォーカスを移す
-///   (どのクライアントにも、Alt が押されたまま残らない)。
+/// - 切り替えを始めたキーの修飾キー(Shift を除く。既定では Alt)を離したら決める。離したことは、先にフォーカスの
+///   あるクライアントへ渡し、その後でフォーカスを移す(どのクライアントにも、Alt が押されたまま残らない)。
+///   Shift のほかに修飾キーの無いキーで始めたときは、その場で決める。
 pub fn keyboard_input<D: FrontendHost>(
     state: &mut D,
     code: u32,
     pressed: bool,
     time: u32,
-) -> Option<Shortcut> {
+) -> Option<Action> {
     let keyboard = state.frontend().keyboard.clone()?;
     sync_keyboard_focus(state);
     let key_state = if pressed {
@@ -1431,18 +1448,38 @@ pub fn keyboard_input<D: FrontendHost>(
                     logo: modifiers.logo,
                 };
                 let sym = keysym.modified_sym().raw();
+                let raw_sym = keysym.raw_syms().first().map_or(sym, |raw| raw.raw());
                 let frontend = state.frontend_mut();
+                if frontend.log_keys {
+                    let name = if is_modifier_key(sym) {
+                        describe(Modifiers::default(), sym)
+                    } else {
+                        describe(modifiers, sym)
+                    };
+                    let what = if pressed { "pressed" } else { "released" };
+                    info!("key: {name} {what}");
+                }
                 let switching = frontend.switcher.is_some();
-                match frontend.shortcuts.filter(code, pressed, sym, modifiers) {
-                    Decision::Use(shortcut) => FilterResult::Intercept(Some(shortcut)),
+                match frontend
+                    .shortcuts
+                    .filter(code, pressed, sym, raw_sym, modifiers)
+                {
+                    Decision::Use(shortcut, action) => {
+                        if !switching {
+                            frontend.switch_hold = Modifiers {
+                                shift: false,
+                                ..shortcut.modifiers
+                            };
+                        }
+                        FilterResult::Intercept(Some(action))
+                    }
                     Decision::Swallow => FilterResult::Intercept(None),
                     // 切り替えの最中は、修飾キーのほかのキーを渡さない(離したことも)。
                     Decision::Forward if switching && pressed && !is_modifier_key(sym) => {
                         frontend.shortcuts.hold(code);
-                        FilterResult::Intercept((sym == keysym::ESCAPE).then_some(Shortcut {
-                            keysym: sym,
-                            modifiers,
-                        }))
+                        FilterResult::Intercept(
+                            (sym == keysym::ESCAPE).then_some(Action::CancelSwitch),
+                        )
                     }
                     Decision::Forward => {
                         forwarded = Some(sym);
@@ -1459,16 +1496,20 @@ pub fn keyboard_input<D: FrontendHost>(
         }
     }
     let frontend = state.frontend_mut();
-    let changed = match used {
-        Some(shortcut) if shortcut == SWITCH_NEXT => frontend.switch_windows(false),
-        Some(shortcut) if shortcut == SWITCH_PREVIOUS => frontend.switch_windows(true),
-        Some(shortcut) if shortcut.keysym == keysym::ESCAPE => frontend.cancel_switch(),
-        // Alt を離した(Alt のキーを離したことは、上で、いまのフォーカスへ渡してある)。
-        _ if frontend.switcher.is_some() && !keyboard.modifier_state().alt => {
-            frontend.finish_switch()
-        }
-        _ => false,
+    let mut changed = match used {
+        Some(Action::SwitchNext) => frontend.switch_windows(false),
+        Some(Action::SwitchPrevious) => frontend.switch_windows(true),
+        Some(Action::CancelSwitch) => frontend.cancel_switch(),
+        None => false,
     };
+    // 始めたキーの修飾キー(既定では Alt)を離した(離したことは、上で、いまのフォーカスへ渡してある)。修飾キーの
+    // 無いキーで始めたときは、すぐ決める。
+    let now = keyboard.modifier_state();
+    let hold = frontend.switch_hold;
+    let held = (hold.alt && now.alt) || (hold.ctrl && now.ctrl) || (hold.logo && now.logo);
+    if frontend.switcher.is_some() && !held {
+        changed |= frontend.finish_switch();
+    }
     if changed {
         self::changed(state);
     }
@@ -2023,8 +2064,10 @@ macro_rules! delegate_frontend {
                     seat,
                     pointer,
                     keyboard,
-                    shortcuts: $crate::Shortcuts::seinas(),
+                    shortcuts: $crate::Shortcuts::switching(&config.switch_keys),
                     switcher: None,
+                    switch_hold: Default::default(),
+                    log_keys: config.log_keys,
                     output,
                     output_manager,
                     size: $crate::geometry::Size::new(config.width, config.height),

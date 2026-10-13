@@ -545,6 +545,39 @@ impl Compositor {
         self.connect_test_client_to(&self.shell_socket(), args)
     }
 
+    /// 入れ子の構成の Seinas(`seinas`)を、このコンポジタを親にして起こし、子のソケットができるまで待つ。
+    /// 引数 `args` を付ける。子のソケットは、作業用の場所の `seinas-0`(`XDG_RUNTIME_DIR` をそこにする)。
+    /// 標準エラーは、作業用の場所の `nested.log` に書く。親は 1 つのウィンドウとして入れ子の Seinas を出し、
+    /// キーボードのフォーカスも渡すので、テスト用の入力インターフェースのキーは、入れ子の Seinas に届く。
+    pub fn start_nested(&self, args: &[&str]) -> Nested {
+        let log = fs::File::create(self.dir.join("nested.log")).expect("create the nested log");
+        let process = Running(
+            child_command(workspace_bin("seinas", "seinas"))
+                .args(args)
+                .arg("--fonts")
+                .arg(font_dir())
+                .env("WAYLAND_DISPLAY", &self.socket)
+                .env("XDG_RUNTIME_DIR", &self.dir)
+                .env("XDG_CONFIG_HOME", &self.dir)
+                .env_remove("SEINAS_FONTS")
+                .stderr(log)
+                .spawn()
+                .expect("start the nested seinas"),
+        );
+        let socket = self.dir.join("seinas-0");
+        wait_for("the nested socket", || socket.exists().then_some(()));
+        Nested {
+            process,
+            socket,
+            log: self.dir.join("nested.log"),
+        }
+    }
+
+    /// テスト用のクライアントを、ソケット `socket` へつなぐ(入れ子の Seinas の子など)。
+    pub fn connect_test_client_at(&self, socket: &Path, args: &[&str]) -> TestClient {
+        self.connect_test_client_to(socket, args)
+    }
+
     fn connect_test_client_to(&self, socket: &Path, args: &[&str]) -> TestClient {
         let mut process = Running(
             child_command(workspace_bin("seinas-test-clients", "test-client"))
@@ -574,6 +607,21 @@ impl Compositor {
         fs::read_dir(format!("/proc/{}/task", self.process.0.id()))
             .map(|tasks| tasks.count())
             .unwrap_or(0)
+    }
+}
+
+/// 入れ子の構成で動かした Seinas。親(このテストの [`Compositor`])より先に止める。
+pub struct Nested {
+    pub process: Running,
+    /// 子のソケット。
+    pub socket: PathBuf,
+    log: PathBuf,
+}
+
+impl Nested {
+    /// これまでに標準エラーへ書かれたログ。
+    pub fn log(&self) -> String {
+        fs::read_to_string(&self.log).unwrap_or_default()
     }
 }
 

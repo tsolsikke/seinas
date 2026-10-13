@@ -21,6 +21,9 @@
 //! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
+//! - `--config PATH`: Seinas の設定のファイル(ウィンドウの切り替えのキーなど。`docs/config.md`)。無ければ
+//!   `$XDG_CONFIG_HOME/seinas/seinas.conf`。
+//! - `--log-keys`: 届いたキーを、修飾キーと keysym の名前でログに出す(`key: Alt+F6 pressed`)。
 //! - `--ime-timeout MS`: IME へ送ったキーの返事を待つ時間(ミリ秒。既定は 1000)。過ぎたら、IME が応答しないと
 //!   見なして、次のキーから直接の道にする(`docs/ime.md`)。
 //! - `--test-input`: 試験のための入力の口を開く。標準入力から、ポインターの動きとボタンを1行ずつ読む
@@ -57,11 +60,11 @@ use std::{
 };
 
 use seinas_frontend::{
-    check_ime, check_pings, font_dir,
+    check_ime, check_pings, default_config_file, font_dir,
     geometry::{PointF, Size},
-    keyboard_input, pointer_input, reap_dead_clients, set_locked_modifiers, BuildFrontend, Config,
-    Frontend, FrontendHost, KeyboardConfig, PointerInput, DEFAULT_IME_TIMEOUT,
-    DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
+    keyboard_input, pointer_input, read_switch_keys, reap_dead_clients, set_locked_modifiers,
+    BuildFrontend, Config, Frontend, FrontendHost, KeyboardConfig, PointerInput,
+    DEFAULT_IME_TIMEOUT, DEFAULT_PING_TIMEOUT, LEFT_BUTTON,
 };
 use seinas_render::Painter;
 use smithay::reexports::{
@@ -86,7 +89,7 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 const RIGHT_BUTTON: u32 = 0x111;
 
 const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--ime-timeout MS]";
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--ime-timeout MS] [--config PATH] [--log-keys]";
 
 struct Options {
     device: PathBuf,
@@ -101,6 +104,10 @@ struct Options {
     ping_timeout: Duration,
     /// IME へ送ったキーの返事を待つ時間(テストで変えるため)。
     ime_timeout: Duration,
+    /// Seinas の設定のファイル(`--config`)。Noneなら既定の場所。
+    config: Option<PathBuf>,
+    /// 届いたキーをログに出すか(`--log-keys`)。
+    log_keys: bool,
 }
 
 fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -117,6 +124,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         test_input: false,
         ping_timeout: DEFAULT_PING_TIMEOUT,
         ime_timeout: DEFAULT_IME_TIMEOUT,
+        config: None,
+        log_keys: false,
     };
     let mut args = args;
     while let Some(arg) = args.next() {
@@ -137,6 +146,8 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             "--font-config" => options.font_config = Some(PathBuf::from(value("--font-config")?)),
             "--test-input" => options.test_input = true,
+            "--config" => options.config = Some(PathBuf::from(value("--config")?)),
+            "--log-keys" => options.log_keys = true,
             "--ping-timeout" => {
                 let text = value("--ping-timeout")?;
                 let ms = text
@@ -367,6 +378,16 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             font_config: options.font_config.clone(),
             ping_timeout: options.ping_timeout,
             ime_timeout: options.ime_timeout,
+            // 入れ子でない構成なので、切り替えの既定は Alt+Tab と Alt+Shift+Tab。
+            switch_keys: read_switch_keys(
+                options
+                    .config
+                    .clone()
+                    .or_else(default_config_file)
+                    .as_deref(),
+                false,
+            ),
+            log_keys: options.log_keys,
         },
     );
     let painter = Painter::new(width, height)?;
