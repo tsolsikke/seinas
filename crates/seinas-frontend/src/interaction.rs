@@ -410,9 +410,16 @@ impl Interaction {
                     // ボタンの上には来ないようにする。
                     let last = (width - buttons.width() - 1).max(0) as f64;
                     let offset = (ratio * width as f64).clamp(0.0, last);
+                    // 縦は、押した点の、外枠の上からの高さのまま(クライアントから頼まれた移動では、コンテンツの中を
+                    // 押していることがあるので、元の大きさの外枠に入るようにする)。
+                    let height = restore
+                        .and_then(|restore| restore.content)
+                        .map_or(outer.h, |size| size.h + TITLE_BAR_HEIGHT);
+                    let offset_y =
+                        (press.y - origin.y as f64).clamp(0.0, (height - 1).max(0) as f64);
                     let wanted = (
                         (point.x - offset).round() as i32,
-                        (point.y - (press.y - origin.y as f64)).round() as i32,
+                        (point.y - offset_y).round() as i32,
                     );
                     let location = clamp_outer_location(wanted.into(), width, area);
                     self.grab = Grab::Bar {
@@ -647,12 +654,15 @@ impl Interaction {
         outcome
     }
 
-    /// クライアントが、自分のウィンドウ `window` を動かしてほしいと頼んできた。受けたらtrue。
+    /// クライアントが、自分のウィンドウ `window` を動かしてほしいと頼んできた(xdg_toplevel.move。自分でタイトル
+    /// バーを描くアプリなど)。受けたら、頼みが届くまでの間にポインターが動いたぶんの結果を返す。受けなければNone。
     ///
-    /// 受けるのは、中身の上でボタンが押されている間だけ。受けたら、そのボタンを離すまで、帯を
-    /// 掴んだときと同じに動かす(遊びは置かず、すぐ動かす)。`press` は、そのボタンを押した点。
-    /// 頼みが届くまでの間にポインターが動いたぶんは、ここで動かす。呼ぶ側は、頼んできたのが、
-    /// 押されているクライアントであることを確かめておくこと。最大化しているウィンドウは、動かさない。
+    /// 受けるのは、コンテンツの上でボタンが押されている間だけ。受けたら、そのボタンを離すまで、タイトルバーを
+    /// grab したときと同じに動かす(ドラッグのしきい値は置かず、すぐ動かす)。`press` は、そのボタンを押した点。
+    /// 呼ぶ側は、頼んできたのが、押されているクライアントであることを確かめておくこと。
+    ///
+    /// 最大化しているウィンドウは、タイトルバーを grab したときと同じく、[`RESTORE_DRAG_SLACK`] 動いた所で、元の
+    /// 大きさに戻して([`Command::Restore`])動かし続ける。上端での最大化の予告も、同じく出す。
     pub fn begin_client_move<T>(
         &mut self,
         stack: &mut Stack<T>,
@@ -660,23 +670,20 @@ impl Interaction {
         window: WindowId,
         press: PointF,
         measure: &impl Measure<T>,
-    ) -> bool {
+    ) -> Option<Outcome> {
         let (Grab::Client { .. }, Some(entry)) = (self.grab, stack.get(window)) else {
-            return false;
+            return None;
         };
-        if entry.is_maximized() {
-            return false;
-        }
         self.grab = Grab::Bar {
             window,
             press,
             origin: entry.location,
-            moving: true,
+            // 最大化していれば、しきい値を越えるまでは動かさない(越えたら元の大きさに戻す)。
+            moving: !entry.is_maximized(),
             movable: true,
             snap: false,
         };
-        self.motion(stack, area, self.last, measure);
-        true
+        Some(self.motion(stack, area, self.last, measure))
     }
 
     /// クライアントが、自分のウィンドウ `window` の辺 `edges` でサイズ変更してほしいと頼んできた
@@ -831,6 +838,10 @@ mod tests {
         }
 
         fn begin_client_move(&mut self, window: WindowId, x: f64, y: f64) -> bool {
+            self.client_move(window, x, y).is_some()
+        }
+
+        fn client_move(&mut self, window: WindowId, x: f64, y: f64) -> Option<Outcome> {
             self.interaction.begin_client_move(
                 &mut self.stack,
                 Rect::from_size(SCREEN.into()),
@@ -1431,6 +1442,43 @@ mod tests {
     }
 
     #[test]
+    fn a_client_move_of_a_maximized_window_restores_it_after_the_slack() {
+        let mut world = two_with_buttons();
+        let b = world.id("full-b");
+        let area = Rect::from_size(SCREEN.into());
+        world.stack.maximize(b, area, Some((160, 120).into()));
+        // コンテンツの中(自分で描いたタイトルバーなど)を押して、move を頼む。まだ動かない。
+        world.press(100.0, 40.0, LEFT_BUTTON);
+        let start = world
+            .client_move(b, 100.0, 40.0)
+            .expect("the move is taken");
+        assert_eq!(start.command, None);
+        assert!(!world.interaction.is_moving());
+        assert_eq!(world.motion(107.0, 40.0).command, None);
+        // 8 ピクセル動かすと、元の大きさに戻す。横は押した点の割合(100 / 320 = 5/16)の所、縦は押した高さのまま。
+        assert_eq!(
+            world.motion(108.0, 40.0).command,
+            Some((
+                b,
+                Command::Restore {
+                    location: (58, 0).into()
+                }
+            ))
+        );
+        assert!(world.interaction.is_moving());
+        world.stack.unmaximize(b, area);
+        world.stack.move_to(b, (58, 0).into());
+        // そのまま上端へ動かすと、最大化の予告が出て、離すと最大化する。
+        world.motion(108.0, 60.0);
+        world.motion(108.0, 0.0);
+        assert_eq!(world.interaction.maximize_preview(), Some(b));
+        assert_eq!(
+            world.release(108.0, 0.0, LEFT_BUTTON).command,
+            Some((b, Command::Maximize))
+        );
+    }
+
+    #[test]
     fn a_maximized_window_keeps_its_clicks_and_double_clicks() {
         let mut world = two_with_buttons();
         let b = world.id("full-b");
@@ -1516,9 +1564,8 @@ mod tests {
         // 外枠のすぐ外(上の y 36)にも、サイズ変更の境界は無い(後ろの full-a のコンテンツに当たる)。
         assert_eq!(world.motion(100.0, 36.0).deliver, Deliver::ToClient);
         assert_eq!(world.interaction.cursor(), Cursor::Default);
-        // クライアントからの移動とサイズ変更の頼みも、受けない。
+        // クライアントからのサイズ変更の頼みは、受けない(移動の頼みは、元の大きさに戻して動かす。下のテスト)。
         world.press(100.0, 100.0, LEFT_BUTTON);
-        assert!(!world.begin_client_move(b, 100.0, 100.0));
         assert!(world
             .interaction
             .begin_client_resize(

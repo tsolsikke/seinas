@@ -844,6 +844,35 @@ impl<D: FrontendHost> Frontend<D> {
             .unwrap_or_default()
     }
 
+    /// ポインターの操作の結果の `command` を、ウィンドウ `id` に行う。
+    fn apply_command(&mut self, id: WindowId, command: Command) {
+        match command {
+            // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
+            // 応答なしのクライアントなら、接続を切る。
+            Command::Close => self.close_button(id),
+            Command::Minimize => {
+                self.minimize(id);
+            }
+            Command::ToggleMaximize => {
+                let maximized = self
+                    .windows
+                    .get(id)
+                    .is_some_and(|window| window.is_maximized());
+                self.set_maximized(id, !maximized);
+            }
+            Command::Maximize => {
+                self.set_maximized(id, true);
+            }
+            // 最大化しているウィンドウを、タイトルバーか、クライアントから頼まれた移動でドラッグした。元の大きさに
+            // 戻し、ポインターの下へ置く。
+            Command::Restore { location } => {
+                if self.set_maximized(id, false) {
+                    self.windows.move_to(id, location);
+                }
+            }
+        }
+    }
+
     /// 見せている IME の候補の窓と、画面の上の位置(左上)。親のウィンドウが見えていない(最小化している)ときと、
     /// 候補の窓がまだ絵を出していないときはNone。
     ///
@@ -1215,29 +1244,8 @@ where
     if outcome.raised {
         frontend.update_activation();
     }
-    match outcome.command {
-        // 閉じるように頼むだけ。応じるかどうかは、クライアントしだい。
-        // 応答なしのクライアントなら、接続を切る。
-        Some((id, Command::Close)) => frontend.close_button(id),
-        Some((id, Command::Minimize)) => {
-            frontend.minimize(id);
-        }
-        Some((id, Command::ToggleMaximize)) => {
-            let maximized = frontend
-                .windows
-                .get(id)
-                .is_some_and(|window| window.is_maximized());
-            frontend.set_maximized(id, !maximized);
-        }
-        Some((id, Command::Maximize)) => {
-            frontend.set_maximized(id, true);
-        }
-        // 最大化しているウィンドウのタイトルバーをドラッグした。元の大きさに戻し、ポインターの下へ置く。
-        Some((id, Command::Restore { location })) if frontend.set_maximized(id, false) => {
-            frontend.windows.move_to(id, location);
-        }
-        Some((_, Command::Restore { .. })) => {}
-        None => {}
+    if let Some((id, command)) = outcome.command {
+        frontend.apply_command(id, command);
     }
     let focus = match outcome.deliver {
         Deliver::ToClient => frontend
@@ -1334,11 +1342,18 @@ where
     };
     let area = frontend.usable;
     let measure = frontend.measure();
-    if !frontend
-        .interaction
-        .begin_client_move(&mut frontend.windows, area, window, press, &measure)
-    {
+    let Some(outcome) = frontend.interaction.begin_client_move(
+        &mut frontend.windows,
+        area,
+        window,
+        press,
+        &measure,
+    ) else {
         return;
+    };
+    // 最大化しているウィンドウで、頼みが届くまでにしきい値を越えて動いていれば、ここで元の大きさに戻す。
+    if let Some((id, command)) = outcome.command {
+        frontend.apply_command(id, command);
     }
     take_pointer_from_client(state, &pointer, serial);
 }

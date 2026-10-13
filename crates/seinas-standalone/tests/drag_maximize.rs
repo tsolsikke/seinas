@@ -7,6 +7,7 @@
 //! - 動かしている最中に、ポインターが使える範囲の上端に触れると、最大化の予告(使える範囲の内側に沿った、太さ
 //!   4 ピクセルの枠)を出し、そこで離すと最大化する。上端から離れると、予告を消す。大きさの決まったウィンドウでは、
 //!   予告も最大化もしない。
+//! - クライアントから頼まれた移動(xdg_toplevel.move。自分でタイトルバーを描くアプリ)でも、同じに戻し、予告を出す。
 //! - どちらの操作でも、foreign-toplevel の maximized の状態が合い、キーボードのフォーカスと activated は動かない。
 //!
 //! ポインターのイベントは、テスト用の入力インターフェース(`--test-input`)から送る。
@@ -231,5 +232,72 @@ fn a_window_of_a_fixed_size_is_not_maximized_at_the_top() {
         shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
     });
     assert_eq!(shot.pixel(WIDTH - 2, HEIGHT / 2), BACKGROUND);
+    expect_the_focus_kept(&mut seinas, &window);
+}
+
+/// コンテンツを押して、クライアントが move を頼み終えるまで待つ(`--move-on-press` のウィンドウ)。
+fn press_and_wait_for_the_move(seinas: &mut Compositor, window: &mut TestClient, x: u32, y: u32) {
+    seinas.pointer(&format!("motion {x} {y}"));
+    seinas.pointer("press");
+    window.wait_for_line("window: pointer button 0x110 pressed");
+    // 頼み(xdg_toplevel.move)は、押したことを書いた後に送る。sync の返事で、コンポジタが受け終えたと分かる。
+    window.send_line("sync");
+    window.wait_for_line("window: synced");
+}
+
+#[test]
+fn a_client_move_restores_a_maximized_window_after_the_slack() {
+    let (mut seinas, mut window, list) = start("df", &["--move-on-press"]);
+    window.send_line("maximize");
+    assert_eq!(
+        next_configure(&window, "maximized"),
+        format!("{WIDTH}x{} [activated,maximized]", HEIGHT - BAR)
+    );
+    wait_for_state(&list, "activated,maximized");
+    seinas.wait_for_screen("the maximized window", shows_maximized);
+
+    // コンテンツの (100, 100)(自分で描いたタイトルバーのつもり)を押して、move を頼む。8 ピクセルの手前では、
+    // 最大化したまま。
+    press_and_wait_for_the_move(&mut seinas, &mut window, 100, 100);
+    seinas.pointer("motion 105 100");
+    window.send_line("sync");
+    window.wait_for_line("window: synced");
+    seinas.wait_for_screen("still maximized", shows_maximized);
+    // 10 ピクセル動かすと、元の大きさ(200x150)に戻る。横は、元の幅の 100 / 640 の所(31)にポインターが来るので、
+    // 外枠の左上は x 79。縦は、押した点の外枠の上からの高さ(100)のままなので、y 0。そのまま動かすと、ついてくる。
+    seinas.pointer("motion 110 100");
+    assert_eq!(
+        next_configure(&window, "restored"),
+        format!("{WINDOW_WIDTH}x{WINDOW_HEIGHT} [activated]")
+    );
+    wait_for_state(&list, "activated");
+    seinas.pointer("motion 140 150");
+    seinas.pointer("release");
+    seinas.wait_for_screen("the restored window under the pointer", |shot| {
+        shows_window(shot, (109, 50), (WINDOW_WIDTH, WINDOW_HEIGHT))
+            && shot.pixel(105, 100) == BACKGROUND
+    });
+    expect_the_focus_kept(&mut seinas, &window);
+}
+
+#[test]
+fn a_client_move_to_the_top_previews_and_maximizes() {
+    let (mut seinas, mut window, list) = start("dg", &["--move-on-press"]);
+    seinas.wait_for_screen("the window", |shot| {
+        shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
+    });
+    // コンテンツを押して move を頼み、下へ動かしてから上の端へ戻すと、予告が出る。
+    press_and_wait_for_the_move(&mut seinas, &mut window, 100, 100);
+    seinas.pointer("motion 100 150");
+    seinas.pointer("motion 100 0");
+    seinas.wait_for_screen("the mark", shows_mark);
+    // 上の端で離すと、最大化する。
+    seinas.pointer("release");
+    assert_eq!(
+        next_configure(&window, "maximized"),
+        format!("{WIDTH}x{} [activated,maximized]", HEIGHT - BAR)
+    );
+    wait_for_state(&list, "activated,maximized");
+    seinas.wait_for_screen("maximized without the mark", shows_maximized);
     expect_the_focus_kept(&mut seinas, &window);
 }
