@@ -23,13 +23,7 @@
 
 mod parent;
 
-use std::{
-    cell::RefCell,
-    error::Error,
-    path::PathBuf,
-    rc::Rc,
-    time::{Duration, Instant},
-};
+use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc, time::Instant};
 
 use seinas_frontend::{
     check_ime, check_pings, font_dir, geometry::Size, reap_dead_clients, BuildFrontend, Config,
@@ -267,14 +261,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     while !state.exit {
-        event_loop.dispatch(Duration::from_millis(16), &mut state)?;
-        // 子がcommitしたのに親のframeコールバックを待っていないとき(最初の1回など)は、ここで描く。
+        // 何か起きるまで待つ(親の Wayland の接続、子のソケットと接続)。決まった間隔では起きない。pong の期限と、
+        // IME の返事の期限があれば、そこまでで起きる。描く歩調は、親の frame コールバックで決まる。
+        let deadline = [
+            state.frontend.pings.next_deadline(),
+            state.frontend.ime.next_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
+        .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        event_loop.dispatch(deadline, &mut state)?;
+        // 子がcommitしたのに親のframeコールバックを待っていないとき(最初の1回など)は、ここで描く。親が前の絵を
+        // まだ使っていれば、親の frame コールバックが届いたときに描く(`parent.rs`)。
         if state.needs_redraw {
             state.draw(&qh);
         }
-        // 閉じるように頼んだクライアントの pong の期限を確かめる(ループは 16 ミリ秒ごとに回る)。
+        // 閉じるように頼んだクライアントの pong の期限と、IME へ送ったキーの返事の期限を確かめる。
         check_pings(&mut state, Instant::now());
-        // IME へ送ったキーの返事の期限も、同じく確かめる。
         check_ime(&mut state, Instant::now());
         // 接続を切ったクライアント(応答なしで閉じるボタンを押したもの)のクリーンアップも、ここで行う。
         let reap = std::mem::take(&mut state.frontend.reap_requested);
