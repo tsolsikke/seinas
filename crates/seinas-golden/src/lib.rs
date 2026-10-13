@@ -515,7 +515,10 @@ impl Runner {
         let _ = fs::write(self.actual_dir.join(file), bytes);
     }
 
-    /// まとめを出す。失敗があれば、それを全部出して、終了コード 1 で終わる。
+    /// まとめを出す。失敗があれば、それを全部出して、exit status 1 で終わる。
+    ///
+    /// 失敗のときは `std::process::exit` で終わるので、呼んだ側の値の Drop は走らない。子のプロセスや一時ファイルは、
+    /// 呼ぶ前に片付けること。
     pub fn finish(self) {
         if self.update {
             println!(

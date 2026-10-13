@@ -6,11 +6,13 @@
 #![allow(dead_code)]
 
 use std::{
+    ffi::OsStr,
     fs,
     io::{BufRead, BufReader},
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    sync::mpsc,
+    sync::{mpsc, Once},
     time::{Duration, Instant},
 };
 
@@ -44,6 +46,71 @@ pub const CLOSE_BUTTON: usize = 24;
 pub const BUTTONS: usize = 2 * CLOSE_BUTTON;
 /// ポインターを乗せたときの、閉じるボタンの地の色。
 pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
+
+/// テストが起こした子のプロセスに付ける環境変数。値は、テストのプロセスの PID。残ったプロセスを
+/// `tools/check-leftovers.sh` が見分けるのに使う。
+pub const CHILD_MARK_ENV: &str = "SEINAS_TEST_CHILD";
+
+/// テストの作業用の場所に置く印のファイル。`tools/check-leftovers.sh` と [`sweep_stale_dirs`] は、これが
+/// ある場所だけを片付けの対象にする。
+pub const DIR_MARK: &str = ".seinas-test";
+
+/// テストの子のプロセスを起こすための Command。
+///
+/// どの終わり方でも、子が残らないようにする:
+/// - ふつうの終わり方(成功、失敗、panic、timeout の panic)では、[`Running`] の Drop が kill と wait をする。
+/// - Drop が走らない終わり方(`std::process::exit`、SIGINT・SIGKILL での中断、テストのプロセスの abort)では、
+///   子に付けた `PR_SET_PDEATHSIG`(SIGKILL)で、カーネルが子を止める。親が先に終わっていた場合に備え、
+///   付けた後で親の PID を確かめる。
+///
+/// `PR_SET_PDEATHSIG` は、子を起こしたスレッドが終わったときにも働く。テストの子は、テストの関数を動かす
+/// スレッドで起こし、そのテストの中でだけ使うので、困らない。
+pub fn child_command(program: impl AsRef<OsStr>) -> Command {
+    let parent = std::process::id();
+    let mut command = Command::new(program);
+    command.env(CHILD_MARK_ENV, parent.to_string());
+    // SAFETY: fork の後、exec の前に、async-signal-safe な prctl・getppid・_exit だけを呼ぶ。
+    unsafe {
+        command.pre_exec(move || {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            if libc::getppid() as u32 != parent {
+                libc::_exit(1);
+            }
+            Ok(())
+        });
+    }
+    command
+}
+
+/// 前のテストのプロセスが SIGKILL などで終わり、片付けられずに残った作業用の場所を消す(印のファイルがあり、
+/// 名前の終わりの PID のプロセスがもういないものだけ)。テストのプロセスごとに 1 回だけ行う。
+pub fn sweep_stale_dirs() {
+    static SWEEP: Once = Once::new();
+    SWEEP.call_once(|| {
+        let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str().filter(|name| name.starts_with("seinas-")) else {
+                continue;
+            };
+            let Some(pid) = name
+                .rsplit('-')
+                .next()
+                .and_then(|pid| pid.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            let path = entry.path();
+            if path.join(DIR_MARK).exists() && !Path::new(&format!("/proc/{pid}")).exists() {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
+    });
+}
 
 /// 終わるときに、動かしたプロセスを必ず止める。
 pub struct Running(pub Child);
@@ -302,12 +369,14 @@ impl Compositor {
         args: &[&str],
     ) -> Self {
         // ソケットのパスには長さの上限(約100文字)があるので、短い場所に置く。
+        sweep_stale_dirs();
         let dir = std::env::temp_dir().join(format!("seinas-{name}-{}", std::process::id()));
         fs::create_dir_all(&dir).expect("create the working directory");
+        fs::write(dir.join(DIR_MARK), "").expect("mark the working directory");
         let socket = dir.join("wl");
         let dump = dir.join("screen.ppm");
         let log = fs::File::create(dir.join("log")).expect("create the log file");
-        let mut command = Command::new(env!("CARGO_BIN_EXE_seinas-standalone"));
+        let mut command = child_command(env!("CARGO_BIN_EXE_seinas-standalone"));
         if test_input {
             command.arg("--test-input").stdin(Stdio::piped());
         }
@@ -393,7 +462,7 @@ impl Compositor {
 
     fn connect_zeyes_with(&self, args: &[&str]) -> Running {
         Running(
-            Command::new(workspace_bin("zeyes-min", "zeyes-min"))
+            child_command(workspace_bin("zeyes-min", "zeyes-min"))
                 .args(args)
                 .env("WAYLAND_DISPLAY", &self.socket)
                 // 外から入った色の指定に左右されないようにする。
@@ -409,7 +478,7 @@ impl Compositor {
     pub fn connect_taskbar_to(&self, socket: &Path, args: &[&str]) -> Running {
         let log = fs::File::create(self.dir.join("taskbar.log")).expect("create the taskbar log");
         Running(
-            Command::new(workspace_bin("seinas-taskbar", "seinas-taskbar"))
+            child_command(workspace_bin("seinas-taskbar", "seinas-taskbar"))
                 .args(args)
                 .arg("--fonts")
                 .arg(font_dir())
@@ -440,7 +509,7 @@ impl Compositor {
         let log =
             fs::File::create(self.dir.join("wallpaper.log")).expect("create the wallpaper log");
         Running(
-            Command::new(workspace_bin("seinas-wallpaper", "seinas-wallpaper"))
+            child_command(workspace_bin("seinas-wallpaper", "seinas-wallpaper"))
                 .env("WAYLAND_DISPLAY", self.shell_socket())
                 .env("XDG_CONFIG_HOME", &self.dir)
                 .stderr(log)
@@ -478,7 +547,7 @@ impl Compositor {
 
     fn connect_test_client_to(&self, socket: &Path, args: &[&str]) -> TestClient {
         let mut process = Running(
-            Command::new(workspace_bin("seinas-test-clients", "test-client"))
+            child_command(workspace_bin("seinas-test-clients", "test-client"))
                 .args(args)
                 .env("WAYLAND_DISPLAY", socket)
                 .stdin(Stdio::piped())

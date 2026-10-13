@@ -34,7 +34,7 @@ push の前に行う確かめを、変更の種類に応じた段に分けます
 | 段 | 選ぶ変更 | 行う確かめ |
 | --- | --- | --- |
 | docs | 文書だけ(`*.md`、`docs/`、`LICENSE`) | 差分の空白(`git diff --check`)、新しく書いた行の課題のキー、古い言い方(表示するだけ)、コミットメッセージの形 |
-| code | コード(上と下のどれにも当たらないもの。`crates/` の多く、`tools/` のほとんど) | 上に加えて、fmt・clippy・ホストのテスト(golden を含む) |
+| code | コード(上と下のどれにも当たらないもの。`crates/` の多く、`tools/` のほとんど) | 上に加えて、fmt・clippy・ホストのテスト(golden を含む)・テストの後に残ったプロセスの確かめ(`tools/check-leftovers.py`) |
 | visual | 見た目に関わるもの(`seinas-render`・`seinas-text`・`seinas-fbdev` の全体、`seinas-frontend` の `decoration.rs`・`title_bar.rs`・`lib.rs`、`seinas-taskbar` と `seinas-wallpaper` の `lib.rs`、`tests/golden/`・`tests/golden.rs`) | 上に加えて、golden の決まり(既存の正解データの作り直しと `src/` の変更が、同じコミットに無いか) |
 | full | 依存・ビルド(`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`.github/`、`THIRD-PARTY/`、`tools/build-musl.sh` などのビルドと依存の道具) | 上に加えて、third-party の確かめ、依存の検査、musl の静的ビルドとテスト、SHA-256 |
 
@@ -63,6 +63,16 @@ tools/ci-wait.sh
 
 - HEAD の run を探して、終わるまで待ちます。成功したらジョブごとの結果を出し、落ちたら終わりの値 1 と、記録の見方(`gh run view <run> --log-failed`)を出します。
 - 落ちたらすぐ直します。直せないときは revert して push し、CI が戻ったことを確かめてから報告します。
+
+## テストの後に残るプロセス
+
+テスト(seinas-standalone の結合テストと golden)は、コンポジタとクライアントを子のプロセスとして起こします。同じホストで ZeikOS の確かめ(QEMU)も動くので、テストの後に子を残しません。
+
+- 子は `tests/common/mod.rs` の `child_command` で起こします。ふつうの終わり方(成功、失敗、panic、timeout)では `Running` と `Compositor` の Drop が kill と wait をし、作業用の場所(`/tmp/seinas-<名前>-<PID>`)を消します。
+- Drop が走らない終わり方(`std::process::exit`、Ctrl+C、SIGKILL)に備え、子には `PR_SET_PDEATHSIG`(SIGKILL)を付けます。テストのプロセスが終わると、カーネルが子を止めます。プロセスグループで止める形は、テストのプロセスが SIGKILL で終わったときに、止める側が残らないので選びませんでした。
+- golden の `Runner::finish` は、失敗があると `std::process::exit` で終わります。子は、呼ぶ前に止めます。
+- 片付けられなかった作業用の場所(印のファイル `.seinas-test` があるもの)は、次にテストが動くときに消します。
+- `tools/pre-push.sh` は、テストを動かした段(code 以上)の終わりに `tools/check-leftovers.py` で、起こしたテストがもういない子のプロセスと作業用の場所が 0 であることを確かめます。手で確かめるときも同じものを使い、`--clean` で片付けられます。
 
 ## 報告に載せるもの
 

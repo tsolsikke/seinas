@@ -18,6 +18,8 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 seinas-golden = { path = "../seinas-golden" }
+# テストの子のプロセスに PR_SET_PDEATHSIG を付ける(tests/common/mod.rs)。
+libc = { workspace = true }
 
 # 正解データ(golden)と比べる。正解データは tests/golden/ にある(docs/golden.md)。
 [[test]]

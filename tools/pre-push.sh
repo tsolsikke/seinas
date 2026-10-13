@@ -217,6 +217,12 @@ if [ "$(rank "$tier")" -ge 4 ]; then
     (cd target/x86_64-unknown-linux-musl/release && sha256sum seinas seinas-standalone seinas-fbdev seinas-taskbar seinas-wallpaper zeyes-min)
 fi
 
+# テストを動かした段の終わりに、テストの子のプロセス(コンポジタ、テスト用のクライアントなど)と作業用の場所が
+# 残っていないことを確かめる。同じホストで ZeikOS の確かめ(QEMU)も動くので、残ったものを持ち越さない。
+if [ "$(rank "$tier")" -ge 2 ]; then
+    step "残ったテストのプロセス" python3 tools/check-leftovers.py
+fi
+
 echo
 echo "== 段 $tier、$(( $(date +%s) - started )) 秒"
 if [ -n "$failed" ]; then

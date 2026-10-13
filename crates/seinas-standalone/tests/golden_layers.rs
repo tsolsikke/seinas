@@ -100,5 +100,7 @@ fn main() {
         Image::rgb(shot.width, shot.height, shot.pixels.clone()),
     );
     drop(clients);
+    // finish は、失敗があると std::process::exit で終わり、Drop が走らない。コンポジタは先に止める。
+    drop(seinas);
     run.finish();
 }

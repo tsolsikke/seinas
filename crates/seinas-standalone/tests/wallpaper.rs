@@ -127,7 +127,7 @@ fn an_unreadable_image_leaves_only_the_color() {
 fn the_wallpaper_needs_the_shell_socket() {
     let seinas = Compositor::start("pe");
     let log = seinas.config_dir().join("plain.log");
-    let status = std::process::Command::new(common::workspace_bin(
+    let status = common::child_command(common::workspace_bin(
         "seinas-wallpaper",
         "seinas-wallpaper",
     ))
