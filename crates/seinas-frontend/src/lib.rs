@@ -32,6 +32,7 @@ mod resize;
 mod shortcuts;
 mod stack;
 mod switcher;
+mod switcher_view;
 mod title_bar;
 pub use decoration::{
     clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
@@ -65,7 +66,12 @@ pub use stack::{
     next_slot, slot_count, slot_location, Placed, Restore, Stack, WindowId, CASCADE_STEP,
 };
 pub use switcher::Switcher;
-pub use title_bar::TitleBar;
+pub use switcher_view::{
+    paint_switcher, switcher_layout, Row as SwitcherRow, SwitcherEntry, SwitcherLayout, MAX_ROWS,
+    PANEL_MARGIN, PANEL_PADDING, PANEL_WIDTH, ROW_HEIGHT, SWITCHER_BACKGROUND, SWITCHER_BORDER,
+    SWITCHER_HIGHLIGHT, UNTITLED,
+};
+pub use title_bar::{SwitcherImage, TitleBar};
 
 use seinas_text::TextPainter;
 use smithay::{
@@ -235,6 +241,8 @@ pub struct Frontend<D: SeatHandler> {
     pub switcher: Option<Switcher>,
     /// 切り替えを始めたキーの修飾キー(Shift を除く)。どれも離したら、切り替えを決める。
     pub switch_hold: Modifiers,
+    /// 切り替えの一覧の絵(切り替えの最中だけ。条件が変わったら作り直す)。
+    pub switcher_image: Option<SwitcherImage>,
     /// 届いたキーをログに出すか([`Config::log_keys`])。
     pub log_keys: bool,
     /// 画面(wl_output)。
@@ -903,6 +911,34 @@ impl<D: FrontendHost> Frontend<D> {
         self.layer_under(point, &[Layer::Bottom, Layer::Background])
     }
 
+    /// 切り替えの最中なら、候補の一覧の描画の要素(`switcher_view.rs`)。条件が変わったときだけ絵を作り直す。
+    fn switcher_element(
+        &mut self,
+        renderer: &mut PixmanRenderer,
+    ) -> Option<MemoryRenderBufferRenderElement<PixmanRenderer>> {
+        let Some(switcher) = &self.switcher else {
+            self.switcher_image = None;
+            return None;
+        };
+        let (candidates, current) = switcher.candidates();
+        let entries: Vec<SwitcherEntry> = candidates
+            .iter()
+            .filter_map(|&id| self.windows.get(id))
+            .map(|window| SwitcherEntry {
+                title: toplevel_title(&window.item),
+                minimized: window.minimized,
+            })
+            .collect();
+        let fresh = self
+            .switcher_image
+            .as_ref()
+            .is_some_and(|image| image.matches(&entries, current, self.size));
+        if !fresh {
+            self.switcher_image = SwitcherImage::new(&mut self.text, entries, current, self.size);
+        }
+        self.switcher_image.as_ref()?.element(renderer)
+    }
+
     /// 点 `point` にある IME の候補の窓と、その左上の位置。
     fn ime_popup_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
         let (surface, location) = self.ime_popup()?;
@@ -915,7 +951,13 @@ impl<D: FrontendHost> Frontend<D> {
     /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay の layer surface、IME の候補の窓、
     /// top の layer surface、ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
-        let mut elements = self.layer_elements(renderer, &[Layer::Overlay]);
+        // 切り替えの一覧は、全部より手前に描く。
+        let mut elements: Vec<WindowElement> = self
+            .switcher_element(renderer)
+            .map(WindowElement::TitleBar)
+            .into_iter()
+            .collect();
+        elements.extend(self.layer_elements(renderer, &[Layer::Overlay]));
         if let Some((surface, location)) = self.ime_popup() {
             elements.extend(
                 render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
@@ -2067,6 +2109,7 @@ macro_rules! delegate_frontend {
                     shortcuts: $crate::Shortcuts::switching(&config.switch_keys),
                     switcher: None,
                     switch_hold: Default::default(),
+                    switcher_image: None,
                     log_keys: config.log_keys,
                     output,
                     output_manager,

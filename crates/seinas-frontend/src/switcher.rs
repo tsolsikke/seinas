@@ -42,6 +42,11 @@ impl Switcher {
         self.candidates[self.index]
     }
 
+    /// 候補(切り替えの順)と、いまの候補の位置。
+    pub fn candidates(&self) -> (&[WindowId], usize) {
+        (&self.candidates, self.index)
+    }
+
     /// 去ったウィンドウ(`is_gone` が真のもの)を、候補から外す。いまの候補が去ったら、その次の候補にする。
     /// 候補が無くなったらfalse。
     pub fn remove(&mut self, is_gone: impl Fn(WindowId) -> bool) -> bool {

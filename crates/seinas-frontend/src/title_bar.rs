@@ -1,4 +1,4 @@
-//! タイトルバーの絵を、描画の要素(Smithay のメモリーのイメージ)にする所。
+//! タイトルバーと、切り替えの一覧の絵を、描画の要素(Smithay のメモリーのイメージ)にする所。
 //!
 //! タイトルバーの絵は、タイトル・幅・activated かどうか・ボタンの見た目が変わったときにだけ作り直し、
 //! それまでは覚えておいたものを使う。絵そのものは `decoration.rs` の `paint_title_bar` が作る。
@@ -19,7 +19,8 @@ use tracing::warn;
 
 use crate::{
     decoration::{paint_title_bar, TitleLook, TITLE_BAR_HEIGHT},
-    geometry::Point,
+    geometry::{Point, Size},
+    switcher_view::{paint_switcher, switcher_layout, SwitcherEntry, SwitcherLayout},
 };
 
 /// 1つのウィンドウの帯の絵と、それを作ったときの条件。
@@ -79,6 +80,67 @@ impl TitleBar {
             Kind::Unspecified,
         )
         .map_err(|e| warn!("failed to prepare a title bar: {e}"))
+        .ok()
+    }
+}
+
+/// 切り替えの一覧の絵と、それを作ったときの条件(候補、いまの候補、出力の大きさ)。
+pub struct SwitcherImage {
+    entries: Vec<SwitcherEntry>,
+    current: usize,
+    output: Size,
+    layout: SwitcherLayout,
+    buffer: MemoryRenderBuffer,
+}
+
+impl SwitcherImage {
+    /// 一覧の絵を作る。候補が無ければNone。
+    pub fn new(
+        painter: &mut TextPainter,
+        entries: Vec<SwitcherEntry>,
+        current: usize,
+        output: Size,
+    ) -> Option<Self> {
+        let layout = switcher_layout(entries.len(), current, output)?;
+        let pixels = paint_switcher(painter, &entries, current, &layout);
+        let size = layout.rect.size;
+        Some(SwitcherImage {
+            entries,
+            current,
+            output,
+            buffer: MemoryRenderBuffer::from_slice(
+                &pixels,
+                Fourcc::Xrgb8888,
+                (size.w, size.h),
+                1,
+                Transform::Normal,
+                None,
+            ),
+            layout,
+        })
+    }
+
+    /// 同じ条件で作った絵か。
+    pub fn matches(&self, entries: &[SwitcherEntry], current: usize, output: Size) -> bool {
+        self.entries == entries && self.current == current && self.output == output
+    }
+
+    /// 出力の上の位置に置いた、描画の要素。
+    pub fn element(
+        &self,
+        renderer: &mut PixmanRenderer,
+    ) -> Option<MemoryRenderBufferRenderElement<PixmanRenderer>> {
+        let loc = self.layout.rect.loc;
+        MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            (loc.x as f64, loc.y as f64),
+            &self.buffer,
+            None,
+            None,
+            None,
+            Kind::Unspecified,
+        )
+        .map_err(|e| warn!("failed to prepare the window list: {e}"))
         .ok()
     }
 }

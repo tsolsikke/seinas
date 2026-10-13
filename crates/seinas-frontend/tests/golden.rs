@@ -4,7 +4,10 @@
 
 use std::path::Path;
 
-use seinas_frontend::{paint_title_bar, TitleButton, TitleButtons, TitleLook, TITLE_BAR_HEIGHT};
+use seinas_frontend::{
+    geometry::Size, paint_switcher, paint_title_bar, switcher_layout, SwitcherEntry, TitleButton,
+    TitleButtons, TitleLook, TITLE_BAR_HEIGHT,
+};
 use seinas_golden::{Image, Runner, Tolerance};
 use seinas_text::{FontFiles, TextPainter};
 
@@ -12,6 +15,29 @@ use seinas_text::{FontFiles, TextPainter};
 fn bar(painter: &mut TextPainter, title: &str, width: i32, active: bool, look: TitleLook) -> Image {
     let pixels = paint_title_bar(painter, title, width, active, look);
     Image::from_bgrx(width as usize, TITLE_BAR_HEIGHT as usize, &pixels)
+}
+
+/// 切り替えの一覧を、大きさ `output` の出力に置いたときの絵にする(一覧の大きさの画像)。
+fn switcher(
+    painter: &mut TextPainter,
+    entries: &[SwitcherEntry],
+    current: usize,
+    output: Size,
+) -> Image {
+    let layout = switcher_layout(entries.len(), current, output).expect("a layout");
+    let pixels = paint_switcher(painter, entries, current, &layout);
+    Image::from_bgrx(
+        layout.rect.size.w as usize,
+        layout.rect.size.h as usize,
+        &pixels,
+    )
+}
+
+fn entry(title: &str, minimized: bool) -> SwitcherEntry {
+    SwitcherEntry {
+        title: title.to_owned(),
+        minimized,
+    }
 }
 
 /// 閉じるボタンだけのタイトルバー。`hot` なら、閉じるボタンにポインターが乗っている。
@@ -137,6 +163,51 @@ fn main() {
             ),
         );
     });
+
+    // S1〜S3: 切り替えの一覧。
+    // S1(フォントの要るもの):日本語のタイトル、長いタイトルの切り詰め、最小化の印、タイトルの無いウィンドウ。
+    // 2 つ目(長いタイトル)が今の候補。
+    run.with_fonts("s1-switcher", |run, fonts: &Path| {
+        let painter = painter.get_or_insert_with(|| TextPainter::load(&FontFiles::in_dir(fonts)).0);
+        let entries = [
+            entry("文字入力(text-input)", false),
+            entry(
+                "とても長いタイトルのウィンドウです。どこまでも、どこまでも、どこまでも続きます",
+                false,
+            ),
+            entry("最小化したウィンドウ", true),
+            entry("", false),
+        ];
+        run.image(
+            "s1-switcher",
+            Tolerance::EXACT,
+            switcher(painter, &entries, 1, Size::new(1280, 720)),
+        );
+    });
+    // S2(フォントの要るもの):320x240 の出力に 20 個。今の候補(10、最小化している)の前後だけを出し、上と下に
+    // 隠れた数を出す。
+    run.with_fonts("s2-switcher-many-small-output", |run, fonts: &Path| {
+        let painter = painter.get_or_insert_with(|| TextPainter::load(&FontFiles::in_dir(fonts)).0);
+        let entries: Vec<SwitcherEntry> = (0..20)
+            .map(|i| entry(&format!("ウィンドウ {i}"), i % 5 == 0))
+            .collect();
+        run.image(
+            "s2-switcher-many-small-output",
+            Tolerance::EXACT,
+            switcher(painter, &entries, 10, Size::new(320, 240)),
+        );
+    });
+    // S3(フォントの要らないもの):枠、地、強調、最小化の印の位置。
+    run.image(
+        "s3-switcher-no-fonts",
+        Tolerance::EXACT,
+        switcher(
+            &mut no_fonts,
+            &[entry("a", false), entry("b", true), entry("c", false)],
+            1,
+            Size::new(640, 480),
+        ),
+    );
 
     run.finish();
 }
