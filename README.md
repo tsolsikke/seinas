@@ -14,7 +14,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
 | `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウの題名など)。フォントをファイルから読み、1行の文字を画素にする |
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
-| `crates/seinas-test-clients` | 試験用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いた知らせを書き出したりする |
+| `crates/seinas-test-clients` | テスト用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いたイベントを書き出したりする。テスト用の IME と、text-input-v3 を使うアプリもある |
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
 | `crates/seinas-wallpaper` | 壁紙。コンポジタとは別のプログラム(layer-shell のクライアント)で、background の層に色か画像(PNG)を出す |
 | `crates/seinas-config` | 設定のファイル(1 行に「キー = 値」)の読み方。フォントと壁紙の設定が使う |
@@ -22,7 +22,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
 | `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
-| `docs/ime.md` | IME の道(見せる global、キーの道、IME を 1 つに限ること)と、テスト用の IME での試し方 |
+| `docs/ime.md` | IME の道(見せる global、キーの道、応答しない IME、文字の受け渡し、フォーカス、候補の窓、IME を 1 つに限ること)と、テスト用の IME での試し方 |
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |
@@ -79,7 +79,7 @@ cargo test --workspace --locked
 
 ## 動かし方
 
-Waylandのセッションの中(WSLgなど)で、リポジトリの先頭のディレクトリから、まずSeinasを起動します。800x600のウィンドウが1つ開きます。
+Waylandのセッションの中(WSLgなど)で、リポジトリの先頭のディレクトリから、まずSeinasを起動します。800x600のウィンドウが1つ開きます。ウィンドウの大きさは、親の側で変えられます(下限は320x240)。
 
 ```bash
 cargo run --locked -p seinas
@@ -105,6 +105,13 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-wallpaper
 
 壁紙は、色か画像(PNG)を画面いっぱいに出します。設定は `~/.config/seinas/wallpaper.conf` です(`docs/wallpaper.md`)。
 
+IME の道は、テスト用の IME とテスト用のアプリで試せます(`docs/ime.md` の「試し方」)。IME は、シェルの部品のソケットへつなぎます。
+
+```bash
+WAYLAND_DISPLAY=seinas-0 cargo run --locked -p seinas-test-clients --bin test-client -- window --text-input
+WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-test-clients --bin test-client -- ime --popup 40x30
+```
+
 クライアントのウィンドウの上には、Seinasが題名の帯を描きます。zeyes-minの題名は「zeyes」で、`--title TEXT` で変えられます。
 帯を掴んで動かすと、ウィンドウが動きます。帯の右の端の「×」を押すと、閉じます。
 
@@ -123,8 +130,9 @@ tools/build-musl.sh
 
 ## 今の制限
 
-- 大きさは800x600に固定で、サイズ変更には応じません。
-- クライアントへ渡す入力は、ポインターとキーボードです(入れ子では、親の keymap をそのまま使います)。IME の道(text-input-v3、input-method-v2、virtual-keyboard)はあります(`docs/ime.md`)が、IME そのもの(Kieli)は、まだありません。
+- 入れ子の構成では、出力(画面)の大きさを、親のウィンドウの大きさに合わせます。始めは800x600で、下限は320x240、上限はありません(`docs/window-placement.md` の「出力の大きさが変わったとき」)。
+- クライアントへ渡す入力は、ポインターとキーボードです(入れ子では、親の keymap をそのまま使います)。
+- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補の窓を置く位置、IME が応答しないときの直接の道)はあります(`docs/ime.md`)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、シェルの部品のソケットからつなぎます。
 - クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。クリックで raise し、タイトルバーをドラッグして動かし、閉じるボタンで閉じられます。縁と角のドラッグで大きさを変えられます。タイトルバーのボタンとダブルクリックで最大化でき、タスクバーがあれば最小化もできます(`docs/window-placement.md`)。全画面はできません。
 
 ## ライセンス
