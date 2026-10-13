@@ -33,7 +33,7 @@ IME が固まっても、キーボードが使えなくならないようにし�
 - 修飾キーだけの押下は、数えません(返事を待ち始めません)。
 - input-method の要求のほか、同じクライアントからの virtual-keyboard の要求も、返事として数えます。
 - 返事を待ち始めるのは、待っていないときの最初の押下です。続けて押したキーで、期限は延びません。
-- 応答しないと見なした後に、その IME から要求が届いたら、grab を戻し、次のキーから IME を通る道に戻します。ログに `the input method answered again; keys go through it again` を出します。外している間に IME が grab を手放していたら、戻しません。
+- 応答しないと見なした後に、その IME から要求が届いたら、grab を戻し、次のキーから IME を通る道に戻します。ログに `the input method answered again; keys go through it again` を出します。外している間に IME が grab を手放していたら(`InputMethodHandle::keyboard_grabbed()` が偽なら)、戻しません。Smithay は grab を手放すと入れ物の grab のオブジェクトを空にするので、空の入れ物を Smithay の外で付け直すと、次のキーで Smithay が `unwrap` で止まるためです(中が空の grab になるのは、この場合だけです)。
 - 返事の無かったキーは、アプリへ送り直しません(同じキーが 2 度届かないように)。
 - 待つ時間は、seinas-standalone の `--ime-timeout MS` で変えられます(テストのため)。期限は、イベントループの待ち時間で待ち、タイマーの fd は作りません。
 
@@ -72,7 +72,7 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 - 断り方:2 つ目の要求は、Smithay の部品へ渡さずに Seinas が受け、Seinas の側の入れ物でオブジェクトを作って、すぐ `unavailable` を送ります。その後の要求(grab_keyboard、候補の窓など)も、Seinas の側で受けて捨てます。ログには `an input method was refused (another input method is running)` を出します。
 - 理由:Smithay 0.7.0 の 2 つの不具合を避けるためです。
   - `InputMethodHandle::add_instance` は、2 つ目が来ると、前からある IME の方へ `unavailable` を送り、新しい方には何も送りません。
-  - 2 つ目の IME も、1 つ目と同じ keyboard の grab の入れ物を指します。2 つ目が grab を取ってから手放すと、1 つ目の grab まで外れます。場合によっては、keyboard の grab が残ったまま、Smithay が覚えている grab のオブジェクトだけが無くなり、次のキーで Smithay が `unwrap` で止まります。
+  - 2 つ目の IME も、1 つ目と同じ keyboard の grab の入れ物を指します。2 つ目が grab を取ってから手放すと、1 つ目の grab まで外れます。1 つ目の IME は、知らされないまま grab を失います(キーが届かなくなる)。コンポジタは落ちません。Smithay だけでは、入れ物の grab のオブジェクトと seat の keyboard の grab は、いつも一緒に付き、一緒に外れるためです。
 
   2 つ目の要求が Smithay の部品に一度も届かなければ、どちらも起きません。
 - 1 つ目の IME の `zwp_input_method_v2` と、keyboard の grab が両方とも無くなったら(ふつうは、接続を切ったとき)、次の IME を受け入れます。

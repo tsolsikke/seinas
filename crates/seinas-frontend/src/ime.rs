@@ -25,8 +25,8 @@
 //! - `InputMethodHandle::add_instance` は、2 つ目が来ると、前からある IME の方へ `unavailable` を送り、新しい方には
 //!   何も送らない(プロトコルでは、新しい方へ送るもの)。
 //! - 2 つ目の IME も、1 つ目と同じ keyboard の grab の入れ物を指す。2 つ目が grab を取ってから手放すと、1 つ目の
-//!   grab まで外れる(1 つ目のキーが届かなくなる)。場合によっては、keyboard の grab が残ったまま、Smithay が覚えて
-//!   いる grab のオブジェクトだけが無くなり、次のキーで Smithay が `unwrap` で止まる。
+//!   grab まで外れる。1 つ目の IME は、知らされないまま grab を失う(キーが届かなくなる)。コンポジタは落ちない
+//!   (Smithay は、入れ物の grab のオブジェクトと seat の keyboard の grab を、いつも一緒に付けて一緒に外すため)。
 //!
 //! 2 つ目の要求が Smithay の部品に一度も届かなければ、どちらも起きない。
 //!
@@ -257,7 +257,9 @@ fn answered<D: FrontendHost>(state: &mut D, client: &ClientId) {
     }
     frontend.ime.unresponsive = false;
     let suspended = frontend.ime.suspended.take();
-    // IME が、外している間に grab を手放していれば、戻さない。
+    // IME が、外している間に grab を手放していれば、戻さない。Smithay は grab を手放すと入れ物の grab の
+    // オブジェクトを空にするので、空の入れ物を付け直すと、次のキーで `InputMethodKeyboardGrab::input` が
+    // `unwrap` で止まる(中が空の grab になるのは、このように Smithay の外で付け直したときだけ)。
     let grabbed = frontend
         .seat
         .as_ref()
