@@ -10,6 +10,8 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 | `zwp_input_method_manager_v2` | シェルの部品のためのソケット(`seinas-0-shell`)からつないだクライアントだけ | seat にキーボードがあるとき |
 | `zwp_virtual_keyboard_manager_v1` | 同じ | 同じ |
 
+この形では、タスクバーや壁紙の部品も、keyboard の grab と virtual-keyboard でのキーの注入ができます。IME として認めたクライアントだけに見せる形に、作り直します(ADR 0004 の 1.6)。
+
 キーボードの無い seat では、input-method と virtual-keyboard の global を作りません。Smithay 0.7.0 は、キーボードの無い seat で `get_input_method` や virtual-keyboard のキーを受けると、`unwrap` で止まるためです。
 
 ## キーの道
@@ -23,11 +25,11 @@ Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas �
 
 - virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡します。Seinas は、virtual-keyboard で「押した」を渡したキーを覚え、キーボードのフォーカスを動かしたら(同じクライアントへの leave と enter のし直しも含む)、記録を空にします。Smithay の `forwarded_pressed_keys` は、Smithay の外から読めず、virtual-keyboard のキーも入らないので使いません。
 - そのため、新しいフォーカスのクライアントには、押したことを知らない Alt の「離した」が届きません。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントもありません。
-- 渡さなかった「離した」も、IME の返事としては数えます(下の「応答しない IME」)。
+- 渡さなかった「離した」も、下の「応答しない IME」の判定では、IME の要求として数えます。
 
-## 応答しない IME
+## 応答しない IME(取り消した決まり。作り直すまでの実装)
 
-IME が固まっても、キーボードが使えなくならないようにします(ADR 0004 の 2)。
+この節の、時間切れで「応答しない」と見なす決まりは、2026-10-15 に取り消しました(ADR 0004 の「取り消した決定」)。input-method-v2 の commit はキーごとの返事ではなく、文字を出さずにキーを使うのはふつうの IME の動きなので、正しく動いている IME を止まったと見なすことがあるためです。接続断の検出と、緊急解除の操作の形に作り直します(ADR 0004 の 1.5)。作り直すまでは、今の実装として次のとおり動きます。
 
 - キーの押下を IME へ送ってから 1,000 ms(仮の値)の間に、その IME のクライアントから要求が 1 つも届かなければ、応答しないと見なします。keyboard の grab を外し、次のキーから直接の道にします。ログに `the input method did not answer a key in 1000 ms; keys go straight to the applications` を出します。
 - 修飾キーだけの押下は、数えません(返事を待ち始めません)。
@@ -57,7 +59,7 @@ IME がつながったときも、フォーカスのあるクライアントに 
 
 ## 候補の窓
 
-IME の候補の窓(input popup surface)は、Seinas が置きます(ADR 0004 の 5)。
+IME の候補の窓(input popup surface)は、Seinas が置きます(ADR 0004 の 1.11)。
 
 - 見せるのは、IME が有効で、親(text-input のフォーカスのあるウィンドウ)があるときだけです。フォーカスが移って IME が deactivate になると隠し、新しいウィンドウで activate になると、そのウィンドウを親にして見せます。
 - 置く位置は、親のウィンドウのコンテンツの左上に、アプリが伝えたカーソルの矩形(`set_cursor_rectangle`)を足した所の下で、左の端をカーソルにそろえます。画面の下の端からはみ出すなら、カーソルの矩形の上に置きます。それでもはみ出す分は、画面の中へ寄せます(右の端、左の端、上の端)。
@@ -94,8 +96,8 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
-| `an_unresponsive_ime_is_bypassed_and_comes_back` | `--ime-timeout 300` で、Shift だけの押下を 3 回(合わせて 300 ms を超える)しても応答しないと見なさず、返事の無い x の後に直接の道になり、IME が要求を送ったら IME を通る道に戻る |
-| `an_ime_that_answers_is_not_bypassed` | 変換中の文字(input-method の要求)と、戻したキー(virtual-keyboard の要求)で答える IME は、間を空けて打っても応答しないと見なされない |
+| `an_unresponsive_ime_is_bypassed_and_comes_back`(取り消した決まりのテスト。作り直すときに置き換える) | `--ime-timeout 300` で、Shift だけの押下を 3 回(合わせて 300 ms を超える)しても応答しないと見なさず、返事の無い x の後に直接の道になり、IME が要求を送ったら IME を通る道に戻る |
+| `an_ime_that_answers_is_not_bypassed`(同じ) | 変換中の文字(input-method の要求)と、戻したキー(virtual-keyboard の要求)で答える IME は、間を空けて打っても応答しないと見なされない |
 | `the_candidate_window_follows_the_cursor_inside_the_output` | 候補の窓(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |
 | `the_candidate_window_goes_above_the_cursor_at_the_bottom_edge` | 下に入らないときは、カーソルの矩形の上に出る |
 | `the_candidate_window_stays_inside_a_resized_output` | 出力の高さを縮めると、下から上へ移る |
@@ -115,7 +117,7 @@ WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
 - `--popup WxH` を付けると、その大きさの候補の窓を、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
-- `--ignore-keys` を付けると、キーを受けても何も返しません(応答しない IME のまね)。標準入力の `answer` で、ふつうの動きに戻り、input-method の commit を 1 つ送ります。
+- `--ignore-keys` を付けると、キーを受けても何も返しません。標準入力の `answer` で、ふつうの動きに戻り、input-method の commit を 1 つ送ります。上の「応答しない IME」(取り消した決まり)のテストのためのものです。空の commit は、仕様ではキーへの返事ではなく、状態を適用する要求です。IME に、キーごとに何かを返すことは求めません(ADR 0004 の 1.3)。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
 
 ### テスト用のアプリ

@@ -24,7 +24,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
 | `docs/demo-c1s3.md` | C1S3 の機能を、入れ子の構成で 1 回の起動でまとめて確かめる手順(`tools/demo-c1s3.sh` とチェックリスト) |
 | `docs/config.md` | 設定のファイルの一覧と、`seinas.conf`(ウィンドウの切り替えのキー)の書き方、届いたキーの確かめ方(`--log-keys`) |
-| `docs/ime.md` | IME の道(見せる global、キーの道、応答しない IME、文字の受け渡し、フォーカス、候補の窓、IME を 1 つに限ること)と、テスト用の IME での試し方 |
+| `docs/ime.md` | IME の道(見せる global、キーの道、応答しない IME(取り消した決まり。作り直すまでの実装)、文字の受け渡し、フォーカス、候補の窓、IME を 1 つに限ること)と、テスト用の IME での試し方 |
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |
@@ -36,7 +36,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/adr/0001-replaceable-boundaries.md` | ADR: 外部ライブラリを、後で置き換えられる境界で使う決まりと、今の境界の棚卸し |
 | `docs/adr/0002-shell-components.md` | ADR: タスクバー・メニュー・デスクトップを、コンポジタの外の別のプログラムにする(layer-shell、foreign-toplevel、シェルのソケット) |
 | `docs/adr/0003-font-selection.md` | ADR: 利用者が選んだフォントで描けるようにする(置き場、一覧、役ごとの選び方、設定のファイル、mmap での読み込み) |
-| `docs/adr/0004-ime-keyboard-path.md` | ADR: キーボードの入力は、IME(Kieli)を通る経路にする(text-input-v3、input-method-v2、virtual-keyboard、ショートカット、IME が無いときの直接の経路) |
+| `docs/adr/0004-ime-keyboard-path.md` | ADR: キーボードの入力は、IME(Kieli)を通る経路にする(Seinas の決定、標準の仕様が求めること、Kieli への申し送り、取り消した決定) |
 | `docs/golden.md` | 正解データ(golden)のテスト:置き換える前の出力を保存して比べる決まりと、作り直しの手順 |
 | `docs/terminology.md` | 用語と書き方の決まり(IT 用語の使い方と、これまでの言い方との対応表) |
 | `docs/text-rendering.md` | 文字の描き方の決まり(手段、フォント、大きさ)と、手段を比べた記録 |
@@ -136,7 +136,7 @@ tools/build-musl.sh
 
 - 入れ子の構成では、出力(画面)の大きさを、親のウィンドウの大きさに合わせます。始めは800x600で、下限は320x240、上限はありません(`docs/window-placement.md` の「出力の大きさが変わったとき」)。
 - クライアントへ渡す入力は、ポインターとキーボードです(入れ子では、親の keymap をそのまま使います)。
-- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補の窓を置く位置、IME が応答しないときの直接の道)はあります(`docs/ime.md`)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、シェルの部品のソケットからつなぎます。
+- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補の窓を置く位置、IME が去ったときの直接の道)はあります(`docs/ime.md`)。時間切れで IME が応答しないと見なして直接の道にする今の形は、2026-10-15 に取り消した決まりで、作り直します(ADR 0004)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、シェルの部品のソケットからつなぎます。
 - クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。クリックで raise し、タイトルバーをドラッグして動かし、閉じるボタンで閉じられます。縁と角のドラッグで大きさを変えられます。タイトルバーのボタンとダブルクリックで最大化でき、タスクバーがあれば最小化もできます(`docs/window-placement.md`)。全画面はできません。
 
 ## ライセンス
