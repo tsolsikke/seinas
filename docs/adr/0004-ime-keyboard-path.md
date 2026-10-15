@@ -119,7 +119,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
 
 - text-input-v3 の global は、全部のクライアントに見せる(アプリが使うもの。Smithay の部品は、公開先を絞れない)。
 - IME の権限を、シェルの部品の権限と分ける。これは「権限を分けること」で、相手が誰かを確かめる「認証」ではない。
-- IME 専用のソケット:ふだんのソケットのパスに `-ime` を付けたもの(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)を listen する。
+- IME 専用のソケット:ふだんのソケットのパスの名前に `-ime` を入れたもの(名前に拡張子があれば、その前に入れる。`docs/standalone.md`)(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)を listen する。
   - input-method-v2 と virtual-keyboard の global は、IME のソケットからつないだクライアントにだけ見せる。シェルのソケットとふだんのソケットには見せない。
   - IME のソケットには、layer-shell と foreign-toplevel を見せない。候補の窓(input popup surface)に要る `wl_compositor`・`wl_shm` などのふつうの global は見せる。
   - ソケットは、ほかのソケットと同じく wayland-server の `ListeningSocket` で作る(ロックファイルで、生きている別のインスタンスのソケットを消さない)。

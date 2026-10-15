@@ -39,7 +39,7 @@
 タスクバー・メニュー・デスクトップは、コンポジタの外の別のプログラム(シェルの部品)として作ります(`docs/adr/0002-shell-components.md`)。
 シェルの部品は、wlr-layer-shell(`zwlr_layer_shell_v1`、バージョン 4)で、layer surface を出します。
 
-- layer-shell の global は、シェルの部品のためのソケット(ふだんのソケットのパスに `-shell` を付けたもの。入れ子の構成では `seinas-0-shell`)からつないだクライアントにだけ見えます。ふだんのソケットのクライアントには、global そのものが見えません。
+- layer-shell の global は、シェルの部品のためのソケット(ふだんのソケットのパスの名前に `-shell` を入れたもの(名前に拡張子があれば、その前に入れる。`docs/standalone.md`)。入れ子の構成では `seinas-0-shell`)からつないだクライアントにだけ見えます。ふだんのソケットのクライアントには、global そのものが見えません。
 - 層は、奥から background、bottom、(通常のウィンドウ)、top、overlay の順に重なります。同じ層の中では、後から出た layer surface が手前です。
 - 位置と大きさ(anchor、margin、exclusive zone、頼んだ大きさ)の計算は、Smithay の `LayerMap` に任せています。layer surface の commit のたびに並べ直し、最初の commit で最初の configure を送ります。
 - 画面は 1 つなので、layer surface が output を指定しても、見ません。

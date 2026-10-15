@@ -16,10 +16,11 @@
 //! - `--socket PATH`: クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、
 //!   それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0`。
 //! - `--shell-socket PATH`: シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットの
-//!   パスに `-shell` を付けたもの(`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。
+//!   パスの名前に `-shell` を入れたもの(拡張子があれば、その前。`/tmp/seinas.sock` なら `/tmp/seinas-shell.sock`。
+//!   `--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。
 //!   ここからつないだクライアントにだけ、layer-shell を見せる(`docs/adr/0002-shell-components.md`)。
-//! - `--ime-socket PATH`: IME のためのソケットの場所。無ければ、ふだんのソケットのパスに `-ime` を付けたもの
-//!   (`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、
+//! - `--ime-socket PATH`: IME のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-ime` を入れたもの
+//!   (`--shell-socket` と同じ形。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、
 //!   input-method と virtual-keyboard を見せる(`docs/adr/0004-ime-keyboard-path.md` の 1.6)。
 //! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
@@ -54,7 +55,7 @@ mod screen;
 use std::{
     cell::RefCell,
     error::Error,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::ExitCode,
     rc::Rc,
     time::{Duration, Instant},
@@ -339,20 +340,53 @@ fn bind_socket(path: Option<PathBuf>, name: &str) -> Result<ListeningSocket, Box
     }
 }
 
-/// シェルの部品や IME のためのソケットの場所。指定(`given`)が無ければ、ふだんのソケットのパスに `suffix`
-/// (`-shell`、`-ime`)を付ける。
+/// シェルの部品や IME のためのソケットの場所。指定(`given`)が無ければ、ふだんのソケットのパスの名前に `suffix`
+/// (`-shell`、`-ime`)を入れる。名前に拡張子があれば、その前に入れる(`/tmp/seinas.sock` なら
+/// `/tmp/seinas-shell.sock`)。ロックファイルは、ソケットのパスの拡張子を `.lock` に替えた名前になる
+/// (wayland-server の `ListeningSocket`)ので、終わりに付けると `/tmp/seinas.lock` を取り合うため。
 fn derived_socket_path(
     socket: Option<&PathBuf>,
     given: Option<PathBuf>,
     suffix: &str,
 ) -> Option<PathBuf> {
-    given.or_else(|| {
-        socket.map(|path| {
+    given.or_else(|| socket.map(|path| with_suffix(path, suffix)))
+}
+
+/// パス `path` の名前の拡張子の前(拡張子が無ければ終わり)に `suffix` を入れる。
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    match (path.file_stem(), path.extension()) {
+        (Some(stem), Some(extension)) => {
+            let mut name = stem.to_owned();
+            name.push(suffix);
+            name.push(".");
+            name.push(extension);
+            path.with_file_name(name)
+        }
+        _ => {
             let mut name = path.as_os_str().to_owned();
             name.push(suffix);
             PathBuf::from(name)
-        })
-    })
+        }
+    }
+}
+
+/// 3 つのソケットのロックファイル(ソケットのパスの拡張子を `.lock` に替えたもの)がぶつかるなら、その説明。
+/// `--shell-socket` や `--ime-socket` で、拡張子の前が同じパスを選んだときに起きる。
+fn lock_conflict(paths: &[&Path]) -> Option<String> {
+    for (i, a) in paths.iter().enumerate() {
+        for b in &paths[i + 1..] {
+            let lock = a.with_extension("lock");
+            if lock == b.with_extension("lock") {
+                return Some(format!(
+                    "the sockets {} and {} would share the lock file {}; choose paths whose names differ before the last dot",
+                    a.display(),
+                    b.display(),
+                    lock.display()
+                ));
+            }
+        }
+    }
+    None
 }
 
 fn run(options: Options) -> Result<(), Box<dyn Error>> {
@@ -404,6 +438,17 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         options.ime_socket,
         IME_SOCKET_SUFFIX,
     );
+    let given: Vec<&Path> = [
+        options.socket.as_deref(),
+        shell_path.as_deref(),
+        ime_path.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if let Some(conflict) = lock_conflict(&given) {
+        return Err(conflict.into());
+    }
     let listener = bind_socket(options.socket, DEFAULT_SOCKET_NAME)?;
     event_loop.handle().insert_source(
         Generic::new(listener, Interest::READ, Mode::Level),
