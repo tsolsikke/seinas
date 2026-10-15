@@ -126,8 +126,8 @@ fn the_input_method_globals_need_a_keyboard() {
     // panic する。xkb のファイルが読めず、seat にキーボードを足せなかった構成(ポインターだけの seat)では、
     // input-method と virtual-keyboard の global を作らない。
     //
-    // xkb の置き場は、xkb のファイルの無い、在るディレクトリにする(無いディレクトリだと、xkbcommon の context
-    // そのものが作れず、Smithay 0.7.0 の add_keyboard が落ちる)。
+    // xkb の置き場は、xkb のファイルの無い、在るディレクトリにする(xkbcommon の context は作れるが、keymap を
+    // 作れない形。context そのものを作れない形は、下の the_compositor_starts_without_an_xkb_include_path)。
     let no_xkb = env!("CARGO_MANIFEST_DIR");
     let mut seinas = Compositor::start_with_input_env(
         "iq",
@@ -151,6 +151,31 @@ fn the_input_method_globals_need_a_keyboard() {
     for global in IME_GLOBALS {
         assert!(found.iter().any(|g| g == global), "{global}: {found:?}");
     }
+}
+
+#[test]
+fn the_compositor_starts_without_an_xkb_include_path() {
+    // xkb の置き場が無いと、xkbcommon の context そのものを作れない。Smithay 0.7.0 の add_keyboard はそのとき
+    // 落ちるので、Seinas はその前に確かめて、キーボードの無い構成として動く。
+    let missing = "/nonexistent-seinas-xkb";
+    let mut seinas = Compositor::start_with_input_env(
+        "is",
+        &[
+            ("XKB_CONFIG_ROOT", missing),
+            ("XKB_CONFIG_EXTRA_PATH", missing),
+            ("HOME", missing),
+        ],
+    );
+    wait_for_log(
+        &seinas,
+        "no keyboard: the keymap could not be made: the xkb context could not be made",
+    );
+    let found = globals(&seinas.connect_shell_client(&["globals"]));
+    assert!(found.iter().any(|g| g == "wl_seat"), "{found:?}");
+    for global in IME_GLOBALS {
+        assert!(!found.iter().any(|g| g == global), "{global}: {found:?}");
+    }
+    assert!(seinas.process.is_running());
 }
 
 #[test]

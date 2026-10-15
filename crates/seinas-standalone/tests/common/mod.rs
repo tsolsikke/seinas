@@ -404,21 +404,32 @@ impl Compositor {
                 .spawn()
                 .expect("start seinas-standalone"),
         );
-        let compositor = Compositor {
+        let mut compositor = Compositor {
             process,
             socket,
             dump,
             dir,
         };
-        compositor.wait_for_screen("the first frame (background only)", |shot| {
-            shot.width == width
-                && shot.height == height
-                && if (width, height) == (WIDTH, HEIGHT) {
-                    shows_only_background(shot)
-                } else {
-                    shot.pixel(0, 0) == BACKGROUND
-                        && shot.pixel(width - 1, height - 1) == BACKGROUND
-                }
+        // 起動の途中で終わったら(落ちたら)、待ち続けずに、終わり方とログを添えて失敗する。
+        wait_for("the first frame (background only)", || {
+            if let Some(status) = compositor.process.0.try_wait().expect("check the process") {
+                panic!(
+                    "seinas-standalone ended while starting: {status}\n{}",
+                    compositor.log()
+                );
+            }
+            Shot::read(&compositor.dump)
+                .filter(|shot| {
+                    shot.width == width
+                        && shot.height == height
+                        && if (width, height) == (WIDTH, HEIGHT) {
+                            shows_only_background(shot)
+                        } else {
+                            shot.pixel(0, 0) == BACKGROUND
+                                && shot.pixel(width - 1, height - 1) == BACKGROUND
+                        }
+                })
+                .map(|_| ())
         });
         wait_for("the listening socket", || {
             compositor.socket.exists().then_some(())

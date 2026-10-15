@@ -20,6 +20,8 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 
 Smithay の側を直した patch は、`docs/notes/smithay-patches/` に在ります(上流には出していません。Smithay のバージョンは上げません)。
 
+ZeikOS でキーボードを有効にするときは、xkb のファイル(ADR 0004 の「足りないもの」の (a))か、keymap を文字列から作る口((b))を先に用意してください。用意していないと、keymap を作れず、キーボードの無い構成として動きます(IME の global も作りません)。
+
 ## キーの道
 
 1. Seinas のショートカット(Alt+Tab など)を、いつも先に見ます。使ったキーは、IME にもアプリにも渡しません。
@@ -96,6 +98,7 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `keys_go_through_the_ime_and_come_back_to_the_window` | キーが IME を通り、IME が virtual-keyboard で戻したキーがウィンドウに届く |
 | `the_input_method_globals_are_only_on_the_shell_socket` | ふだんのソケットには、input-method の global が無い |
 | `the_input_method_globals_need_a_keyboard` | xkb のファイルが無く、seat にキーボードを足せなかった構成では、シェルの部品のソケットにも input-method と virtual-keyboard の global が無い(キーボードのある構成では、両方ある) |
+| `the_compositor_starts_without_an_xkb_include_path` | xkb の置き場が無く、xkbcommon の context そのものを作れない構成でも、コンポジタが落ちずに、キーボードの無い構成として動く(IME の global も無い) |
 | `alt_tab_works_while_the_ime_has_the_keyboard` | IME が grab している間も、Alt+Tab が効き、Tab は IME に渡らない。切り替えた先には、IME が戻した「Alt を離した」が届かない |
 | `alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press` | Alt+Tab で行き来しても、IME が戻した Alt の押す・離すは、押したことを受けたウィンドウにだけ届き、切り替えた先で押して離した Alt は両方とも届く |
 | `keys_go_straight_to_the_window_after_the_ime_leaves` | IME が去ったら、直接の道になる |

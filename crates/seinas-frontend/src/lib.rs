@@ -2210,10 +2210,20 @@ macro_rules! delegate_frontend {
 /// seat `seat` に、`config` の keymap でキーボードを足す。[`delegate_frontend!`] が使う。
 ///
 /// keymap を作れなければ(xkb のファイルが無いなど)、ログに出してNoneを返す(キーボードの無い構成として動く)。
+/// xkbcommon の context そのものを作れないとき(既定の include のパスを 1 つも足せないとき)も同じ。Smithay 0.7.0
+/// は、そのとき NULL の context で keymap を作ろうとして落ちる(xkbcommon 0.8.0 の `Context::new` が NULL を
+/// 確かめない)ので、Smithay に渡す前に確かめる。
 pub fn add_keyboard<D: SeatHandler + 'static>(
     seat: &mut Seat<D>,
     config: &KeyboardConfig,
 ) -> Option<KeyboardHandle<D>> {
+    if !xkb_context_can_be_made() {
+        warn!(
+            "no keyboard: the keymap could not be made: the xkb context could not be made \
+             (no xkb include path; see XKB_CONFIG_ROOT)"
+        );
+        return None;
+    }
     let xkb = XkbConfig {
         layout: &config.layout,
         model: &config.model,
@@ -2232,6 +2242,22 @@ pub fn add_keyboard<D: SeatHandler + 'static>(
             None
         }
     }
+}
+
+/// xkbcommon の context を、Smithay 0.7.0 と同じ flags(`CONTEXT_NO_FLAGS`)で作れるか。
+fn xkb_context_can_be_made() -> bool {
+    use smithay::input::keyboard::xkb::{ffi, CONTEXT_NO_FLAGS};
+    // SAFETY: xkb_context_new は、引数の flags(ただの数)だけを読み、作れなければ NULL を返す。返った
+    // ポインターは、この関数の中だけで持ち、ほかへ渡さない。NULL でなければ、作ったときに持った参照 1 つを、
+    // xkb_context_unref で 1 度だけ放す(その後は使わない)。
+    unsafe {
+        let context = ffi::xkb_context_new(CONTEXT_NO_FLAGS);
+        if context.is_null() {
+            return false;
+        }
+        ffi::xkb_context_unref(context);
+    }
+    true
 }
 
 /// 画面(wl_output)を、`width` × `height` 画素の1つの表示モードで作る。[`delegate_frontend!`] が使う。
