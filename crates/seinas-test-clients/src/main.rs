@@ -25,6 +25,8 @@
 //!   (activate、close など)を送る。シェルの部品のためのソケットへつなぐこと。くわしくは `toplevels.rs`。
 //! - `ime`: 小さな IME(input-method-v2 と virtual-keyboard)。keyboard を grab し、`a`・`i`・`u` を変換中の
 //!   文字にし、ほかのキーをアプリへ戻す。シェルの部品のためのソケットへつなぐこと。くわしくは `ime.rs`。
+//! - `globals`: コンポジタが見せる global を、`globals: <interface の名前>` の行で届いた順に書き、最後に
+//!   `globals: done` を書いて、exit status 0 で終わる。
 //!
 //! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
 //! `window` は、閉じるように頼まれて終わったときも、終了コード0で終わる。
@@ -162,6 +164,17 @@ fn run(kind: &str) -> Result<bool, String> {
     Ok(closed)
 }
 
+/// コンポジタが見せる global の名前を書く(`globals` の種類)。
+fn globals() -> Result<bool, String> {
+    let mut wire = wire::connect()?;
+    wire.list_globals()?;
+    for interface in wire.interfaces() {
+        println!("globals: {interface}");
+    }
+    println!("globals: done");
+    Ok(true)
+}
+
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Some(kind) = args.first() else {
@@ -171,6 +184,7 @@ fn main() -> ExitCode {
         eprintln!("       test-client layer [--layer NAME] [--anchor LIST] [--size WxH] [--exclusive N] [--margin T,R,B,L] [--color RRGGBB] [--namespace NAME]");
         eprintln!("       test-client toplevels [--ext|--ext-only] [--output-after]");
         eprintln!("       test-client ime [--ignore-keys] [--popup WxH]");
+        eprintln!("       test-client globals");
         return ExitCode::from(2);
     };
     let result = match kind.as_str() {
@@ -179,6 +193,7 @@ fn main() -> ExitCode {
         "layer" => layer::run(&args[1..]),
         "toplevels" => toplevels::run(&args[1..]),
         "ime" => ime::run(&args[1..]),
+        "globals" => globals(),
         _ => run(kind),
     };
     match result {

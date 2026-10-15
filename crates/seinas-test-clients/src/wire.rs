@@ -123,6 +123,11 @@ impl Wire {
             .map_err(|e| format!("cannot send: {e}"))
     }
 
+    /// [`Wire::list_globals`] で受け取った global の interface の名前(届いた順)。
+    pub fn interfaces(&self) -> impl Iterator<Item = &str> {
+        self.globals.iter().map(|(_, interface)| interface.as_str())
+    }
+
     /// seat(wl_seat)の番号。[`Wire::watch_seat`] を呼ぶまではNone。
     pub fn seat(&self) -> Option<u32> {
         self.seat

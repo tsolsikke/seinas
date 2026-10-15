@@ -12,7 +12,13 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 
 この形では、タスクバーや壁紙の部品も、keyboard の grab と virtual-keyboard でのキーの注入ができます。IME として認めたクライアントだけに見せる形に、作り直します(ADR 0004 の 1.6)。
 
-キーボードの無い seat では、input-method と virtual-keyboard の global を作りません。Smithay 0.7.0 は、キーボードの無い seat で `get_input_method` や virtual-keyboard のキーを受けると、`unwrap` で止まるためです。
+キーボードの無い seat では、input-method と virtual-keyboard の global を作りません。Smithay 0.7.0 は、キーボードの無い seat への `get_input_method` と、virtual-keyboard の `key`・`modifiers` で、`unwrap` の panic で止まるためです。Seinas は、次のことで避けています。
+
+- seat にキーボードを足した後に、足せたとき(keymap を作れたとき)だけ、2 つの global を作ります。キーボードを外す道はありません。
+- キーボードの無い seat への `get_input_method` は、Smithay へ渡す前に断ります(下の「IME は同時に 1 つ」と同じ断り方)。
+- `the_input_method_globals_need_a_keyboard` のテストで、keymap を作れなかった構成では 2 つの global が見えないことを確かめています。
+
+Smithay の側を直した patch は、`docs/notes/smithay-patches/` に在ります(上流には出していません。Smithay のバージョンは上げません)。
 
 ## キーの道
 
@@ -89,6 +95,7 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | --- | --- |
 | `keys_go_through_the_ime_and_come_back_to_the_window` | キーが IME を通り、IME が virtual-keyboard で戻したキーがウィンドウに届く |
 | `the_input_method_globals_are_only_on_the_shell_socket` | ふだんのソケットには、input-method の global が無い |
+| `the_input_method_globals_need_a_keyboard` | xkb のファイルが無く、seat にキーボードを足せなかった構成では、シェルの部品のソケットにも input-method と virtual-keyboard の global が無い(キーボードのある構成では、両方ある) |
 | `alt_tab_works_while_the_ime_has_the_keyboard` | IME が grab している間も、Alt+Tab が効き、Tab は IME に渡らない。切り替えた先には、IME が戻した「Alt を離した」が届かない |
 | `alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press` | Alt+Tab で行き来しても、IME が戻した Alt の押す・離すは、押したことを受けたウィンドウにだけ届き、切り替えた先で押して離した Alt は両方とも届く |
 | `keys_go_straight_to_the_window_after_the_ime_leaves` | IME が去ったら、直接の道になる |

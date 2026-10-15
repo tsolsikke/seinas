@@ -101,6 +101,58 @@ fn the_input_method_globals_are_only_on_the_shell_socket() {
     assert_eq!(status.code(), Some(2));
 }
 
+/// `test-client globals` が書いた global の名前(`globals: done` まで)。
+fn globals(client: &TestClient) -> Vec<String> {
+    let mut found = Vec::new();
+    loop {
+        let line = client.next_line("the globals");
+        if line == "globals: done" {
+            return found;
+        }
+        if let Some(interface) = line.strip_prefix("globals: ") {
+            found.push(interface.to_owned());
+        }
+    }
+}
+
+const IME_GLOBALS: [&str; 2] = [
+    "zwp_input_method_manager_v2",
+    "zwp_virtual_keyboard_manager_v1",
+];
+
+#[test]
+fn the_input_method_globals_need_a_keyboard() {
+    // Smithay 0.7.0 は、キーボードの無い seat への get_input_method と、virtual-keyboard の key・modifiers で
+    // panic する。xkb のファイルが読めず、seat にキーボードを足せなかった構成(ポインターだけの seat)では、
+    // input-method と virtual-keyboard の global を作らない。
+    //
+    // xkb の置き場は、xkb のファイルの無い、在るディレクトリにする(無いディレクトリだと、xkbcommon の context
+    // そのものが作れず、Smithay 0.7.0 の add_keyboard が落ちる)。
+    let no_xkb = env!("CARGO_MANIFEST_DIR");
+    let mut seinas = Compositor::start_with_input_env(
+        "iq",
+        &[
+            ("XKB_CONFIG_ROOT", no_xkb),
+            ("XKB_CONFIG_EXTRA_PATH", no_xkb),
+            ("HOME", no_xkb),
+        ],
+    );
+    wait_for_log(&seinas, "no keyboard: the keymap could not be made");
+    let found = globals(&seinas.connect_shell_client(&["globals"]));
+    assert!(found.iter().any(|g| g == "wl_seat"), "{found:?}");
+    for global in IME_GLOBALS {
+        assert!(!found.iter().any(|g| g == global), "{global}: {found:?}");
+    }
+    assert!(seinas.process.is_running());
+
+    // キーボードのある seat では、同じソケットに両方とも見せる。
+    let seinas = Compositor::start_with_input("ir");
+    let found = globals(&seinas.connect_shell_client(&["globals"]));
+    for global in IME_GLOBALS {
+        assert!(found.iter().any(|g| g == global), "{global}: {found:?}");
+    }
+}
+
 #[test]
 fn alt_tab_works_while_the_ime_has_the_keyboard() {
     let mut seinas = Compositor::start_with_input("ic");
