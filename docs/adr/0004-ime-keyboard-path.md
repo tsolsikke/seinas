@@ -85,22 +85,53 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 
 - IME がつないでいない、去った、keyboard の grab を手放したときは、次のキーから、Seinas がアプリへ直接渡す経路(`wl_keyboard`)にする。IME が落ちても、キーボードが使えなくならないようにするため。
 
-### 1.5 IME の復旧(作り直す)
+### 1.5 IME の復旧(2026-10-15 に決めた)
 
-- 時間切れで「応答しない」と見なして直接の経路へ逃がす決まりは、2026-10-15 に取り消した(下の「取り消した決定」)。今の実装には、まだ残っている(`docs/ime.md` の「応答しない IME」)。作り直すまでの間のもの。
-- 作り直す形の方向(運用者の承認の後に、この節へ書き足す):
-  - 接続断(IME のクライアントが去った、grab を手放した)を検出して、直接の経路にする(1.4)。
-  - Seinas が IME より先に見る緊急解除の操作(ショートカットと同じく、IME へ渡す前に見る)で、IME を外して直接の経路にする。
-  - 解除したときに、古い入力文脈と、遅れて届く IME の要求を無効にする(新しいアプリへ古い文字が届かないように)。
-  - preedit、押されたままのキー、繰り返しのクリーンアップ。
-  - 解除の後も、IME へ渡したキーは送り直さない(1.3)。
+時間切れで「応答しない」と見なして直接の経路へ逃がす決まりは、2026-10-15 に取り消した(下の「取り消した決定」)。代わりに、次の 2 つで直接の経路に戻す。どちらも、IME にキーごとの返事を求めない。
+
+- 接続断:IME のクライアントが去った、または keyboard の grab を手放したら、次のキーから直接の経路にする(1.4)。
+- 緊急解除:Seinas が IME より先に見るショートカット(1.8)で、IME のクライアントの接続を切る(R-b)。
+  - 既定のキーは Alt+Shift+F12(仮の値。運用者が、入れ子の WSLg と QEMU で届くかを確かめてから、採るかを決める)。`seinas.conf` の `ime-release` で変えられる。
+  - 発動するのは、物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけ。IME が virtual-keyboard で送ったキーでは発動しない(Smithay 0.7.0 の virtual-keyboard のキーは、ショートカットの判定を通らず、フォーカスのあるクライアントへ直に届く)。
+  - 押し続けても、1 回だけ発動する(同じキーを離すまで、繰り返しの押下は使って捨てる)。
+
+緊急解除の順番:
+
+1. 先に、その接続の IME の認可と世代を消す(1.6)。この後、その接続の input-method と virtual-keyboard の要求は捨てる。
+2. その後で片付ける:Seinas が keyboard の grab を外し(次のキーから直接の経路)、候補の窓を隠し、接続を切る。切った接続のクリーンアップ(Smithay の部品の destroy)は、Seinas がその場で行わせる。
+3. IME へ渡したキーは、アプリへ送り直さない(1.3)。それより後の入力は、アプリへ直接届ける。
+4. IME が去った後(接続断のときも同じ)、フォーカスのあるアプリへ `wl_keyboard` の leave と enter を送り直す。IME が virtual-keyboard で押したキー(アプリには押されたまま)は enter に入れない。enter に入るのは、物理のキーボードで今押されていて、IME かアプリへ渡したキーだけ(Seinas が使ったショートカットのキーは入らない)。
+
+text-input と `wl_keyboard` の leave は、別のもの:
+
+| leave | 送るもの | 対象 | いつ |
+| --- | --- | --- | --- |
+| text-input-v3 の leave | Smithay の input-method の部品(IME の `zwp_input_method_v2` が destroy されたとき) | フォーカスのあるアプリの text-input | 接続を切った後のクリーンアップの中で、先に |
+| `wl_keyboard` の leave と enter | Seinas | フォーカスのあるアプリの `wl_keyboard` | IME が去ったと分かった後に(上の 4) |
+
+- 変換中の文字(preedit):Seinas から、空の preedit_string と done を送らない。done を送ると、先に届いていた commit_string まで、アプリに適用させるおそれがあるため。text-input の leave で、アプリが preedit を消すこと(text-input-v3 の leave の「The client should reset any preedit string previously set」)に任せる。
+- 戻すのは、IME が新しい接続でつなぎ直したときだけ。古い接続のクリーンアップが終わるまで(Smithay の部品で、古い input method と grab の destroy が済むまで)は、新しい `get_input_method` を断る。古い接続の destroy が、新しい IME の grab や instance を消さないようにするため(Smithay 0.7.0 の destroy は、どの IME のものでも、seat の instance と grab を空にする)。
+- Seinas には、キーの繰り返しのタイマーが無い(繰り返しは、アプリと IME が `repeat_info` で行う)。そのため、Seinas が止める繰り返しは無い。アプリの繰り返しは `wl_keyboard` の leave で止まり、IME の繰り返しは接続を切ると届かなくなる。
+- 未解決(保証していない範囲):serial の合わない古い要求が、新しいアプリに入りうる。Smithay 0.7.0 は、IME の commit_string・preedit・delete_surrounding を、届いたその場で、そのときアクティブな text-input へ送るため(フォーカスを変えた直後に届いた古い要求も入る)。また、commit の前に切れた IME が送っていた commit_string は、アプリの pending の状態に残り、後の done で適用されることがある(アプリの作りによる)。次の課題で扱う。
 - 自動で IME の止まりを見つけることが本当に要るようになったら、そのときに、明示の probe を持つ別の拡張などを設計する。標準の IME に、独自の返事の義務を課さない。
 
-### 1.6 見せる相手と、IME の権限
+### 1.6 見せる相手と、IME の権限(2026-10-15 に決めた)
 
-- 今の実装:input-method-v2 と virtual-keyboard の global は、シェルの部品のためのソケットからつないだクライアントにだけ見せる(ADR 0002 と同じ印で絞る)。text-input-v3 の global は、全部のクライアントに見せる(アプリが使うもの。Smithay の部品は、公開先を絞れない)。
-- 見直す(2026-10-14 のレビューで分かった):この形では、タスクバーや壁紙の部品も、キーボードの grab(全部のキーを読む)と、virtual-keyboard でのキーの注入ができる。IME は強い権限なので、IME として認めたクライアントだけに見せる形にする。シェルの部品の権限と、IME の権限を分ける(同じソケットでも「シェルの部品だから、キーの注入もできる」にしない)。認め方の設計は、運用者の承認の後に、この節へ書き足す。
-- パスワードの文脈(text-input-v3 の content_purpose が password・pin、または content_hint の sensitive_data)のキーと文字を、Seinas のログに残さないことを確かめ、決まりにする(2.6)。
+- text-input-v3 の global は、全部のクライアントに見せる(アプリが使うもの。Smithay の部品は、公開先を絞れない)。
+- IME の権限を、シェルの部品の権限と分ける。これは「権限を分けること」で、相手が誰かを確かめる「認証」ではない。
+- IME 専用のソケット:ふだんのソケットのパスに `-ime` を付けたもの(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)を listen する。
+  - input-method-v2 と virtual-keyboard の global は、IME のソケットからつないだクライアントにだけ見せる。シェルのソケットとふだんのソケットには見せない。
+  - IME のソケットには、layer-shell と foreign-toplevel を見せない。候補の窓(input popup surface)に要る `wl_compositor`・`wl_shm` などのふつうの global は見せる。
+  - ソケットは、ほかのソケットと同じく wayland-server の `ListeningSocket` で作る(ロックファイルで、生きている別のインスタンスのソケットを消さない)。
+- virtual-keyboard(A'):作れるのは、`get_input_method` を受け入れたクライアントだけ。ほかは、virtual-keyboard の `unauthorized` のエラーにする(2.5)。
+  - 認可は、接続と seat と、受け入れた IME の世代に結び付ける。受け入れた input method が destroy されたとき、緊急解除で消したときに、認可も消え、それまでに作った virtual-keyboard からの要求も捨てる。新しく `get_input_method` を受け入れたら、世代を 1 つ進める。
+  - 同じ接続からの 2 つ目の `get_input_method` を断っても(1.7)、1 つ目の認可は消さない。
+- 守れることと、守れないこと:
+  - 守れる:タスクバーや壁紙の部品、ふつうのアプリは、input-method と virtual-keyboard の global が見えないので、キーの横取り(grab)と注入ができない。
+  - 守れない:IME のソケットにつなげるプロセスは、どれも IME になれる。先にソケットにつないで、IME の枠(同時に 1 つ)を取ることも防げない。
+  - Linux:ソケットは `XDG_RUNTIME_DIR`(0700)の下に作るので、つなげるのは同じ利用者のプロセスだけ(ファイルの所有者と権限の検査は、カーネルが行う)。同じ利用者のプロセスどうしは、分けられない。
+  - ZeikOS(2026-10-15 に zeikos を読んで確かめた):unix ソケットの名前はカーネルの表で、ファイルシステムに inode を作らない(`kernel/src/socket.rs` の doc)。利用者の概念が無く(`kernel/src/syscall.rs` の `sys_stat` の doc:「st_uid / st_gid——利用者の概念が無い」)、`mkdir` も mode を見ない。そのため、0700 は効かず、どのプロセスも、どのソケットの名前にもつなげる。ZeikOS で効くのは、ソケットを分けることによる役割の分け方だけ。
+- ログ:ふだんのログに、生のキー・keysym・preedit・確定した文字・周りの文字を出さない。キーを名前でログに出すのは、明示して付けるテスト用の `--log-keys` だけ(緊急解除のキーが届くかの確かめに使う)。script がログのファイルを作るときは、0700 のディレクトリと 0600 のファイルにする。パスワードの文脈(2.6)で、文字のキーを伏せる形(P1)は入れない(`--log-keys` は、ふだんは付けないため)。
 
 ### 1.7 IME は同時に 1 つ(seat ごと)
 
@@ -112,6 +143,7 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 - コンポジタが使うキーは、IME へ渡す前に Seinas が見て、使ったら IME にもアプリにも渡さない(Smithay の `KeyboardHandle::input` の filter で、grab の前に止められる)。仕様は、コンポジタが一部のキーを grab へ渡さないことを認めている(2.3)。
 - 理由:IME が止まっていても、ショートカット(と、作り直した後の緊急解除の操作)が効くようにするため。
 - 今の一覧:ウィンドウの切り替え(既定は Alt+Tab と Alt+Shift+Tab。入れ子の構成では Alt+F6 と Alt+Shift+F6 も。`seinas.conf` で変えられる。`docs/config.md`)と、切り替えの最中の Esc(取り消し)。Seinas が使ったキーは、離したことも、どこへも渡さない。
+- 緊急解除(1.5):既定は Alt+Shift+F12(仮の値)。`seinas.conf` の `ime-release` で変えられる。
 - Seinas が予約するキーと、IME の切り替えのキーの分け方は、統合の前に決める(3 の申し送り)。
 
 ### 1.9 virtual-keyboard で戻ったキー
@@ -313,7 +345,8 @@ WSL には、text-input-v3 や input-method-v2 を使うアプリと IME(foot、
 | 2 | text-input-v3・input-method-v2・virtual-keyboard の global(公開先の絞り込み)、IME を 1 つに限ること、ショートカットの filter、候補の窓の描画・置く位置・ポインター | 約 400 行 |
 | 3 | テスト用の IME とテスト用のアプリ(ソケットへ直接書くもの)と、経路の全体のテスト | 約 500 行 |
 | 4 | ZeikOS のキーボードの装置から読むバックエンド(装置ができてから) | 約 200 行 |
-| 5 | IME の権限(1.6)と、復旧の作り直し(1.5) | 設計の承認の後に見積もる |
+| 5 | IME の権限(1.6:IME のソケット、virtual-keyboard の認可)と、復旧(1.5:接続断、緊急解除) | 3 SP と 4 SP の見込み(2026-10-15) |
+| 5b | 遅れて届く古い要求の無効化(1.5 の未解決) | 次の課題で見積もる |
 | 6 | Kieli の Wayland の入口(置き場は Kieli の設計で決める) | Kieli の側で見積もる |
 
 - Seinas の側は、1〜4 で約 1,500 行。1 は、IME が無くても要るもの(キーボードそのもの)。
