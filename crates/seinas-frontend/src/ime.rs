@@ -4,8 +4,8 @@
 //! 取り次ぎそのものは、Smithay 0.7.0 の部品(`wayland::text_input`、`wayland::input_method`、
 //! `wayland::virtual_keyboard`)が行う。ここでは、その手前に Dispatch を 1 枚かぶせて、次のことを足す。
 //!
-//! - 見せる相手:input-method と virtual-keyboard の global は、シェルの部品のためのソケットからつないだ
-//!   クライアントにだけ見せ、seat にキーボードがあるときだけ作る(Smithay 0.7.0 は、キーボードの無い seat で
+//! - 見せる相手:input-method と virtual-keyboard の global は、IME のためのソケットからつないだクライアントにだけ
+//!   見せ(シェルの部品とアプリには見せない。ADR 0004 の 1.6)、seat にキーボードがあるときだけ作る(Smithay 0.7.0 は、キーボードの無い seat で
 //!   `get_input_method` や virtual-keyboard のキーを受けると、`unwrap` で止まるため)。text-input の global は、
 //!   全部のクライアントに見せる。
 //! - IME は同時に 1 つだけ:2 つ目からの `get_input_method` は、Smithay へ渡さずにここで受け、Seinas の側の
@@ -119,7 +119,7 @@ pub struct RefusedInputMethod;
 
 impl ImeState {
     /// global を作る。input-method と virtual-keyboard は、`keyboard` が真(seat にキーボードがある)ときだけ作り、
-    /// シェルの部品にだけ見せる。
+    /// IME のためのソケットからつないだクライアントにだけ見せる。
     ///
     /// `timeout` は、IME が応答しないと見なすまでの時間。
     pub fn new<D>(display_handle: &DisplayHandle, keyboard: bool, timeout: Duration) -> Self
@@ -137,8 +137,8 @@ impl ImeState {
     {
         let managers = keyboard.then(|| {
             (
-                InputMethodManagerState::new::<D, _>(display_handle, crate::is_shell_client),
-                VirtualKeyboardManagerState::new::<D, _>(display_handle, crate::is_shell_client),
+                InputMethodManagerState::new::<D, _>(display_handle, crate::is_ime_client),
+                VirtualKeyboardManagerState::new::<D, _>(display_handle, crate::is_ime_client),
             )
         });
         ImeState {

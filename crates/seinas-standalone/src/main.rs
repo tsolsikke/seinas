@@ -18,6 +18,9 @@
 //! - `--shell-socket PATH`: シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットの
 //!   パスに `-shell` を付けたもの(`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。
 //!   ここからつないだクライアントにだけ、layer-shell を見せる(`docs/adr/0002-shell-components.md`)。
+//! - `--ime-socket PATH`: IME のためのソケットの場所。無ければ、ふだんのソケットのパスに `-ime` を付けたもの
+//!   (`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、
+//!   input-method と virtual-keyboard を見せる(`docs/adr/0004-ime-keyboard-path.md` の 1.6)。
 //! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
@@ -82,14 +85,16 @@ const SOCKET_ENV: &str = "SEINAS_SOCKET";
 const DEFAULT_SOCKET_NAME: &str = "seinas-0";
 /// シェルの部品のためのソケットの名前に付けるもの。
 const SHELL_SOCKET_SUFFIX: &str = "-shell";
+/// IME のためのソケットの名前に付けるもの。
+const IME_SOCKET_SUFFIX: &str = "-ime";
 /// 描く間隔の下限。1秒に60回まで。
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 
 /// 右のボタンの番号(Linuxの入力の決まり)。
 const RIGHT_BUTTON: u32 = 0x111;
 
-const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--ime-timeout MS] [--config PATH] [--log-keys]";
+const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--ime-socket PATH] [--fonts DIR] [--font-config PATH]
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--ime-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--ime-timeout MS] [--config PATH] [--log-keys]";
 
 struct Options {
     device: PathBuf,
@@ -97,6 +102,7 @@ struct Options {
     dump: Option<PathBuf>,
     socket: Option<PathBuf>,
     shell_socket: Option<PathBuf>,
+    ime_socket: Option<PathBuf>,
     fonts: Option<PathBuf>,
     font_config: Option<PathBuf>,
     test_input: bool,
@@ -119,6 +125,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         dump: None,
         socket: std::env::var_os(SOCKET_ENV).map(PathBuf::from),
         shell_socket: None,
+        ime_socket: None,
         fonts: None,
         font_config: None,
         test_input: false,
@@ -143,6 +150,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
             "--shell-socket" => {
                 options.shell_socket = Some(PathBuf::from(value("--shell-socket")?))
             }
+            "--ime-socket" => options.ime_socket = Some(PathBuf::from(value("--ime-socket")?)),
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             "--font-config" => options.font_config = Some(PathBuf::from(value("--font-config")?)),
             "--test-input" => options.test_input = true,
@@ -343,12 +351,17 @@ fn bind_socket(path: Option<PathBuf>, name: &str) -> Result<ListeningSocket, Box
     }
 }
 
-/// シェルの部品のためのソケットの場所。指定が無ければ、ふだんのソケットのパスに `-shell` を付ける。
-fn shell_socket_path(socket: Option<&PathBuf>, shell: Option<PathBuf>) -> Option<PathBuf> {
-    shell.or_else(|| {
+/// シェルの部品や IME のためのソケットの場所。指定(`given`)が無ければ、ふだんのソケットのパスに `suffix`
+/// (`-shell`、`-ime`)を付ける。
+fn derived_socket_path(
+    socket: Option<&PathBuf>,
+    given: Option<PathBuf>,
+    suffix: &str,
+) -> Option<PathBuf> {
+    given.or_else(|| {
         socket.map(|path| {
             let mut name = path.as_os_str().to_owned();
-            name.push(SHELL_SOCKET_SUFFIX);
+            name.push(suffix);
             PathBuf::from(name)
         })
     })
@@ -392,8 +405,18 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     );
     let painter = Painter::new(width, height)?;
 
-    // 源その1: クライアントの接続の受け付け。ふだんのソケットと、シェルの部品のためのソケット。
-    let shell_path = shell_socket_path(options.socket.as_ref(), options.shell_socket);
+    // 源その1: クライアントの接続の受け付け。ふだんのソケットと、シェルの部品のためのソケットと、IME のための
+    // ソケット。
+    let shell_path = derived_socket_path(
+        options.socket.as_ref(),
+        options.shell_socket,
+        SHELL_SOCKET_SUFFIX,
+    );
+    let ime_path = derived_socket_path(
+        options.socket.as_ref(),
+        options.ime_socket,
+        IME_SOCKET_SUFFIX,
+    );
     let listener = bind_socket(options.socket, DEFAULT_SOCKET_NAME)?;
     event_loop.handle().insert_source(
         Generic::new(listener, Interest::READ, Mode::Level),
@@ -411,6 +434,17 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         |_, listener, state: &mut Standalone| {
             while let Some(stream) = listener.accept()? {
                 state.frontend.accept_shell(stream);
+            }
+            Ok(PostAction::Continue)
+        },
+    )?;
+    let ime_name = format!("{DEFAULT_SOCKET_NAME}{IME_SOCKET_SUFFIX}");
+    let ime_listener = bind_socket(ime_path, &ime_name)?;
+    event_loop.handle().insert_source(
+        Generic::new(ime_listener, Interest::READ, Mode::Level),
+        |_, listener, state: &mut Standalone| {
+            while let Some(stream) = listener.accept()? {
+                state.frontend.accept_ime(stream);
             }
             Ok(PostAction::Continue)
         },

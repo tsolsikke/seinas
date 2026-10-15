@@ -68,7 +68,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | connect | N T Z | 有る | `connect_from_ring3` 2122 行 | — | — |
 | sendto・sendmsg(MSG_DONTWAIT\|MSG_NOSIGNAL)、recvmsg(MSG_DONTWAIT\|MSG_CMSG_CLOEXEC)、SCM_RIGHTS での memfd の受け渡し | S N T Z | 一部 | `sendmsg_from_ring3` 3201 行、`recvmsg_from_ring3` 3251 行、`read_msghdr` 3112 行、`write_to_socket` 2235 行 | 旗を読まず、いつも待つ(recvmsg は旗の引数を読まない。送る側も、いっぱいなら待つ)。iovlen は 1、fd は 1 通に 1 つで memfd だけ | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
 | 相手が切ったとき recvmsg が 0 を返すこと | S N T Z | 有る | `read_from_socket` 2168 行 | — | — |
-| ソケットの数:コンポジタは listen を 2 つ(ふだんのソケットと、シェルの部品のソケット)、接続はクライアントの数だけ | S N | 一部 | `kernel/src/socket.rs` 45・48 行(`MAX_LISTENERS`=1、`MAX_CONNECTIONS`=2。システム全体で、受け付け待ちも含む) | コンポジタ・タスクバー・クライアントの 3 本でも、listen 2、接続 2 が要る(シェルの部品が増えれば、その数だけ増える) | 新しい課題の候補 |
+| ソケットの数:コンポジタは listen を 3 つ(ふだんのソケットと、シェルの部品のソケットと、IME のソケット)、接続はクライアントの数だけ | S N | 一部 | `kernel/src/socket.rs` 45・48 行(`MAX_LISTENERS`=1、`MAX_CONNECTIONS`=2。システム全体で、受け付け待ちも含む) | コンポジタ・タスクバー・クライアントの 3 本でも、listen 3、接続 2 が要る(シェルの部品と IME が増えれば、その数だけ増える) | 新しい課題の候補 |
 
 ### ファイル
 
@@ -142,7 +142,7 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 | フォント 3 本(`BIZUDPGothic-Regular.ttf`、`BIZUDGothic-Regular.ttf`、`unifont_jp-18.0.01.otf`。置き場は `/usr/share/seinas/fonts` の案) | 4,669,688・4,667,380・5,250,304 バイト(合わせて 14,587,372) | S N T(BIZUDGothic は端末を作るまで読まない) | 文字を描かずに動く(ログに出す) |
 | xkb のファイル 29 個(`/usr/share/X11/xkb` の rules・keycodes・types・compat・symbols の jp106 に要るもの) | 合わせて 213,688 バイト | S(N は、親の keymap が届く前に読む) | キーボードの無い構成として動く(ログに出す) |
 | 設定のファイル(`$XDG_CONFIG_HOME/seinas/fonts.conf`) | 数百バイト | S N T | 既定の設定で動く |
-| ロックファイルとソケット(`$XDG_RUNTIME_DIR/<名前>`、`<名前>.lock`、`<名前>-shell`、`<名前>-shell.lock`) | ロックファイルは 0 バイト | S N が作る | 作れなければ、コンポジタが起動しない |
+| ロックファイルとソケット(`$XDG_RUNTIME_DIR/<名前>`、`<名前>.lock`、`<名前>-shell`、`<名前>-shell.lock`、`<名前>-ime`、`<名前>-ime.lock`) | ロックファイルは 0 バイト | S N が作る | 作れなければ、コンポジタが起動しない |
 
 ## スレッドを使う所
 
@@ -162,6 +162,7 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 - 環境変数:
   - コンポジタ:`XDG_RUNTIME_DIR`(ソケットとロックファイルの置き場)。`--socket` でパスを直に渡してもよい。設定とフォントの置き場のために `XDG_CONFIG_HOME` か `HOME`、`SEINAS_FONTS`(か `--fonts`)。
   - シェルの部品(タスクバーなど):`WAYLAND_DISPLAY=<名前>-shell`(シェルの部品のためのソケット)と `XDG_RUNTIME_DIR`。
+  - IME:`WAYLAND_DISPLAY=<名前>-ime`(IME のためのソケット)と `XDG_RUNTIME_DIR`。
   - クライアント:`WAYLAND_DISPLAY=<名前>` と `XDG_RUNTIME_DIR`。
   - ZeikOS の今:spawn に envp を渡せます(8 個・1,024 バイトまで。`common/src/env.rs` 22 行)。既定は `/etc/environment`(`TERM`、`PATH`、`HOME=/root`)で、zash に `export` があります。4 つの変数なら収まります。
 - ソケットの置き場:`XDG_RUNTIME_DIR` は、書けるディレクトリが要ります。ZeikOS には `/run` が無く、`/tmp` は書けます。ただし、bind はファイルを作らないので、wayland-server の「ソケットのパスが無いことを stat で確かめる」「ロックファイルを O_RDWR\|O_CREAT\|O_TRUNC で作る」が通るかは、「flock とパスへの bind」のまとまりしだいです。
@@ -203,4 +204,4 @@ seinas-wallpaper(`docs/wallpaper.md`)が要るものは、zeyes-min と同じ形
 
 ## IME
 
-IME の道(`docs/ime.md`)で、コンポジタに増えるものは、上の表の「一時ファイル」と「クライアントから受け取った keymap の fd の mmap」の 2 行です。syscall の種類は増えません(41 種類のまま)。fd は、IME がつながると 3 つ増えます(IME の接続、候補の窓の pool、virtual-keyboard の keymap の memfd)。IME は、シェルの部品と同じく、コンポジタの外のプログラムで、シェルの部品のソケット(`WAYLAND_DISPLAY=<名前>-shell`)へつなぎます。プロセスは 1 本増えます。記録は `docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。
+IME の道(`docs/ime.md`)で、コンポジタに増えるものは、上の表の「一時ファイル」と「クライアントから受け取った keymap の fd の mmap」の 2 行です。syscall の種類は増えません(41 種類のまま)。fd は、IME がつながると 3 つ増えます(IME の接続、候補の窓の pool、virtual-keyboard の keymap の memfd)。IME は、シェルの部品と同じく、コンポジタの外のプログラムで、IME のためのソケット(`WAYLAND_DISPLAY=<名前>-ime`)へつなぎます。IME のソケットを足したので、コンポジタの fd は、IME がつながる前から 2 つ多くなります(listen のソケットとロックファイル)。ZeikOS のソケットの名前には、所有者と権限の検査が無いので、どのプロセスも IME のソケットにつなげます(`docs/ime.md` の「見せる global」)。プロセスは 1 本増えます。記録は `docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。

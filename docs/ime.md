@@ -7,10 +7,16 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 | global | 見せる相手 | 作る条件 |
 | --- | --- | --- |
 | `zwp_text_input_manager_v3` | 全部のクライアント | いつも |
-| `zwp_input_method_manager_v2` | シェルの部品のためのソケット(`seinas-0-shell`)からつないだクライアントだけ | seat にキーボードがあるとき |
+| `zwp_input_method_manager_v2` | IME のためのソケット(`seinas-0-ime`)からつないだクライアントだけ | seat にキーボードがあるとき |
 | `zwp_virtual_keyboard_manager_v1` | 同じ | 同じ |
 
-この形では、タスクバーや壁紙の部品も、keyboard の grab と virtual-keyboard でのキーの注入ができます。IME として認めたクライアントだけに見せる形に、作り直します(ADR 0004 の 1.6)。
+IME の権限は、シェルの部品の権限と分けています(ADR 0004 の 1.6)。これは権限を分けることで、相手が誰かを確かめる認証ではありません。
+
+- IME のためのソケットは、ふだんのソケットのパスに `-ime` を付けたものです(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)。シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard を見せません。IME のソケットには、layer-shell と foreign-toplevel を見せません(候補の窓に要る `wl_compositor`・`wl_shm` などは見せる)。
+- 守れないこと:IME のソケットにつなげるプロセスは、どれも IME になれます。先につないで、IME の枠(同時に 1 つ)を取ることも防げません。
+- Linux:ソケットは `XDG_RUNTIME_DIR`(0700)の下にあるので、つなげるのは同じ利用者のプロセスだけです。
+- ZeikOS:ソケットの名前はカーネルの表で、利用者の概念も、ファイルの権限の検査もありません。0700 は効かず、どのプロセスも IME のソケットにつなげます。効くのは、ソケットを分けた役割の分け方だけです。
+- ソケットとロックファイルが 1 つずつ増えるので、コンポジタの fd は 2 つ増えます(2026-10-15 に測った。seinas-standalone `--fake --test-input` で 13 から 15、入れ子の seinas で 15 から 17)。
 
 キーボードの無い seat では、input-method と virtual-keyboard の global を作りません。Smithay 0.7.0 は、キーボードの無い seat への `get_input_method` と、virtual-keyboard の `key`・`modifiers` で、`unwrap` の panic で止まるためです。Seinas は、次のことで避けています。
 
@@ -116,10 +122,10 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 
 ### テスト用の IME
 
-`test-client ime` は、シェルの部品のためのソケットへつなぎます。`WAYLAND_DISPLAY` に、そのソケットの名前(`XDG_RUNTIME_DIR` の下なら `seinas-0-shell`)か、絶対パスを入れます。
+`test-client ime` は、IME のためのソケットへつなぎます。`WAYLAND_DISPLAY` に、そのソケットの名前(`XDG_RUNTIME_DIR` の下なら `seinas-0-ime`)か、絶対パスを入れます。
 
 ```bash
-WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime
+WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime
 ```
 
 - keyboard を grab し、grab で届いた keymap を、そのまま virtual-keyboard の keymap にします。
@@ -145,13 +151,13 @@ WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input
 入れ子の構成(WSLg の中の `seinas`)では、キーを親の窓から打つので、CI ではなく手で確かめます。IME には、テスト用の IME を使います(fcitx5 などを入れる必要はありません)。
 
 1. ビルドする:`cargo build --workspace --locked` と `tools/fetch-fonts.sh`。
-2. 端末 1 で、入れ子の Seinas を起動する:`target/debug/seinas`。ふだんのソケットは `seinas-0`、シェルの部品のためのソケットは `seinas-0-shell` です(どちらも `XDG_RUNTIME_DIR` の下)。
+2. 端末 1 で、入れ子の Seinas を起動する:`target/debug/seinas`。ふだんのソケットは `seinas-0`、シェルの部品のためのソケットは `seinas-0-shell`、IME のためのソケットは `seinas-0-ime` です(どれも `XDG_RUNTIME_DIR` の下)。
 3. 端末 2 で、テスト用のアプリを出す:`WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input --title あ`。
-4. 端末 3 で、テスト用の IME をつなぐ:`WAYLAND_DISPLAY=seinas-0-shell target/debug/test-client ime --popup 40x30`。端末 3 に `ime: ready` と `ime: activate` が出ます。
+4. 端末 3 で、テスト用の IME をつなぐ:`WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime --popup 40x30`。端末 3 に `ime: ready` と `ime: activate` が出ます。
 5. Seinas の窓をクリックしてキーボードのフォーカスを渡し、`a`、`i`、Enter を打つ。端末 2 に `window: preedit あ`、`window: preedit あい`、`window: commit あい` が出て、Seinas の窓の中、アプリのウィンドウのカーソルの矩形(コンテンツの左上から 10, 20)の下に、紫の候補の窓が出ていることを見る。
 6. `x` を打つ。端末 3 に `ime: key 45 pressed`、端末 2 に `window: key 45 pressed` が出る(IME が戻したキー)。
 7. Alt+Tab を試すなら、端末 2 と同じものをもう 1 つ出してから、Seinas の窓の中で Alt+Tab を打つ。切り替えたウィンドウに `window: text-input enter` が出て、候補の窓がそのウィンドウへ移る。
 8. 端末 3 で `quit` を打ち、IME を終える。端末 1 のログに `the input method left` が出て、`x` が端末 2 に直接届く(端末 3 には出ない)。
 9. Seinas の窓の大きさを、親の側で小さくする。候補の窓が、Seinas の窓の中に収まったままであることを見る(手順 4 と 5 をもう一度行ってから)。
 
-うまくいかないとき:端末 3 で `the compositor does not offer zwp_input_method_manager_v2` と出たら、`WAYLAND_DISPLAY` が `seinas-0-shell` になっているかを確かめてください(ふだんのソケットからは見えません)。
+うまくいかないとき:端末 3 で `the compositor does not offer zwp_input_method_manager_v2` と出たら、`WAYLAND_DISPLAY` が `seinas-0-ime` になっているかを確かめてください(ふだんのソケットとシェルの部品のソケットからは見えません)。

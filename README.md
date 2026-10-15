@@ -107,11 +107,11 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-wallpaper
 
 壁紙は、色か画像(PNG)を画面いっぱいに出します。設定は `~/.config/seinas/wallpaper.conf` です(`docs/wallpaper.md`)。
 
-IME の道は、テスト用の IME とテスト用のアプリで試せます(`docs/ime.md` の「試し方」)。IME は、シェルの部品のソケットへつなぎます。
+IME の道は、テスト用の IME とテスト用のアプリで試せます(`docs/ime.md` の「試し方」)。IME は、IME のためのソケット(`seinas-0-ime`)へつなぎます。
 
 ```bash
 WAYLAND_DISPLAY=seinas-0 cargo run --locked -p seinas-test-clients --bin test-client -- window --text-input
-WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-test-clients --bin test-client -- ime --popup 40x30
+WAYLAND_DISPLAY=seinas-0-ime cargo run --locked -p seinas-test-clients --bin test-client -- ime --popup 40x30
 ```
 
 クライアントのウィンドウの上には、Seinasが題名の帯を描きます。zeyes-minの題名は「zeyes」で、`--title TEXT` で変えられます。
@@ -136,7 +136,7 @@ tools/build-musl.sh
 
 - 入れ子の構成では、出力(画面)の大きさを、親のウィンドウの大きさに合わせます。始めは800x600で、下限は320x240、上限はありません(`docs/window-placement.md` の「出力の大きさが変わったとき」)。
 - クライアントへ渡す入力は、ポインターとキーボードです(入れ子では、親の keymap をそのまま使います)。
-- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補の窓を置く位置、IME が去ったときの直接の道)はあります(`docs/ime.md`)。時間切れで IME が応答しないと見なして直接の道にする今の形は、2026-10-15 に取り消した決まりで、作り直します(ADR 0004)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、シェルの部品のソケットからつなぎます。
+- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補の窓を置く位置、IME が去ったときの直接の道)はあります(`docs/ime.md`)。時間切れで IME が応答しないと見なして直接の道にする今の形は、2026-10-15 に取り消した決まりで、作り直します(ADR 0004)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、IME のためのソケットからつなぎます。
 - クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。クリックで raise し、タイトルバーをドラッグして動かし、閉じるボタンで閉じられます。縁と角のドラッグで大きさを変えられます。タイトルバーのボタンとダブルクリックで最大化でき、タスクバーがあれば最小化もできます(`docs/window-placement.md`)。全画面はできません。
 
 ## ライセンス

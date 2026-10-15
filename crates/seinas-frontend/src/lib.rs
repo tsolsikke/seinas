@@ -299,18 +299,24 @@ pub trait BuildFrontend: SeatHandler + Sized {
 impl<D: FrontendHost> Frontend<D> {
     /// ふだんのソケットからつないできたクライアントを受け入れる。
     pub fn accept(&mut self, stream: std::os::unix::net::UnixStream) {
-        self.insert_client(stream, false);
+        self.insert_client(stream, ClientRole::App);
     }
 
     /// シェルの部品のためのソケットからつないできたクライアントを受け入れる。このクライアントにだけ、
     /// layer-shell の global を見せる(ADR 0002)。
     pub fn accept_shell(&mut self, stream: std::os::unix::net::UnixStream) {
-        self.insert_client(stream, true);
+        self.insert_client(stream, ClientRole::Shell);
     }
 
-    fn insert_client(&mut self, stream: std::os::unix::net::UnixStream, shell: bool) {
+    /// IME のためのソケットからつないできたクライアントを受け入れる。このクライアントにだけ、input-method と
+    /// virtual-keyboard の global を見せる(ADR 0004 の 1.6)。
+    pub fn accept_ime(&mut self, stream: std::os::unix::net::UnixStream) {
+        self.insert_client(stream, ClientRole::Ime);
+    }
+
+    fn insert_client(&mut self, stream: std::os::unix::net::UnixStream, role: ClientRole) {
         let state = ClientState {
-            shell,
+            role,
             ..ClientState::default()
         };
         if let Err(e) = self.display_handle.insert_client(stream, Arc::new(state)) {
@@ -1797,19 +1803,42 @@ pub fn reap_dead_clients<D: FrontendHost + 'static>(display: &mut Display<D>, st
     }
 }
 
+/// クライアントがつないできたソケット(役割)。見せる global を絞るのに使う。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClientRole {
+    /// ふだんのソケット(アプリ)。
+    #[default]
+    App,
+    /// シェルの部品のためのソケット。layer-shell と foreign-toplevel を見せる(ADR 0002)。
+    Shell,
+    /// IME のためのソケット。input-method と virtual-keyboard を見せる(ADR 0004 の 1.6)。
+    Ime,
+}
+
 /// クライアントごとの状態。
 #[derive(Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
-    /// シェルの部品のためのソケットからつないだクライアントか。layer-shell の global は、このクライアントにだけ見せる。
-    pub shell: bool,
+    /// つないできたソケット。
+    pub role: ClientRole,
+}
+
+/// `client` の役割(つないできたソケット)。
+pub fn client_role(client: &Client) -> ClientRole {
+    client
+        .get_data::<ClientState>()
+        .map_or(ClientRole::App, |state| state.role)
 }
 
 /// `client` がシェルの部品か。layer-shell などの global を見せる相手を絞るのに使う([`delegate_frontend!`])。
 pub fn is_shell_client(client: &Client) -> bool {
-    client
-        .get_data::<ClientState>()
-        .is_some_and(|state| state.shell)
+    client_role(client) == ClientRole::Shell
+}
+
+/// `client` が IME のためのソケットからつないだか。input-method と virtual-keyboard の global を見せる相手を
+/// 絞るのに使う。
+pub fn is_ime_client(client: &Client) -> bool {
+    client_role(client) == ClientRole::Ime
 }
 
 impl ClientData for ClientState {

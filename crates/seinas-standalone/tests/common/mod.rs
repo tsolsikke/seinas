@@ -563,6 +563,18 @@ impl Compositor {
         self.connect_test_client_to(&self.shell_socket(), args)
     }
 
+    /// IME のためのソケット(ふだんのソケットのパスに `-ime` を付けたもの)。
+    pub fn ime_socket(&self) -> PathBuf {
+        let mut name = self.socket.as_os_str().to_owned();
+        name.push("-ime");
+        PathBuf::from(name)
+    }
+
+    /// テスト用のクライアントを、IME のためのソケットへつなぐ。
+    pub fn connect_ime_client(&self, args: &[&str]) -> TestClient {
+        self.connect_test_client_to(&self.ime_socket(), args)
+    }
+
     /// 入れ子の構成の Seinas(`seinas`)を、このコンポジタを親にして起こし、子のソケットができるまで待つ。
     /// 引数 `args` を付ける。子のソケットは、作業用の場所の `seinas-0`(`XDG_RUNTIME_DIR` をそこにする)。
     /// 標準エラーは、作業用の場所の `nested.log` に書く。親は 1 つのウィンドウとして入れ子の Seinas を出し、

@@ -127,11 +127,12 @@ echo "== 起こす(親:$parent)"
 start seinas env WAYLAND_DISPLAY="$parent" "$bin/seinas" --log-keys --fonts "$root/target/fonts"
 seinas_pid=${pids[0]}
 for _ in $(seq 1 100); do
-    [ -S "$work/run/seinas-0" ] && [ -S "$work/run/seinas-0-shell" ] && break
+    [ -S "$work/run/seinas-0" ] && [ -S "$work/run/seinas-0-shell" ] && [ -S "$work/run/seinas-0-ime" ] && break
     kill -0 "$seinas_pid" 2> /dev/null || { echo "Seinas が起動しませんでした($logs/seinas.log)"; exit 1; }
     sleep 0.1
 done
 shell="$work/run/seinas-0-shell"
+ime_socket="$work/run/seinas-0-ime"
 apps="$work/run/seinas-0"
 start wallpaper env WAYLAND_DISPLAY="$shell" "$bin/seinas-wallpaper"
 start taskbar env WAYLAND_DISPLAY="$shell" "$bin/seinas-taskbar" --fonts "$root/target/fonts"
@@ -145,7 +146,7 @@ sleep 0.3
 start window-text env WAYLAND_DISPLAY="$apps" "$bin/test-client" window --text-input --follow-size \
     --title "文字入力(text-input)" --color ff8000
 sleep 0.3
-start ime env WAYLAND_DISPLAY="$shell" "$bin/test-client" ime --popup 40x30
+start ime env WAYLAND_DISPLAY="$ime_socket" "$bin/test-client" ime --popup 40x30
 
 echo
 echo "準備ができました。docs/demo-c1s3.md の順に確かめてください。"

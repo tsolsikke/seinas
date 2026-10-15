@@ -52,11 +52,11 @@ fn open_window(seinas: &Compositor, title: &str) -> TestClient {
     window
 }
 
-/// テスト用の IME を、シェルの部品のためのソケットへつなぎ、grab を取るまで待つ。
+/// テスト用の IME を、IME のためのソケットへつなぎ、grab を取るまで待つ。
 fn connect_ime(seinas: &Compositor, args: &[&str]) -> TestClient {
     let mut all = vec!["ime"];
     all.extend(args);
-    let ime = seinas.connect_shell_client(&all);
+    let ime = seinas.connect_ime_client(&all);
     ime.wait_for_line("ime: ready");
     ime
 }
@@ -92,15 +92,6 @@ fn keys_go_through_the_ime_and_come_back_to_the_window() {
     assert!(seinas.log().contains("an input method connected"));
 }
 
-#[test]
-fn the_input_method_globals_are_only_on_the_shell_socket() {
-    let seinas = Compositor::start_with_input("ib");
-    let mut ime = seinas.connect_test_client(&["ime"]);
-    let status = ime.process.0.wait().expect("the test client ends");
-    // ふだんのソケットには input-method の global が無いので、準備の段階で失敗する(exit status 2)。
-    assert_eq!(status.code(), Some(2));
-}
-
 /// `test-client globals` が書いた global の名前(`globals: done` まで)。
 fn globals(client: &TestClient) -> Vec<String> {
     let mut found = Vec::new();
@@ -120,6 +111,51 @@ const IME_GLOBALS: [&str; 2] = [
     "zwp_virtual_keyboard_manager_v1",
 ];
 
+const SHELL_GLOBALS: [&str; 3] = [
+    "zwlr_layer_shell_v1",
+    "zwlr_foreign_toplevel_manager_v1",
+    "ext_foreign_toplevel_list_v1",
+];
+
+#[test]
+fn the_input_method_globals_are_only_on_the_ime_socket() {
+    let seinas = Compositor::start_with_input("ib");
+    // IME のソケットには、input-method と virtual-keyboard があり、シェルの部品のもの(layer-shell と
+    // foreign-toplevel)は無い。候補の窓に要る wl_compositor などは、ある。
+    let on_ime = globals(&seinas.connect_ime_client(&["globals"]));
+    for global in IME_GLOBALS
+        .iter()
+        .chain(&["wl_compositor", "wl_shm", "wl_seat"])
+    {
+        assert!(on_ime.iter().any(|g| g == global), "{global}: {on_ime:?}");
+    }
+    for global in SHELL_GLOBALS {
+        assert!(!on_ime.iter().any(|g| g == global), "{global}: {on_ime:?}");
+    }
+    // シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard が無い。
+    let on_shell = globals(&seinas.connect_shell_client(&["globals"]));
+    assert!(
+        on_shell.iter().any(|g| g == "zwlr_layer_shell_v1"),
+        "{on_shell:?}"
+    );
+    let on_app = globals(&seinas.connect_test_client(&["globals"]));
+    for global in IME_GLOBALS {
+        assert!(
+            !on_shell.iter().any(|g| g == global),
+            "{global}: {on_shell:?}"
+        );
+        assert!(!on_app.iter().any(|g| g == global), "{global}: {on_app:?}");
+    }
+    // タスクバー役(シェルの部品のソケット)の IME は、準備の段階で失敗する(exit status 2)。
+    let mut taskbar_as_ime = seinas.connect_shell_client(&["ime"]);
+    let status = taskbar_as_ime
+        .process
+        .0
+        .wait()
+        .expect("the test client ends");
+    assert_eq!(status.code(), Some(2));
+}
+
 #[test]
 fn the_input_method_globals_need_a_keyboard() {
     // Smithay 0.7.0 は、キーボードの無い seat への get_input_method と、virtual-keyboard の key・modifiers で
@@ -138,7 +174,7 @@ fn the_input_method_globals_need_a_keyboard() {
         ],
     );
     wait_for_log(&seinas, "no keyboard: the keymap could not be made");
-    let found = globals(&seinas.connect_shell_client(&["globals"]));
+    let found = globals(&seinas.connect_ime_client(&["globals"]));
     assert!(found.iter().any(|g| g == "wl_seat"), "{found:?}");
     for global in IME_GLOBALS {
         assert!(!found.iter().any(|g| g == global), "{global}: {found:?}");
@@ -147,7 +183,7 @@ fn the_input_method_globals_need_a_keyboard() {
 
     // キーボードのある seat では、同じソケットに両方とも見せる。
     let seinas = Compositor::start_with_input("ir");
-    let found = globals(&seinas.connect_shell_client(&["globals"]));
+    let found = globals(&seinas.connect_ime_client(&["globals"]));
     for global in IME_GLOBALS {
         assert!(found.iter().any(|g| g == global), "{global}: {found:?}");
     }
@@ -170,7 +206,7 @@ fn the_compositor_starts_without_an_xkb_include_path() {
         &seinas,
         "no keyboard: the keymap could not be made: the xkb context could not be made",
     );
-    let found = globals(&seinas.connect_shell_client(&["globals"]));
+    let found = globals(&seinas.connect_ime_client(&["globals"]));
     assert!(found.iter().any(|g| g == "wl_seat"), "{found:?}");
     for global in IME_GLOBALS {
         assert!(!found.iter().any(|g| g == global), "{global}: {found:?}");
@@ -277,7 +313,7 @@ fn a_second_ime_is_refused_and_the_first_keeps_working() {
     let window = open_window(&seinas, "窓");
     let first = connect_ime(&seinas, &[]);
     // 2 つ目は、get_input_method と grab_keyboard を送った後に unavailable を受けて終わる。
-    let mut second = seinas.connect_shell_client(&["ime"]);
+    let mut second = seinas.connect_ime_client(&["ime"]);
     second.wait_for_line("ime: unavailable");
     let _ = second.process.0.wait();
     assert!(seinas
@@ -357,7 +393,7 @@ fn connect_ime_to_window(seinas: &Compositor) -> TestClient {
 fn connect_ime_to_window_with(seinas: &Compositor, args: &[&str]) -> TestClient {
     let mut all = vec!["ime"];
     all.extend(args);
-    let ime = seinas.connect_shell_client(&all);
+    let ime = seinas.connect_ime_client(&all);
     wait_for_activate(&ime, "activate");
     ime
 }

@@ -174,7 +174,7 @@ def main():
         # 4. IME:文字入力のウィンドウを raise し(タイトルバーの、メモに隠れていない所を押す)、a と i を打つ。
         text = windows[2]
         click(400, 76)
-        ime = start(["test-client", "ime", "--popup", "150x56", "--popup-text"], sock + "-shell")
+        ime = start(["test-client", "ime", "--popup", "150x56", "--popup-text"], sock + "-ime")
         ime.wait_for("ime: activate")
         ime.wait_for("ime: done")
         tap(KEY_A)

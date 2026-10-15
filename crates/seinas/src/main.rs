@@ -14,6 +14,8 @@
 //! - 子に見せるソケットは `seinas-0`(`XDG_RUNTIME_DIR` の下)。子は `WAYLAND_DISPLAY=seinas-0` でつなぐ。
 //! - シェルの部品(タスクバーなど)のためのソケットは `seinas-0-shell`。ここからつないだクライアントにだけ、
 //!   layer-shell を見せる(`docs/adr/0002-shell-components.md`)。
+//! - IME のためのソケットは `seinas-0-ime`。ここからつないだクライアントにだけ、input-method と virtual-keyboard を
+//!   見せる(`docs/adr/0004-ime-keyboard-path.md` の 1.6)。
 //! - `SEINAS_FONTS`: フォントの置き場(題名を描くのに使う)。引数 `--fonts DIR` でも指定できる。どちらも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (題名の文字が出ないだけ)。
@@ -47,6 +49,8 @@ const HEIGHT: i32 = 600;
 const CHILD_SOCKET: &str = "seinas-0";
 /// シェルの部品のためのソケットの名前。
 const SHELL_SOCKET: &str = "seinas-0-shell";
+/// IME のためのソケットの名前(ADR 0004 の 1.6)。
+const IME_SOCKET: &str = "seinas-0-ime";
 
 /// コンポジタの状態。SmithayのハンドラもSCTKのハンドラも、この1つの型に実装する。
 pub struct Seinas {
@@ -224,6 +228,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         |_, listener, state: &mut Seinas| {
             while let Some(stream) = listener.accept()? {
                 state.frontend.accept_shell(stream);
+            }
+            Ok(PostAction::Continue)
+        },
+    )?;
+    let ime_listener = ListeningSocket::bind(IME_SOCKET)?;
+    info!("listening on {IME_SOCKET} for the input method");
+    event_loop.handle().insert_source(
+        Generic::new(ime_listener, Interest::READ, Mode::Level),
+        |_, listener, state: &mut Seinas| {
+            while let Some(stream) = listener.accept()? {
+                state.frontend.accept_ime(stream);
             }
             Ok(PostAction::Continue)
         },
