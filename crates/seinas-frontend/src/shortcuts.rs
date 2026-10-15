@@ -69,7 +69,7 @@ pub const SWITCH_PREVIOUS_NESTED: Shortcut = Shortcut {
     modifiers: ALT_SHIFT,
 };
 
-/// Alt+Shift+F12:IME の緊急解除(既定。仮の値。ADR 0004 の 1.5)。
+/// Alt+Shift+F12:IME の緊急解除(既定。入れ子では届くことを確かめた。ZeikOS では未確認。ADR 0004 の 1.5)。
 pub const RELEASE_INPUT_METHOD: Shortcut = Shortcut {
     keysym: keysym::F12,
     modifiers: ALT_SHIFT,
@@ -106,7 +106,7 @@ pub struct SwitchKeys {
 impl SwitchKeys {
     /// 既定のキー。どの構成でも Alt+Tab と Alt+Shift+Tab。入れ子の構成(`nested`)では、Alt+F6 と Alt+Shift+F6 を
     /// 足す(親の側の Windows が Alt+Tab を先に使い、Seinas に届かないため。Alt+Tab も残す)。IME の緊急解除は、
-    /// どの構成でも Alt+Shift+F12(仮の値)。
+    /// どの構成でも Alt+Shift+F12。
     pub fn defaults(nested: bool) -> Self {
         let mut keys = SwitchKeys {
             next: vec![SWITCH_NEXT],

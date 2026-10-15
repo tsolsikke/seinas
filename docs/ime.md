@@ -14,6 +14,7 @@ IME の権限は、シェルの部品の権限と分けています(ADR 0004 の
 
 - IME のためのソケットは、ふだんのソケットのパスに `-ime` を付けたものです(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)。シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard を見せません。IME のソケットには、layer-shell と foreign-toplevel を見せません(候補の窓に要る `wl_compositor`・`wl_shm` などは見せる)。
 - virtual-keyboard を作れるのは、`get_input_method` を受け入れたクライアントだけです。ほかは、virtual-keyboard の `unauthorized` のエラーで接続を切ります(ログに `a virtual keyboard was refused`)。認可は、接続と、受け入れた IME の世代に結び付けます。受け入れた input method が destroy されたら認可も消え、それまでに作った virtual-keyboard から届いたキーは捨てます。同じ接続からの 2 つ目の `get_input_method` を断っても、1 つ目の認可は消しません。
+  - 限界:virtual-keyboard を作ったときの世代は、そのオブジェクトの最初の要求で決めます(Smithay が作るオブジェクトの番号は、作る要求の時点では分からないため)。世代が変わる前後に作った virtual-keyboard を、作った順と違う順で使い始めたときだけ、新しい方が捨てられることがあります(安全側。ADR 0004 の 1.6)。
 - 守れないこと:IME のソケットにつなげるプロセスは、どれも IME になれます。先につないで、IME の枠(同時に 1 つ)を取ることも防げません。
 - Linux:ソケットは `XDG_RUNTIME_DIR`(0700)の下にあるので、つなげるのは同じ利用者のプロセスだけです。
 - ZeikOS:ソケットの名前はカーネルの表で、利用者の概念も、ファイルの権限の検査もありません。0700 は効かず、どのプロセスも IME のソケットにつなげます。効くのは、ソケットを分けた役割の分け方だけです。
@@ -46,7 +47,8 @@ Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas �
 時間切れで「応答しない」と見なす決まりは、2026-10-15 に取り消し、実装からも外しました(ADR 0004 の 1.5 と「取り消した決定」)。文字を出さずにキーを使うのは、ふつうの IME の動きです。IME にキーごとの返事は求めません。直接の道に戻すのは、次の 2 つのときだけです。
 
 - 接続断:IME のクライアントが去った(接続を切った、input method と grab を destroy した)とき。
-- 緊急解除:Seinas のショートカット(既定は Alt+Shift+F12。仮の値。`seinas.conf` の `ime-release` で変えられる。`docs/config.md`)を押したとき。IME のクライアントの接続を切ります。ログに `the input method was released with the emergency key; its connection is closed and keys go straight to the applications` を出します。
+- 緊急解除:Seinas のショートカット(既定は Alt+Shift+F12。入れ子(WSLg)では、運用者が届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認。`seinas.conf` の `ime-release` で変えられる。`docs/config.md`)を押したとき。IME のクライアントの接続を切ります。ログに `the input method was released with the emergency key; its connection is closed and keys go straight to the applications` を出します。
+  - IME の側からは、ただの切断に見えます。Seinas は接続を閉じるだけで、`wl_display.error` は送りません(ADR 0004 の 1.5)。IME は、読むと接続の終わり(EOF)、送ると EPIPE になります。切断の理由の文(`a client disconnected: ProtocolError { … }`)は、Seinas のログにだけ出ます。
   - 物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけで発動します。IME が virtual-keyboard で送ったキーは、ショートカットの判定を通らないので、発動しません。
   - 押し続けても 1 回だけです(同じキーを離すまで、繰り返しの押下は使って捨てる)。
   - IME がつないでいないときに押すと、ログに `the emergency release key was pressed, but no input method is running` を出すだけです。

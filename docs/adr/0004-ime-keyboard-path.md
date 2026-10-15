@@ -91,14 +91,14 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 
 - 接続断:IME のクライアントが去った、または keyboard の grab を手放したら、次のキーから直接の経路にする(1.4)。
 - 緊急解除:Seinas が IME より先に見るショートカット(1.8)で、IME のクライアントの接続を切る(R-b)。
-  - 既定のキーは Alt+Shift+F12(仮の値。運用者が、入れ子の WSLg と QEMU で届くかを確かめてから、採るかを決める)。`seinas.conf` の `ime-release` で変えられる。
+  - 既定のキーは Alt+Shift+F12。入れ子(WSLg)では、運用者が、届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認(Seinas のキーボードの入力の装置が、まだ無い)。`seinas.conf` の `ime-release` で変えられる。
   - 発動するのは、物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけ。IME が virtual-keyboard で送ったキーでは発動しない(Smithay 0.7.0 の virtual-keyboard のキーは、ショートカットの判定を通らず、フォーカスのあるクライアントへ直に届く)。
   - 押し続けても、1 回だけ発動する(同じキーを離すまで、繰り返しの押下は使って捨てる)。
 
 緊急解除の順番:
 
 1. 先に、その接続の IME の認可と世代を消す(1.6)。この後、その接続の input-method と virtual-keyboard の要求は捨てる。
-2. その後で片付ける:Seinas が keyboard の grab を外し(次のキーから直接の経路)、候補の窓を隠し、接続を切る。切った接続のクリーンアップ(Smithay の部品の destroy)は、Seinas がその場で行わせる。
+2. その後で片付ける:Seinas が keyboard の grab を外し(次のキーから直接の経路)、候補の窓を隠し、接続を切る。切った接続のクリーンアップ(Smithay の部品の destroy)は、Seinas がその場で行わせる。IME の側からは、ただの切断に見える。Seinas は wayland-server の `Client::kill` で接続を閉じるだけで、`wl_display.error` は送らない(wayland-backend 0.3.17 の `src/rs/server_impl/client.rs` 325〜328 行の `kill` は、切断の印を付けて `ClientData::disconnected` に理由を渡すだけ。`wl_display.error` を送るのは 274〜303 行の `post_error` の道だけ)。理由の文は、Seinas のログ(`a client disconnected: ProtocolError { … message: "the input method was released with the emergency key" }`)にだけ出る。IME は、読むと接続の終わり(EOF)、送ると EPIPE になる(2026-10-15 にテスト用の IME で確かめた。何も送っていなければ EOF で終わり、virtual-keyboard でキーを戻そうとしていれば「Broken pipe」で終わる)。
 3. IME へ渡したキーは、アプリへ送り直さない(1.3)。それより後の入力は、アプリへ直接届ける。
 4. IME が去った後(接続断のときも同じ)、フォーカスのあるアプリへ `wl_keyboard` の leave と enter を送り直す。IME が virtual-keyboard で押したキー(アプリには押されたまま)は enter に入れない。enter に入るのは、物理のキーボードで今押されていて、IME かアプリへ渡したキーだけ(Seinas が使ったショートカットのキーは入らない)。
 
@@ -126,6 +126,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
 - virtual-keyboard(A'):作れるのは、`get_input_method` を受け入れたクライアントだけ。ほかは、virtual-keyboard の `unauthorized` のエラーにする(2.5)。
   - 認可は、接続と seat と、受け入れた IME の世代に結び付ける。受け入れた input method が destroy されたとき、緊急解除で消したときに、認可も消え、それまでに作った virtual-keyboard からの要求も捨てる。新しく `get_input_method` を受け入れたら、世代を 1 つ進める。
   - 同じ接続からの 2 つ目の `get_input_method` を断っても(1.7)、1 つ目の認可は消さない。
+  - 限界(2026-10-15 に受け入れた):Smithay が作る virtual-keyboard のオブジェクトの番号は、作る要求を処理する時点では分からない。そのため、作ったときの世代はクライアントごとの待ち行列に置き、そのオブジェクトの最初の要求で決める。世代が変わる前後に作った virtual-keyboard を、作った順と違う順で使い始めたときだけ、新しい方が古い世代と見なされて捨てられる(安全側に倒れる)。
 - 守れることと、守れないこと:
   - 守れる:タスクバーや壁紙の部品、ふつうのアプリは、input-method と virtual-keyboard の global が見えないので、キーの横取り(grab)と注入ができない。
   - 守れない:IME のソケットにつなげるプロセスは、どれも IME になれる。先にソケットにつないで、IME の枠(同時に 1 つ)を取ることも防げない。
@@ -143,7 +144,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
 - コンポジタが使うキーは、IME へ渡す前に Seinas が見て、使ったら IME にもアプリにも渡さない(Smithay の `KeyboardHandle::input` の filter で、grab の前に止められる)。仕様は、コンポジタが一部のキーを grab へ渡さないことを認めている(2.3)。
 - 理由:IME が止まっていても、ショートカット(と、作り直した後の緊急解除の操作)が効くようにするため。
 - 今の一覧:ウィンドウの切り替え(既定は Alt+Tab と Alt+Shift+Tab。入れ子の構成では Alt+F6 と Alt+Shift+F6 も。`seinas.conf` で変えられる。`docs/config.md`)と、切り替えの最中の Esc(取り消し)。Seinas が使ったキーは、離したことも、どこへも渡さない。
-- 緊急解除(1.5):既定は Alt+Shift+F12(仮の値)。`seinas.conf` の `ime-release` で変えられる。
+- 緊急解除(1.5):既定は Alt+Shift+F12(入れ子では確かめた。ZeikOS では未確認)。`seinas.conf` の `ime-release` で変えられる。
 - Seinas が予約するキーと、IME の切り替えのキーの分け方は、統合の前に決める(3 の申し送り)。
 
 ### 1.9 virtual-keyboard で戻ったキー
@@ -245,6 +246,7 @@ Kieli の作り方について、Seinas の側で見えていることを、Kiel
 | 入口の置き場(Q2) | Wayland の入口を、Kieli のリポジトリの中に置くか、kieli-core・kieli-cli との関係 | Kieli の設計 | Kieli のリポジトリの kieli-wayland。kieli-core は no_std + alloc、CLI と入口は std を使ってよい |
 | 起動と、IME として認められること | Kieli は、起動の仕組みが起こす(コンポジタは起こさない。ADR 0002 の 5)。IME として認められる方法は、Seinas の IME の権限の設計(1.6)で決める | 運用者(ZeikOS の起動の仕組みと一緒に)と Seinas の設計 | IME の権限を、シェルの部品の権限と分ける |
 | キーへの返事 | Seinas は、キーごとの返事を求めない(1.3、2.2)。文字を出さずにキーを使ってよい。空の commit を返事の代わりに送らない | Seinas の決定(Kieli に義務は無い) | 標準の IME に独自の返事の義務を課さない |
+| 緊急解除のときの見え方 | 緊急解除(1.5)では、Seinas が IME の接続を閉じる。IME には `wl_display.error` は届かず、ただの切断に見える(読むと EOF、送ると EPIPE)。理由の文は Seinas のログにだけ出る。つなぎ直すのは、IME(または起動の仕組み)の役目で、新しい接続でつなげば戻る | 事実(Seinas の決定。2026-10-15 に確かめた) | — |
 | 使わなかったキー | virtual-keyboard でアプリへ戻す。押したキーは、離したことも戻す | Kieli の設計 | 押下と解放の組、修飾キーの状態、繰り返しを 1 つの配り方の決まりで扱う |
 | unavailable と、activate・deactivate | `unavailable` を受けたら、そのオブジェクトを捨てる(2.4)。deactivate・activate で、入力文脈の状態を作り直す | Kieli の設計(仕様の動き) | 入力欄ごとに 1 つのセッション。モードと未確定の文字を、プロセス全体の状態に置かない |
 | 変換中の文字 | アプリが text-input-v3 の preedit で描く。text-input-v3 を使わないアプリでは変換しない | 運用者(決定 Q5。2026-10-14) | 維持。統合のテストには、専用の小さな文字入力のアプリを使う |
