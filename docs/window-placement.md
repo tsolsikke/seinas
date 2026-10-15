@@ -247,7 +247,7 @@ seat にキーボードがあります(入れ子の構成と、テスト用の�
   - 入れ子の構成:親の `wl_keyboard` から届いた keymap を、そのままクライアントへ配ります。親の keymap が届くまでは、xkbcommon の既定の keymap です。親のキーボードのフォーカスが外れたら、押されているキーを、全部離したことにします(クライアントで繰り返しが続かないように)。押されている修飾キー(Shift、Alt など)は、親から届くものではなく、キーから Seinas が求めます。固定された修飾キー(Caps Lock、Num Lock)は、親から届く状態(wl_keyboard の modifiers の mods_locked)に合わせます。合わせたときは、フォーカスのあるクライアントへ、leave と enter で伝え直します(Smithay に、修飾キーの状態だけを送り直す手段が無いため)。押されている修飾キーを親から受けないのは、押したことが届いていないキーを押されたことにすると、離したことも届かず、押されたまま残るためです。
   - 親のいない構成(seinas-standalone、fbdev):日本語の配列(xkb の layout `jp`、model `jp106`)。xkb のファイル(既定は `/usr/share/X11/xkb`。`XKB_CONFIG_ROOT` で変えられる)が要ります。keymap を作れなければ(xkb の置き場そのものが無いときも、ファイルが足りないときも)、ログ(`no keyboard: the keymap could not be made: …`)に出して、キーボードの無い構成として動きます。IME の global も作りません(`docs/ime.md`)。
   - 押し続けたときの繰り返しは、600 ミリ秒の後に 1 秒あたり 25 回(入れ子では、親の設定)。繰り返しは、クライアントが行います。
-- Seinas のショートカット:キーは、IME とクライアントへ渡す前に、Seinas のショートカットの判定を通ります(`docs/adr/0004-ime-keyboard-path.md`)。Seinas が使ったキーは、離したことも、どこへも渡しません。一覧は、ウィンドウの切り替え(既定は Alt+Tab と Alt+Shift+Tab。入れ子の構成では Alt+F6 と Alt+Shift+F6 も。`seinas.conf` で変えられる。下の「Alt+Tab」)と、切り替えの最中の Esc(取り消し)だけです。
+- Seinas のショートカット:キーは、IME とクライアントへ渡す前に、Seinas のショートカットの判定を通ります(`docs/adr/0004-ime-keyboard-path.md`)。Seinas が使ったキーは、離したことも、どこへも渡しません。一覧は、ウィンドウの切り替え(既定は Alt+Tab と Alt+Shift+Tab。入れ子の構成では Alt+F6 と Alt+Shift+F6 も。`seinas.conf` で変えられる。下の「Alt+Tab」)と、切り替えの最中の Esc(取り消し)と、IME の緊急解除(既定は Alt+Shift+F12。`docs/ime.md` の「IME の復旧」)だけです。
 
 ## Alt+Tab
 

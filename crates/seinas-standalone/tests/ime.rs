@@ -354,6 +354,8 @@ fn keys_go_straight_to_the_window_after_the_ime_leaves() {
     let mut ime = connect_ime(&seinas, &[]);
     ime.send_line("quit");
     wait_for_log(&seinas, "the input method left");
+    // IME が去ると、ウィンドウへ leave と enter を送り直す(押されたキーは無い)。
+    assert_eq!(next_reentered_keys(&window), Vec::<u32>::new());
     tap(&mut seinas, KEY_Y);
     assert_eq!(next_key_line(&window, "y"), "window: key 21 pressed");
     assert_eq!(next_key_line(&window, "y"), "window: key 21 released");
@@ -581,81 +583,6 @@ fn focus_changes_move_the_text_input_and_the_activation() {
 /// 修飾キー(左の Shift)。
 const KEY_LEFT_SHIFT: u32 = 42;
 
-/// テストで使う、IME が応答しないと見なすまでの時間(ミリ秒)。
-const IME_TIMEOUT: u64 = 300;
-
-/// IME が応答しないと見なすまでの時間を短くして起動する。
-fn start_with_ime_timeout(name: &str) -> Compositor {
-    Compositor::start_with_input_and(name, &["--ime-timeout", &IME_TIMEOUT.to_string()])
-}
-
-fn sleep_ms(ms: u64) {
-    std::thread::sleep(std::time::Duration::from_millis(ms));
-}
-
-#[test]
-fn an_unresponsive_ime_is_bypassed_and_comes_back() {
-    let mut seinas = start_with_ime_timeout("ij");
-    let window = open_window(&seinas, "窓");
-    let mut ime = connect_ime(&seinas, &["--ignore-keys"]);
-    // 修飾キーだけの押下は、返事が無くても数えない。
-    for _ in 0..3 {
-        tap(&mut seinas, KEY_LEFT_SHIFT);
-        assert_eq!(next_ime_key(&ime, "Shift"), "ime: key 42 pressed");
-        assert_eq!(next_ime_key(&ime, "Shift"), "ime: key 42 released");
-        sleep_ms(IME_TIMEOUT);
-    }
-    assert!(!seinas.log().contains("did not answer"));
-    // ほかのキーに返事が無ければ、応答しないと見なす。
-    tap(&mut seinas, KEY_X);
-    assert_eq!(next_ime_key(&ime, "x"), "ime: key 45 pressed");
-    wait_for_log(&seinas, "the input method did not answer a key in 300 ms");
-    // 次のキーから、直接の道。返事の無かったキー(x)は、ウィンドウへ送り直さない。
-    tap(&mut seinas, KEY_Y);
-    assert_eq!(next_key_line(&window, "y"), "window: key 21 pressed");
-    assert_eq!(next_key_line(&window, "y"), "window: key 21 released");
-    ime.send_line("sync");
-    loop {
-        let line = ime.next_line("the sync");
-        assert!(!line.starts_with("ime: key 21"), "y reached the IME");
-        if line == "ime: synced" {
-            break;
-        }
-    }
-    // IME から要求が届いたら、次のキーから IME を通る道に戻る。
-    ime.send_line("answer");
-    ime.wait_for_line("ime: answered");
-    wait_for_log(&seinas, "the input method answered again");
-    tap(&mut seinas, KEY_X);
-    assert_eq!(next_ime_key(&ime, "x again"), "ime: key 45 pressed");
-    assert_eq!(
-        next_key_line(&window, "x from the IME"),
-        "window: key 45 pressed"
-    );
-}
-
-#[test]
-fn an_ime_that_answers_is_not_bypassed() {
-    // 混んだ CI でも返事が間に合うよう、既定の時間(1,000 ms)で動かす。
-    let mut seinas = Compositor::start_with_input("ik");
-    let window = open_text_window(&seinas, "窓");
-    let _ime = connect_ime_to_window(&seinas);
-    assert_eq!(
-        next_text_change(&window, "enter"),
-        "window: text-input enter"
-    );
-    // 変換中の文字にしたキー(input-method の要求で答える)と、戻したキー(virtual-keyboard の要求で答える)。
-    tap(&mut seinas, KEY_A);
-    assert_eq!(next_text_change(&window, "あ"), "window: preedit あ");
-    sleep_ms(1500);
-    tap(&mut seinas, KEY_X);
-    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
-    sleep_ms(1500);
-    tap(&mut seinas, KEY_I);
-    assert_eq!(next_text_change(&window, "あい"), "window: preedit あい");
-    assert!(!seinas.log().contains("did not answer"));
-}
-
 /// テスト用のウィンドウの色(橙)と、テスト用の IME の候補の窓の色(紫)。
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 const PURPLE: [u8; 3] = [0x80, 0x00, 0xff];
@@ -738,4 +665,327 @@ fn the_candidate_window_hides_when_the_focus_leaves() {
         shot.pixel(10, 60) == ORANGE && shot.pixel(49, 89) != PURPLE
     });
     drop(first);
+}
+
+/// 緊急解除のキー(既定の Alt+Shift+F12)の F12。
+const KEY_F12: u32 = 88;
+
+/// キー `code` を押す(`pressed`)か、離す。
+fn key(seinas: &mut Compositor, code: u32, pressed: bool) {
+    let what = if pressed { "press" } else { "release" };
+    seinas.pointer(&format!("key {code} {what}"));
+}
+
+/// 緊急解除のキー(Alt+Shift+F12)を押す。離すのは呼ぶ側。
+fn press_release_key(seinas: &mut Compositor) {
+    key(seinas, KEY_LEFT_ALT, true);
+    key(seinas, KEY_LEFT_SHIFT, true);
+    key(seinas, KEY_F12, true);
+}
+
+/// 緊急解除のキーを離す(F12 は Seinas が使ったので、どこへも届かない)。
+fn lift_release_key(seinas: &mut Compositor) {
+    key(seinas, KEY_F12, false);
+    key(seinas, KEY_LEFT_SHIFT, false);
+    key(seinas, KEY_LEFT_ALT, false);
+}
+
+/// ウィンドウの、`last` までの text-input の行(`last` を含む)。
+fn text_lines_until(window: &TestClient, last: &str) -> Vec<String> {
+    let mut lines = Vec::new();
+    loop {
+        let line = window.next_line(last);
+        let done = line == last;
+        if line.starts_with("window: text-input ")
+            || line.starts_with("window: preedit ")
+            || line.starts_with("window: commit ")
+            || line.starts_with("window: delete ")
+            || line.starts_with("window: applied ")
+            || line.starts_with("window: reset ")
+        {
+            lines.push(line);
+        }
+        if done {
+            return lines;
+        }
+    }
+}
+
+/// `window: keyboard enter keys …` の行のキーの番号(順は問わない)。
+fn enter_keys(line: &str) -> Vec<u32> {
+    let mut keys: Vec<u32> = line
+        .strip_prefix("window: keyboard enter")
+        .unwrap_or_else(|| panic!("not an enter line: {line}"))
+        .trim()
+        .strip_prefix("keys")
+        .unwrap_or("")
+        .split_whitespace()
+        .map(|key| key.parse().expect("a key number"))
+        .collect();
+    keys.sort_unstable();
+    keys
+}
+
+/// IME が去った後に、ウィンドウへ送り直される leave と enter を待ち、enter のキーを返す。
+fn next_reentered_keys(window: &TestClient) -> Vec<u32> {
+    while next_key_line(window, "the keyboard leave") != "window: keyboard leave" {}
+    enter_keys(&next_key_line(window, "the keyboard enter"))
+}
+
+#[test]
+fn a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit() {
+    let mut seinas = Compositor::start_with_input("iv");
+    let window =
+        seinas.connect_test_client(&["window", "--text-input", "--keyboard", "--title", "窓"]);
+    window.wait_for_line("window: drawn");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    // commit_string を送り、commit の前に接続を切る。Seinas は、空の preedit も done も送らない。アプリには、
+    // text-input の leave だけが届き、アプリが変換中の文字を消す(text-input-v3 の leave)。
+    ime.send_line("commit-string x");
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+    ime.send_line("quit");
+    let lines = text_lines_until(&window, "window: reset preedit");
+    assert_eq!(
+        lines,
+        [
+            "window: commit x",
+            "window: text-input leave",
+            "window: reset preedit"
+        ]
+    );
+    wait_for_log(&seinas, "the input method left");
+    // 次のキーから直接の道。押されたキーは残らない(送り直した enter に、押されているキーは無い)。
+    assert_eq!(next_reentered_keys(&window), Vec::<u32>::new());
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    let lines = window.lines_within(std::time::Duration::from_millis(200));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("text-input done") || line.contains("applied")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn the_release_key_closes_the_ime_and_keys_go_straight_to_the_window() {
+    let mut seinas = Compositor::start_with_input("iw");
+    let window =
+        seinas.connect_test_client(&["window", "--text-input", "--keyboard", "--title", "窓"]);
+    window.wait_for_line("window: drawn");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    // delete_surrounding_text を送り、commit の前に緊急解除する。
+    ime.send_line("delete-surrounding 1 0");
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+    press_release_key(&mut seinas);
+    // IME の接続は切れて、IME は終わる。
+    let status = ime.process.0.wait().expect("the IME ends");
+    assert!(status.success(), "{status}");
+    wait_for_log(
+        &seinas,
+        "the input method was released with the emergency key",
+    );
+    wait_for_log(&seinas, "the input method left");
+    let lines = text_lines_until(&window, "window: reset preedit");
+    assert_eq!(
+        lines,
+        [
+            "window: delete 1 0",
+            "window: text-input leave",
+            "window: reset preedit"
+        ]
+    );
+    // 送り直した enter には、物理のキーボードで押している Alt と Shift だけが入り、Seinas が使った F12 は
+    // 入らない。離すと、直接ウィンドウに届く。
+    assert_eq!(next_reentered_keys(&window), [KEY_LEFT_SHIFT, KEY_LEFT_ALT]);
+    lift_release_key(&mut seinas);
+    assert_eq!(next_key_line(&window, "shift"), "window: key 42 released");
+    assert_eq!(next_key_line(&window, "alt"), "window: key 56 released");
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 released");
+    let lines = window.lines_within(std::time::Duration::from_millis(200));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.contains("key 88") || line.contains("applied")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn an_ime_that_swallows_a_key_is_not_bypassed() {
+    // 半角/全角のように、文字を出さずにキーを使う IME。返事が無くても、直接の道にはしない。
+    const KEY_ZENKAKU_HANKAKU: u32 = 41;
+    let mut seinas = Compositor::start_with_input("ix");
+    let window =
+        seinas.connect_test_client(&["window", "--text-input", "--keyboard", "--title", "窓"]);
+    window.wait_for_line("window: drawn");
+    let ime = connect_ime_to_window_with(&seinas, &["--swallow", "41"]);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    for _ in 0..3 {
+        tap(&mut seinas, KEY_ZENKAKU_HANKAKU);
+        assert_eq!(
+            next_ime_key(&ime, "the swallowed key"),
+            "ime: key 41 pressed"
+        );
+        assert_eq!(
+            next_ime_key(&ime, "the swallowed key"),
+            "ime: key 41 released"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+    // IME を通る道のまま。
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    let lines = window.lines_within(std::time::Duration::from_millis(200));
+    assert!(
+        !lines.iter().any(|line| line.contains("key 41")),
+        "{lines:?}"
+    );
+    let log = seinas.log();
+    assert!(
+        !log.contains("left") && !log.contains("released with"),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_key_held_on_the_keyboard_and_through_the_ime_is_not_left_pressed() {
+    let mut seinas = Compositor::start_with_input("iy");
+    let window = open_window(&seinas, "窓");
+    let _ime = connect_ime(&seinas, &[]);
+    // x を押したまま。IME が virtual-keyboard で押したことを戻すので、ウィンドウには押されている。
+    key(&mut seinas, KEY_X, true);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    press_release_key(&mut seinas);
+    wait_for_log(&seinas, "the input method left");
+    // 送り直した enter には、物理のキーボードで押している x・Shift・Alt が入る(IME が virtual-keyboard で押した
+    // ことは、leave で消える)。離すと、直接ウィンドウに届く。
+    assert_eq!(
+        next_reentered_keys(&window),
+        [KEY_LEFT_SHIFT, KEY_X, KEY_LEFT_ALT]
+    );
+    key(&mut seinas, KEY_X, false);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 released");
+    lift_release_key(&mut seinas);
+    assert_eq!(next_key_line(&window, "shift"), "window: key 42 released");
+    assert_eq!(next_key_line(&window, "alt"), "window: key 56 released");
+}
+
+#[test]
+fn a_key_pressed_only_through_the_ime_is_not_left_pressed() {
+    let mut seinas = Compositor::start_with_input("iz");
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &[]);
+    // x を押して離す。IME は押したことを戻した後、離したことをためる(ウィンドウには押されたまま)。
+    key(&mut seinas, KEY_X, true);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    ime.send_line("hold");
+    ime.wait_for_line("ime: holding");
+    key(&mut seinas, KEY_X, false);
+    assert_eq!(next_ime_key(&ime, "x released"), "ime: key 45 released");
+    press_release_key(&mut seinas);
+    wait_for_log(&seinas, "the input method left");
+    // 送り直した enter に x は入らない(物理のキーボードでは離している)。leave で、ウィンドウの x は離れる。
+    assert_eq!(next_reentered_keys(&window), [KEY_LEFT_SHIFT, KEY_LEFT_ALT]);
+    lift_release_key(&mut seinas);
+    let lines = window.lines_within(std::time::Duration::from_millis(300));
+    assert!(
+        !lines.iter().any(|line| line.contains("key 45")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn the_release_key_works_once_while_it_is_held() {
+    let mut seinas = Compositor::start_with_input("ja");
+    let window = open_text_window(&seinas, "窓");
+    let mut first = connect_ime_to_window(&seinas);
+    press_release_key(&mut seinas);
+    let _ = first.process.0.wait();
+    wait_for_log(&seinas, "the input method left");
+    // 押し続けた F12 の繰り返しの押下では、新しくつないだ IME を切らない。
+    let second = connect_ime_to_window(&seinas);
+    key(&mut seinas, KEY_F12, true);
+    key(&mut seinas, KEY_F12, true);
+    lift_release_key(&mut seinas);
+    tap(&mut seinas, KEY_A);
+    second.wait_for_line("ime: key 30 pressed");
+    while next_text_line(&window, "あ") != "window: preedit あ" {}
+    assert_eq!(
+        seinas
+            .log()
+            .matches("released with the emergency key; its connection is closed")
+            .count(),
+        1,
+        "{}",
+        seinas.log()
+    );
+    // 離した後に押せば、また解除する。
+    press_release_key(&mut seinas);
+    wait_for_log(
+        &seinas,
+        "released with the emergency key; its connection is closed",
+    );
+    common::wait_for("the second release", || {
+        (seinas
+            .log()
+            .matches("released with the emergency key; its connection is closed")
+            .count()
+            == 2)
+            .then_some(())
+    });
+    lift_release_key(&mut seinas);
+}
+
+#[test]
+fn a_virtual_keyboard_key_does_not_release_the_ime() {
+    let mut seinas = Compositor::start_with_input("jb");
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &[]);
+    // IME が virtual-keyboard で Alt+Shift(Shift = 1、Mod1 = 8)と F12 を送っても、Seinas のショートカットには
+    // ならない(virtual-keyboard のキーは、フォーカスのあるクライアントへ直に届く)。
+    ime.send_line("vk-mods 9");
+    ime.send_line(&format!("vk-press {KEY_F12}"));
+    ime.send_line(&format!("vk-release {KEY_F12}"));
+    ime.send_line("vk-mods 0");
+    loop {
+        if next_key_line(&window, "F12 from the IME") == "window: key 88 released" {
+            break;
+        }
+    }
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+    assert!(!seinas.log().contains("released with the emergency key"));
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_ime_key(&ime, "x on the IME"), "ime: key 45 pressed");
+}
+
+#[test]
+fn a_new_ime_connection_continues_in_the_same_field() {
+    let mut seinas = Compositor::start_with_input("jc");
+    let window = open_text_window(&seinas, "窓");
+    let mut first = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    first.send_line("quit");
+    let _ = first.process.0.wait();
+    while next_text_line(&window, "leave") != "window: text-input leave" {}
+    // 新しい接続の IME がつながると、同じウィンドウの同じ欄に、クリックし直さずに enter が届き、続けて打てる。
+    let _second = connect_ime_to_window(&seinas);
+    while next_text_line(&window, "enter") != "window: text-input enter" {}
+    tap(&mut seinas, KEY_I);
+    while next_text_line(&window, "い") != "window: preedit い" {}
 }

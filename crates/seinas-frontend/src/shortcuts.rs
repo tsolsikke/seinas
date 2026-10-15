@@ -2,7 +2,8 @@
 //!
 //! キーは、IME とアプリへ渡す前に、ここで見る(ADR 0004)。IME が固まっていても、ショートカットが効くように
 //! するため。Wayland のオブジェクトにも xkb の型にも触れずに確かめられるよう、keysym は数で受け取る。
-//! 一覧は、ウィンドウの切り替え(次へ・前へ)だけ。キーは設定で変えられる(`key_binding.rs`)。
+//! 一覧は、ウィンドウの切り替え(次へ・前へ)と、IME の緊急解除(ADR 0004 の 1.5)。キーは設定で変えられる
+//! (`key_binding.rs`)。
 
 /// ショートカットの判定に使う、修飾キーの状態。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -21,6 +22,7 @@ pub mod keysym {
     pub const ISO_LEFT_TAB: u32 = 0xfe20;
     pub const ESCAPE: u32 = 0xff1b;
     pub const F6: u32 = 0xffc3;
+    pub const F12: u32 = 0xffc9;
 }
 
 /// 修飾キー(Shift、Ctrl、Alt、Caps Lock など)の keysym か。
@@ -67,6 +69,12 @@ pub const SWITCH_PREVIOUS_NESTED: Shortcut = Shortcut {
     modifiers: ALT_SHIFT,
 };
 
+/// Alt+Shift+F12:IME の緊急解除(既定。仮の値。ADR 0004 の 1.5)。
+pub const RELEASE_INPUT_METHOD: Shortcut = Shortcut {
+    keysym: keysym::F12,
+    modifiers: ALT_SHIFT,
+};
+
 /// 1 つのショートカット。keysym(xkb の数)と、そのとき押されている修飾キーの組。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shortcut {
@@ -83,22 +91,27 @@ pub enum Action {
     SwitchPrevious,
     /// 切り替えを取り消す(切り替えの最中の Esc)。
     CancelSwitch,
+    /// IME の緊急解除(IME の接続を切り、次のキーから直接アプリへ渡す)。
+    ReleaseInputMethod,
 }
 
-/// ウィンドウの切り替えのキー(次へ・前へ。どちらも 1 つ以上)。
+/// Seinas のショートカットのキー:ウィンドウの切り替え(次へ・前へ)と、IME の緊急解除。どれも 1 つ以上。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchKeys {
     pub next: Vec<Shortcut>,
     pub previous: Vec<Shortcut>,
+    pub release_input_method: Vec<Shortcut>,
 }
 
 impl SwitchKeys {
     /// 既定のキー。どの構成でも Alt+Tab と Alt+Shift+Tab。入れ子の構成(`nested`)では、Alt+F6 と Alt+Shift+F6 を
-    /// 足す(親の側の Windows が Alt+Tab を先に使い、Seinas に届かないため。Alt+Tab も残す)。
+    /// 足す(親の側の Windows が Alt+Tab を先に使い、Seinas に届かないため。Alt+Tab も残す)。IME の緊急解除は、
+    /// どの構成でも Alt+Shift+F12(仮の値)。
     pub fn defaults(nested: bool) -> Self {
         let mut keys = SwitchKeys {
             next: vec![SWITCH_NEXT],
             previous: vec![SWITCH_PREVIOUS],
+            release_input_method: vec![RELEASE_INPUT_METHOD],
         };
         if nested {
             keys.next.push(SWITCH_NEXT_NESTED);
@@ -136,14 +149,18 @@ impl Shortcuts {
         }
     }
 
-    /// Seinas のショートカットの一覧(ウィンドウの切り替えのキー `keys`)。
+    /// Seinas のショートカットの一覧(ウィンドウの切り替えと IME の緊急解除のキー `keys`)。
     pub fn switching(keys: &SwitchKeys) -> Self {
         let next = keys.next.iter().map(|&key| (key, Action::SwitchNext));
         let previous = keys
             .previous
             .iter()
             .map(|&key| (key, Action::SwitchPrevious));
-        Self::new(next.chain(previous).collect())
+        let release = keys
+            .release_input_method
+            .iter()
+            .map(|&key| (key, Action::ReleaseInputMethod));
+        Self::new(next.chain(previous).chain(release).collect())
     }
 
     /// 既定のキーでの一覧(入れ子でない構成のもの)。
@@ -183,6 +200,10 @@ impl Shortcuts {
                 && (shortcut.keysym == keysym || shortcut.keysym == raw_keysym)
         });
         match found {
+            // IME の緊急解除は、押し続けたときの繰り返しの押下では、もう一度しない(離すまで 1 回)。
+            Some(&(_, Action::ReleaseInputMethod)) if self.held.contains(&code) => {
+                Decision::Swallow
+            }
             Some(&(shortcut, action)) => {
                 if !self.held.contains(&code) {
                     self.held.push(code);
@@ -249,6 +270,32 @@ mod tests {
             shortcuts.filter(15, false, TAB, TAB, ALT),
             Decision::Forward
         );
+    }
+
+    #[test]
+    fn the_release_key_is_used_once_until_it_is_released() {
+        let mut shortcuts = Shortcuts::seinas();
+        let f12 = keysym::F12;
+        assert_eq!(
+            shortcuts.filter(88, true, f12, f12, ALT_SHIFT),
+            Decision::Use(RELEASE_INPUT_METHOD, Action::ReleaseInputMethod)
+        );
+        // 押し続けたときの繰り返しの押下は、使って捨てる(もう一度はしない)。
+        assert_eq!(
+            shortcuts.filter(88, true, f12, f12, ALT_SHIFT),
+            Decision::Swallow
+        );
+        assert_eq!(
+            shortcuts.filter(88, false, f12, f12, ALT_SHIFT),
+            Decision::Swallow
+        );
+        // 離した後は、また使う。修飾キーが違えば、使わない。
+        assert_eq!(
+            shortcuts.filter(88, true, f12, f12, ALT_SHIFT),
+            Decision::Use(RELEASE_INPUT_METHOD, Action::ReleaseInputMethod)
+        );
+        shortcuts.filter(88, false, f12, f12, ALT_SHIFT);
+        assert_eq!(shortcuts.filter(88, true, f12, f12, ALT), Decision::Forward);
     }
 
     #[test]

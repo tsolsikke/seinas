@@ -27,6 +27,9 @@
 //! - `--text-input`: text-input-v3 を使う(`--keyboard` も付けたことになる)。enter が届くたびに、有効にして
 //!   カーソルの矩形を送り、commit する。届いたイベントを `window: text-input enter`、`window: text-input leave`、
 //!   `window: preedit あい`、`window: commit あい`、`window: delete 1 0`、`window: text-input done` の形で書く。
+//!   text-input-v3 のとおり、届いた状態は done で効かせ、done で確定した文字を効かせたら `window: applied commit あい`
+//!   を書く。leave では、変換中の文字を消し(仕様の「The client should reset any preedit string previously set」)、
+//!   消すものがあれば `window: reset preedit` を書く。
 //! - `--show-text`: text-input で確定した文字と変換中の文字を、コンテンツに描く(`--text-input` も付けたことになる。
 //!   スクリーンショットのため)。カーソルの矩形は、変換中の文字の終わりに合わせて送る。
 //! - `--cursor X,Y,W,H`: text-input で送るカーソルの矩形(コンテンツの左上が原点。既定は 10,20,2,16)。
@@ -161,6 +164,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut pools = vec![pool];
     // 文字を描くときの状態(`--show-text`)。
     let mut view = options.show_text.then(TextView::new);
+    let mut text_state = TextState::default();
     if let Some(view) = &mut view {
         let (pixels, cursor) = view.paint(width, height, pixel);
         options.cursor = cursor;
@@ -218,7 +222,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     return Err(format!("protocol error: {error}"));
                 }
                 if Some(event.object) == text_input {
-                    text_input_event(&mut wire, &event, options.cursor)?;
+                    text_input_event(&mut wire, &event, options.cursor, &mut text_state)?;
                     if let Some(view) = &mut view {
                         if view.event(&event) {
                             // done で変わった文字を再描画し、カーソルの矩形を送り直す。
@@ -342,8 +346,33 @@ fn string_at(event: &Event, at: usize) -> Option<(Option<String>, usize)> {
     ))
 }
 
-/// text-input のイベントを書き、enter なら、有効にしてカーソルの矩形を送る。
-fn text_input_event(wire: &mut Wire, event: &Event, cursor: [i32; 4]) -> Result<(), String> {
+/// text-input の状態(done で効かせる。変換中の文字は leave で消す)。
+#[derive(Default)]
+struct TextState {
+    preedit: String,
+    pending_preedit: String,
+    pending_commit: String,
+}
+
+/// text-input のイベントを書き、enter なら、有効にしてカーソルの矩形を送る。状態 `text` を、仕様のとおりに変える。
+fn text_input_event(
+    wire: &mut Wire,
+    event: &Event,
+    cursor: [i32; 4],
+    text: &mut TextState,
+) -> Result<(), String> {
+    match event.opcode {
+        2 => {
+            text.pending_preedit = string_at(event, 0)
+                .and_then(|(text, _)| text)
+                .unwrap_or_default();
+        }
+        3 => {
+            let committed = string_at(event, 0).and_then(|(text, _)| text);
+            text.pending_commit.push_str(&committed.unwrap_or_default());
+        }
+        _ => {}
+    }
     match event.opcode {
         0 => {
             say("text-input enter");
@@ -352,7 +381,14 @@ fn text_input_event(wire: &mut Wire, event: &Event, cursor: [i32; 4]) -> Result<
             send_cursor(wire, event.object, cursor)?;
             wire.send(&crate::message(event.object, 7, &[]))?;
         }
-        1 => say("text-input leave"),
+        1 => {
+            say("text-input leave");
+            if !text.preedit.is_empty() || !text.pending_preedit.is_empty() {
+                text.preedit.clear();
+                text.pending_preedit.clear();
+                say("reset preedit");
+            }
+        }
         2 => {
             let text = string_at(event, 0).and_then(|(text, _)| text);
             say(&format!("preedit {}", text.unwrap_or_default()));
@@ -366,7 +402,14 @@ fn text_input_event(wire: &mut Wire, event: &Event, cursor: [i32; 4]) -> Result<
             event.u32_at(0).unwrap_or(0),
             event.u32_at(4).unwrap_or(0)
         )),
-        5 => say("text-input done"),
+        5 => {
+            say("text-input done");
+            let committed = std::mem::take(&mut text.pending_commit);
+            if !committed.is_empty() {
+                say(&format!("applied commit {committed}"));
+            }
+            text.preedit = std::mem::take(&mut text.pending_preedit);
+        }
         _ => {}
     }
     Ok(())
@@ -403,6 +446,12 @@ impl TextView {
     /// text-input のイベントを覚える。done で文字が変わったらtrue。
     fn event(&mut self, event: &Event) -> bool {
         match event.opcode {
+            // leave:変換中の文字を消す(仕様)。
+            1 => {
+                self.preedit.clear();
+                self.pending_preedit.clear();
+                true
+            }
             2 => {
                 self.pending_preedit = string_at(event, 0)
                     .and_then(|(text, _)| text)

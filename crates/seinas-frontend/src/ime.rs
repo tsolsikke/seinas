@@ -13,15 +13,15 @@
 //!   無くなったら認可も消え、それまでに作った virtual-keyboard からの要求は捨てる(ADR 0004 の 1.6)。
 //! - IME は同時に 1 つだけ:2 つ目からの `get_input_method` は、Smithay へ渡さずにここで受け、Seinas の側の
 //!   入れ物([`RefusedInputMethod`])で作って、すぐ `unavailable` を送る。その後の要求は、何もせずに捨てる。
-//! - IME が去ったこと、keyboard の grab を手放したことをログに出す。
+//! - IME が去ったこと、keyboard の grab を手放したことをログに出す。IME が去ったら、フォーカスのあるアプリへ
+//!   `wl_keyboard` の leave と enter を送り直す(IME が virtual-keyboard で押したキーを、押されたまま残さない)。
+//! - 緊急解除([`release_ime`]):Seinas のショートカットで、IME の認可を消し、grab を外し、候補の窓を隠して、
+//!   接続を切る(ADR 0004 の 1.5)。切った接続のクリーンアップ(Smithay の部品の destroy)が済むまで、次の IME は
+//!   受け入れない(Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため)。
 //! - virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーの
 //!   ときだけ渡す。Alt+Tab で Alt を離すと、Seinas はその場でフォーカスを移すが、IME が戻す「Alt を離した」は
 //!   後から届くので、そのままでは、押したことを知らない新しいフォーカスのクライアントへ届いてしまうため。前の
 //!   フォーカスのクライアントには leave が届いているので、押されたまま残るクライアントは無い。
-//! - 応答しない IME:キーの押下(修飾キーだけのものは数えない)を IME へ送ってから、決めた時間(既定は
-//!   [`DEFAULT_IME_TIMEOUT`])の間に、その IME のクライアントから要求(input-method と virtual-keyboard のどちらでも
-//!   よい)が 1 つも届かなければ、応答しないと見なして keyboard の grab を外す(次のキーから直接の道)。その後に
-//!   要求が届いたら、grab を戻す(次のキーから IME を通る道)。どちらもログに出す。
 //!
 //! 2 つ目を Smithay へ渡さない理由(Smithay 0.7.0 の不具合を避けるため):
 //!
@@ -36,10 +36,7 @@
 //! 候補の窓(input popup surface)は、見せるときと隠すときに Smithay が呼ぶ([`popup_shown`]、[`popup_hidden`])。置く
 //! 位置は、描くときに、親のウィンドウのいまの位置と、カーソルの矩形と、画面の大きさから求める(`ime_popup.rs`)。
 
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    time::{Duration, Instant},
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use smithay::utils::SERIAL_COUNTER;
 use smithay::{
@@ -61,7 +58,7 @@ use smithay::{
             },
         },
         wayland_server::{
-            backend::{ClientId, ObjectId},
+            backend::{protocol::ProtocolError, ClientId, ObjectId},
             protocol::wl_surface::WlSurface,
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, Resource,
         },
@@ -70,7 +67,7 @@ use smithay::{
         input_method::{
             InputMethodHandler, InputMethodKeyboardGrab, InputMethodKeyboardUserData,
             InputMethodManagerGlobalData, InputMethodManagerState, InputMethodPopupSurfaceUserData,
-            InputMethodSeat, InputMethodUserData, PopupSurface,
+            InputMethodUserData, PopupSurface,
         },
         text_input::{TextInputManagerState, TextInputUserData},
         virtual_keyboard::{
@@ -82,9 +79,6 @@ use tracing::{info, warn};
 
 use crate::FrontendHost;
 
-/// IME が応答しないと見なすまでの時間の既定(ADR 0004。仮の値)。
-pub const DEFAULT_IME_TIMEOUT: Duration = Duration::from_millis(1000);
-
 /// IME の道の状態。
 pub struct ImeState {
     /// text-input-v3 の global(全部のクライアントに見せる)。
@@ -93,13 +87,9 @@ pub struct ImeState {
     pub managers: Option<(InputMethodManagerState, VirtualKeyboardManagerState)>,
     /// Smithay へ通した IME(同時に 1 つ)。
     connected: Option<Connected>,
-    /// 応答しないと見なすまでの時間。
-    timeout: Duration,
-    /// IME へ送ったキーの押下の、返事の期限。返事を待っていなければNone。
-    deadline: Option<Instant>,
-    /// 応答しないと見なして、keyboard の grab を外しているか。外した grab は `suspended` に残す。
-    unresponsive: bool,
-    suspended: Option<InputMethodKeyboardGrab>,
+    /// 緊急解除で接続を切った IME のクライアント。バックエンドが、すぐにクリーンアップさせる
+    /// ([`crate::reap_dead_clients`])。
+    pub(crate) to_reap: Option<Client>,
     /// 見せている候補の窓。IME が有効で、親(フォーカスのあるウィンドウ)があるときだけ。
     pub popup: Option<PopupSurface>,
     /// virtual-keyboard で「押した」を渡したキー(evdev の番号)と、そのときのキーボードのフォーカス。フォーカスが
@@ -117,8 +107,12 @@ pub struct ImeState {
 /// Smithay へ通した IME のクライアントと、そのオブジェクトが残っているか。
 struct Connected {
     client: ClientId,
+    /// 接続を切るのに使う。
+    handle: Client,
     /// 受け入れたときの世代。
     generation: u64,
+    /// 緊急解除で認可を消したか(接続を切った後、クリーンアップが済むまで残る)。
+    revoked: bool,
     /// `zwp_input_method_v2` が残っているか。
     input_method: bool,
     /// 残っている keyboard の grab(`zwp_input_method_keyboard_grab_v2`)の数。
@@ -138,8 +132,7 @@ impl ImeState {
     /// global を作る。input-method と virtual-keyboard は、`keyboard` が真(seat にキーボードがある)ときだけ作り、
     /// IME のためのソケットからつないだクライアントにだけ見せる。
     ///
-    /// `timeout` は、IME が応答しないと見なすまでの時間。
-    pub fn new<D>(display_handle: &DisplayHandle, keyboard: bool, timeout: Duration) -> Self
+    pub fn new<D>(display_handle: &DisplayHandle, keyboard: bool) -> Self
     where
         D: GlobalDispatch<ZwpTextInputManagerV3, ()>
             + Dispatch<ZwpTextInputManagerV3, ()>
@@ -162,10 +155,7 @@ impl ImeState {
             text_input: TextInputManagerState::new::<D>(display_handle),
             managers,
             connected: None,
-            timeout,
-            deadline: None,
-            unresponsive: false,
-            suspended: None,
+            to_reap: None,
             popup: None,
             vk_pressed: HashSet::new(),
             vk_focus: None,
@@ -179,7 +169,9 @@ impl ImeState {
     fn authorized(&self, client: &ClientId) -> Option<u64> {
         self.connected
             .as_ref()
-            .filter(|connected| connected.client == *client && connected.input_method)
+            .filter(|connected| {
+                connected.client == *client && connected.input_method && !connected.revoked
+            })
             .map(|connected| connected.generation)
     }
 
@@ -190,48 +182,26 @@ impl ImeState {
         self.vk_focus = None;
     }
 
-    /// 次に [`check_ime`] で確かめる時刻(IME へ送ったキーの返事の期限)。
-    pub fn next_deadline(&self) -> Option<Instant> {
-        self.deadline
-    }
-
-    /// IME が応答しないと見なして、直接の道にしているか。
-    pub fn is_unresponsive(&self) -> bool {
-        self.unresponsive
-    }
-
-    /// `client` が、Smithay へ通した IME か。
-    fn is_ime(&self, client: &ClientId) -> bool {
-        self.connected
-            .as_ref()
-            .is_some_and(|connected| connected.client == *client)
-    }
-
-    /// 返事の待ちと、応答しないと見なしたことを忘れる(IME が去ったとき、grab を手放したとき)。
-    fn reset_watch(&mut self) {
-        self.deadline = None;
-        self.unresponsive = false;
-        self.suspended = None;
-    }
-
     /// IME がつないでいるか(Smithay へ通した `zwp_input_method_v2` か grab が残っているか)。
     pub fn is_connected(&self) -> bool {
         self.connected.is_some()
     }
 
-    /// IME の `zwp_input_method_v2` か grab が 1 つ消えた後に呼ぶ。両方とも無くなったら、IME が去ったことにする。
-    fn forget_if_gone(&mut self) {
-        if self
+    /// IME の `zwp_input_method_v2` か grab が 1 つ消えた後に呼ぶ。両方とも無くなったら、IME が去ったことにして
+    /// trueを返す。
+    fn forget_if_gone(&mut self) -> bool {
+        if !self
             .connected
             .as_ref()
             .is_some_and(|connected| !connected.input_method && connected.grabs == 0)
         {
-            if let Some(connected) = self.connected.take() {
-                self.vk_pending.remove(&connected.client);
-            }
-            self.reset_watch();
-            info!("the input method left; keys go straight to the applications");
+            return false;
         }
+        if let Some(connected) = self.connected.take() {
+            self.vk_pending.remove(&connected.client);
+        }
+        info!("the input method left; keys go straight to the applications");
+        true
     }
 }
 
@@ -242,64 +212,61 @@ fn ime_grab<D: FrontendHost>(keyboard: &KeyboardHandle<D>) -> Option<InputMethod
         .flatten()
 }
 
-/// キーの押下(修飾キーだけのものではない)を、keyboard の grab へ渡した後に呼ぶ。IME の grab なら、返事を待ち
-/// 始める(もう待っているときは、最初の期限のまま)。
-pub(crate) fn key_sent<D: FrontendHost>(state: &mut D, keyboard: &KeyboardHandle<D>, now: Instant) {
-    let ime = &mut state.frontend_mut().ime;
-    if ime.connected.is_none() || ime.unresponsive || ime.deadline.is_some() {
-        return;
-    }
-    if ime_grab(keyboard).is_some() {
-        ime.deadline = Some(now + ime.timeout);
-    }
-}
-
-/// IME へ送ったキーの返事の期限を、時刻 `now` で確かめる。過ぎていたら、応答しないと見なして keyboard の grab を
-/// 外し、次のキーから直接の道にする。バックエンドが、イベントループを回るたびに呼ぶ(次の期限は
-/// `frontend().ime.next_deadline()`)。
-pub fn check_ime<D: FrontendHost>(state: &mut D, now: Instant) {
+/// 緊急解除(ADR 0004 の 1.5)。IME がつないでいれば、次の順に行い、trueを返す。
+///
+/// 1. その接続の認可を消す(この後、その接続の input-method と virtual-keyboard の要求は捨てる)。
+/// 2. keyboard の grab を外し(次のキーから直接の道)、候補の窓を隠し、接続を切る。
+///
+/// IME へ渡したキーは、アプリへ送り直さない。切った接続のクリーンアップ(Smithay の部品の destroy と、
+/// IME が去った後の `wl_keyboard` の leave と enter)は、バックエンドが [`crate::reap_dead_clients`] で、すぐ行わせる。
+pub fn release_ime<D: FrontendHost>(state: &mut D) -> bool {
     let frontend = state.frontend_mut();
-    if frontend.ime.deadline.is_none_or(|deadline| now < deadline) {
-        return;
-    }
-    frontend.ime.deadline = None;
-    frontend.ime.unresponsive = true;
-    let timeout = frontend.ime.timeout.as_millis();
+    let Some(connected) = frontend.ime.connected.as_mut().filter(|c| !c.revoked) else {
+        info!("the emergency release key was pressed, but no input method is running");
+        return false;
+    };
+    // 1. 認可を消す。
+    connected.revoked = true;
+    let client = connected.handle.clone();
+    frontend.ime.vk_pending.remove(&client.id());
+    // 2. grab を外し、候補の窓を隠し、接続を切る。
     if let Some(keyboard) = frontend.keyboard.clone() {
-        if let Some(grab) = ime_grab(&keyboard) {
-            frontend.ime.suspended = Some(grab);
+        if ime_grab(&keyboard).is_some() {
             keyboard.unset_grab(state);
         }
     }
-    warn!("the input method did not answer a key in {timeout} ms; keys go straight to the applications");
+    let frontend = state.frontend_mut();
+    frontend.ime.popup = None;
+    client.kill(
+        &frontend.display_handle,
+        ProtocolError {
+            code: 0,
+            object_id: 1,
+            object_interface: "wl_display".to_owned(),
+            message: "the input method was released with the emergency key".to_owned(),
+        },
+    );
+    frontend.ime.to_reap = Some(client);
+    frontend.reap_requested = true;
+    warn!(
+        "the input method was released with the emergency key; its connection is closed and keys go straight to the applications"
+    );
+    state.redraw_needed();
+    true
 }
 
-/// `client` から、input-method か virtual-keyboard の要求が届いた後に呼ぶ。IME なら返事の待ちを終え、応答しないと
-/// 見なしていたら、keyboard の grab を戻して、次のキーから IME を通る道にする。
-fn answered<D: FrontendHost>(state: &mut D, client: &ClientId) {
-    let frontend = state.frontend_mut();
-    if !frontend.ime.is_ime(client) {
+/// IME が去った後に呼ぶ。フォーカスのあるアプリへ `wl_keyboard` の leave と enter を送り直す。IME が
+/// virtual-keyboard で押したキー(アプリには押されたまま)は enter に入らず、enter に入るのは、物理のキーボードで
+/// 今押されていて、IME かアプリへ渡したキーだけ(Smithay の `forwarded_pressed_keys`)。
+fn refresh_keyboard_focus<D: FrontendHost>(state: &mut D) {
+    let Some(keyboard) = state.frontend().keyboard.clone() else {
         return;
+    };
+    state.frontend_mut().ime.keyboard_focus_moved();
+    if let Some(focus) = keyboard.current_focus() {
+        keyboard.set_focus(state, None, SERIAL_COUNTER.next_serial());
+        keyboard.set_focus(state, Some(focus), SERIAL_COUNTER.next_serial());
     }
-    frontend.ime.deadline = None;
-    if !frontend.ime.unresponsive {
-        return;
-    }
-    frontend.ime.unresponsive = false;
-    let suspended = frontend.ime.suspended.take();
-    // IME が、外している間に grab を手放していれば、戻さない。Smithay は grab を手放すと入れ物の grab の
-    // オブジェクトを空にするので、空の入れ物を付け直すと、次のキーで `InputMethodKeyboardGrab::input` が
-    // `unwrap` で止まる(中が空の grab になるのは、このように Smithay の外で付け直したときだけ)。
-    let grabbed = frontend
-        .seat
-        .as_ref()
-        .is_some_and(|seat| seat.input_method().keyboard_grabbed());
-    if let (Some(grab), Some(keyboard), true) = (suspended, frontend.keyboard.clone(), grabbed) {
-        if !keyboard.is_grabbed() {
-            keyboard.set_grab(state, grab, SERIAL_COUNTER.next_serial());
-        }
-    }
-    info!("the input method answered again; keys go through it again");
 }
 
 /// 候補の窓を見せる(Smithay の `InputMethodHandler::new_popup`)。[`delegate_frontend!`] が使う。
@@ -325,8 +292,12 @@ pub fn popup_hidden<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
 fn refusal<D: FrontendHost>(state: &D, seat: &Seat<D>) -> Option<&'static str> {
     if seat.get_keyboard().is_none() {
         Some("the seat has no keyboard")
-    } else if state.frontend().ime.is_connected() {
-        Some("another input method is running")
+    } else if let Some(connected) = &state.frontend().ime.connected {
+        Some(if connected.revoked {
+            "the released input method is not cleaned up yet"
+        } else {
+            "another input method is running"
+        })
     } else {
         None
     }
@@ -365,7 +336,9 @@ where
                 ime.generation += 1;
                 ime.connected = Some(Connected {
                     client: client.id(),
+                    handle: client.clone(),
                     generation: ime.generation,
+                    revoked: false,
                     input_method: true,
                     grabs: 0,
                 });
@@ -385,6 +358,8 @@ where
     D: Dispatch<ZwpInputMethodV2, InputMethodUserData<D>>
         + Dispatch<ZwpInputPopupSurfaceV2, InputMethodPopupSurfaceUserData>
         + Dispatch<ZwpInputMethodKeyboardGrabV2, InputMethodKeyboardUserData<D>>
+        + Dispatch<ZwpInputPopupSurfaceV2, RefusedInputMethod>
+        + Dispatch<ZwpInputMethodKeyboardGrabV2, RefusedInputMethod>
         + InputMethodHandler
         + FrontendHost,
 {
@@ -397,6 +372,26 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        let revoked = state
+            .frontend()
+            .ime
+            .connected
+            .as_ref()
+            .is_some_and(|c| c.client == client.id() && c.revoked);
+        if revoked {
+            // 緊急解除で認可を消した接続の要求は、捨てる。新しいオブジェクトは作らないといけないので、断った
+            // IME と同じ入れ物で作る。
+            match request {
+                zwp_input_method_v2::Request::GrabKeyboard { keyboard } => {
+                    data_init.init(keyboard, RefusedInputMethod);
+                }
+                zwp_input_method_v2::Request::GetInputPopupSurface { id, .. } => {
+                    data_init.init(id, RefusedInputMethod);
+                }
+                _ => {}
+            }
+            return;
+        }
         let grab = matches!(request, zwp_input_method_v2::Request::GrabKeyboard { .. });
         <InputMethodManagerState as Dispatch<ZwpInputMethodV2, InputMethodUserData<D>, D>>::request(
             state, client, resource, request, data, dhandle, data_init,
@@ -405,7 +400,6 @@ where
         if let (true, Some(connected)) = (grab, ime.connected.as_mut()) {
             connected.grabs += 1;
         }
-        answered(state, &client.id());
     }
 
     fn destroyed(
@@ -421,7 +415,9 @@ where
         if let Some(connected) = ime.connected.as_mut().filter(|c| c.client == client) {
             connected.input_method = false;
         }
-        ime.forget_if_gone();
+        if ime.forget_if_gone() {
+            refresh_keyboard_focus(state);
+        }
     }
 }
 
@@ -463,10 +459,11 @@ where
         };
         connected.grabs = connected.grabs.saturating_sub(1);
         if connected.grabs == 0 && connected.input_method {
-            ime.reset_watch();
             info!("the input method released the keyboard; keys go straight to the applications");
         }
-        ime.forget_if_gone();
+        if ime.forget_if_gone() {
+            refresh_keyboard_focus(state);
+        }
     }
 }
 
@@ -489,8 +486,7 @@ where
         }
         if let zwp_virtual_keyboard_v1::Request::Key { key, state: 0, .. } = request {
             if !take_vk_press(state, key) {
-                // 押したことを渡していないキーの「離した」は、渡さない(返事としては数える)。
-                answered(state, &client.id());
+                // 押したことを渡していないキーの「離した」は、渡さない。
                 return;
             }
         }
@@ -506,7 +502,6 @@ where
         if let Some(key) = press {
             note_vk_press(state, key);
         }
-        answered(state, &client.id());
     }
     fn destroyed(
         state: &mut D,

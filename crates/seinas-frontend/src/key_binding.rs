@@ -1,4 +1,5 @@
-//! キーの組み合わせの書き方(`Alt+Shift+Tab` など)と、ウィンドウの切り替えのキーの設定(`seinas.conf`)。
+//! キーの組み合わせの書き方(`Alt+Shift+Tab` など)と、Seinas のショートカット(ウィンドウの切り替え、IME の緊急解除)の
+//! キーの設定(`seinas.conf`)。
 //!
 //! 書き方:修飾キー(`Alt`・`Shift`・`Ctrl`・`Super`)と、キーの名前(xkb の keysym の名前。`Tab`、`F6`、`a` など。
 //! 大文字と小文字は区別しない)を `+` でつなぐ。キーの名前は、終わりに 1 つだけ。
@@ -8,10 +9,11 @@
 //! ```text
 //! switch-next = Alt+Tab, Alt+F6
 //! switch-prev = Alt+Shift+Tab, Alt+Shift+F6
+//! ime-release = Alt+Shift+F12
 //! ```
 //!
 //! `,` で区切って、いくつでも書ける。書いたキーは、既定のキーと置き換わる(足すのではない)。読めない値は、
-//! ログに出して、そのキー(次へ・前へ)を既定のままにする。
+//! ログに出して、そのキー(次へ・前へ・緊急解除)を既定のままにする。
 
 use std::path::{Path, PathBuf};
 
@@ -101,6 +103,7 @@ pub fn switch_keys_from(text: &str, nested: bool) -> (SwitchKeys, Vec<String>) {
         let target = match entry.key.as_str() {
             "switch-next" => &mut keys.next,
             "switch-prev" => &mut keys.previous,
+            "ime-release" => &mut keys.release_input_method,
             other => {
                 reasons.push(format!("line {}: unknown key {other:?}", entry.line));
                 continue;
@@ -145,6 +148,10 @@ pub fn read_switch_keys(path: Option<&Path>, nested: bool) -> SwitchKeys {
         "switch windows: next {}; previous {}",
         names(&keys.next),
         names(&keys.previous)
+    );
+    info!(
+        "release the input method: {}",
+        names(&keys.release_input_method)
     );
     keys
 }
@@ -220,6 +227,19 @@ mod tests {
             ]
         );
         assert_eq!(keys.previous, [parse_shortcut("Alt+Shift+F7").unwrap()]);
+    }
+
+    #[test]
+    fn the_release_key_has_a_default_and_can_be_set() {
+        use crate::shortcuts::RELEASE_INPUT_METHOD;
+        let (keys, _) = switch_keys_from("", false);
+        assert_eq!(keys.release_input_method, [RELEASE_INPUT_METHOD]);
+        let (keys, reasons) = switch_keys_from("ime-release = Ctrl+Alt+F9\n", true);
+        assert!(reasons.is_empty(), "{reasons:?}");
+        assert_eq!(
+            keys.release_input_method,
+            [parse_shortcut("Ctrl+Alt+F9").unwrap()]
+        );
     }
 
     #[test]

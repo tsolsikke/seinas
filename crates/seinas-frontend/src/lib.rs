@@ -43,8 +43,7 @@ pub use decoration::{
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use ime::{
-    check_ime, popup_hidden, popup_shown, ImeState, RefusedInputMethod, RefusedVirtualKeyboard,
-    DEFAULT_IME_TIMEOUT,
+    popup_hidden, popup_shown, release_ime, ImeState, RefusedInputMethod, RefusedVirtualKeyboard,
 };
 pub use ime_popup::popup_location;
 pub use interaction::{
@@ -159,9 +158,6 @@ pub struct Config {
     /// 閉じるように頼んだクライアントの pong を待つ時間。過ぎたら応答なしにする(既定は
     /// [`DEFAULT_PING_TIMEOUT`])。
     pub ping_timeout: Duration,
-    /// IME へ送ったキーの返事を待つ時間。過ぎたら、IME が応答しないと見なして直接の道にする(既定は
-    /// [`DEFAULT_IME_TIMEOUT`])。
-    pub ime_timeout: Duration,
     /// ウィンドウの切り替えのキー(既定は [`SwitchKeys::defaults`]。設定は [`read_switch_keys`])。
     pub switch_keys: SwitchKeys,
     /// 届いたキーを、修飾キーと keysym の名前でログに出すか(`--log-keys`。入れ子の構成で、どの組み合わせが
@@ -1495,8 +1491,7 @@ pub fn keyboard_input<D: FrontendHost>(
     } else {
         KeyState::Released
     };
-    // フィルターを通って、grab(IME)かクライアントへ渡したキーの keysym。
-    let mut forwarded = None;
+    // Seinas が使ったショートカットのすること。
     let used = keyboard
         .input(
             state,
@@ -1529,7 +1524,8 @@ pub fn keyboard_input<D: FrontendHost>(
                     .filter(code, pressed, sym, raw_sym, modifiers)
                 {
                     Decision::Use(shortcut, action) => {
-                        if !switching {
+                        let switch = matches!(action, Action::SwitchNext | Action::SwitchPrevious);
+                        if switch && !switching {
                             frontend.switch_hold = Modifiers {
                                 shift: false,
                                 ..shortcut.modifiers
@@ -1545,26 +1541,20 @@ pub fn keyboard_input<D: FrontendHost>(
                             (sym == keysym::ESCAPE).then_some(Action::CancelSwitch),
                         )
                     }
-                    Decision::Forward => {
-                        forwarded = Some(sym);
-                        FilterResult::Forward
-                    }
+                    Decision::Forward => FilterResult::Forward,
                 }
             },
         )
         .flatten();
-    // IME へ渡したキーの押下なら、返事を待ち始める(修飾キーだけの押下は数えない)。
-    if let (true, Some(sym)) = (pressed, forwarded) {
-        if !is_modifier_key(sym) {
-            ime::key_sent(state, &keyboard, Instant::now());
-        }
+    if used == Some(Action::ReleaseInputMethod) {
+        release_ime(state);
     }
     let frontend = state.frontend_mut();
     let mut changed = match used {
         Some(Action::SwitchNext) => frontend.switch_windows(false),
         Some(Action::SwitchPrevious) => frontend.switch_windows(true),
         Some(Action::CancelSwitch) => frontend.cancel_switch(),
-        None => false,
+        Some(Action::ReleaseInputMethod) | None => false,
     };
     // 始めたキーの修飾キー(既定では Alt)を離した(離したことは、上で、いまのフォーカスへ渡してある)。修飾キーの
     // 無いキーで始めたときは、すぐ決める。
@@ -1792,12 +1782,15 @@ fn toplevel_title(toplevel: &ToplevelSurface) -> String {
 /// クライアントから次の要求が届くまで、ソケットもウィンドウも残り続ける。描けない要素があったときに、
 /// これを呼んで片付ける。イベントループの処理の外(クライアントの要求を処理していないとき)で呼ぶこと。
 pub fn reap_dead_clients<D: FrontendHost + 'static>(display: &mut Display<D>, state: &mut D) {
-    // 後片付けは、どれか1つのクライアントの要求を処理させると、あわせて行われる。
-    let client = state
-        .frontend()
-        .windows
-        .iter()
-        .find_map(|window| window.item.wl_surface().client());
+    // クリーンアップは、どれか1つのクライアントの要求を処理させると、あわせて行われる。緊急解除で切った IME があれば、
+    // それを選ぶ(ウィンドウが 1 つも無くても、すぐ片付くように)。
+    let client = state.frontend_mut().ime.to_reap.take().or_else(|| {
+        state
+            .frontend()
+            .windows
+            .iter()
+            .find_map(|window| window.item.wl_surface().client())
+    });
     if let Some(client) = client {
         // 切られたクライアントを選んだ場合は失敗が返るが、後片付けは行われる。
         let _ = display.backend().dispatch_single_client(state, client.id());
@@ -2133,11 +2126,7 @@ macro_rules! delegate_frontend {
                 // ウィンドウの一覧と操作も、シェルの部品にだけ見せる(ADR 0002)。
                 let foreign_toplevels = $crate::ForeignToplevelState::new::<Self>(display_handle);
                 // IME の道。input-method と virtual-keyboard は、キーボードがあるときだけ(ADR 0004)。
-                let ime = $crate::ImeState::new::<Self>(
-                    display_handle,
-                    keyboard.is_some(),
-                    config.ime_timeout,
-                );
+                let ime = $crate::ImeState::new::<Self>(display_handle, keyboard.is_some());
                 $crate::Frontend {
                     display_handle: display_handle.clone(),
                     compositor_state,

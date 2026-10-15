@@ -31,28 +31,44 @@ ZeikOS でキーボードを有効にするときは、xkb のファイル(ADR 0
 
 ## キーの道
 
-1. Seinas のショートカット(Alt+Tab など)を、いつも先に見ます。使ったキーは、IME にもアプリにも渡しません。
+1. Seinas のショートカット(Alt+Tab、IME の緊急解除など)を、いつも先に見ます。使ったキーは、IME にもアプリにも渡しません。
 2. IME が keyboard を grab していれば、ほかのキーと修飾キーの状態を IME へ渡します。
 3. IME が virtual-keyboard で戻したキーは、キーボードのフォーカスのあるクライアントへ届きます。
-4. IME が去ったか、grab を手放したら、次のキーから直接の道(フォーカスのあるクライアントの `wl_keyboard`)にします。ログに `the input method left`、`the input method released the keyboard` を出します。
+4. IME が去ったか、grab を手放したら、次のキーから直接の道(フォーカスのあるクライアントの `wl_keyboard`)にします。ログに `the input method left`、`the input method released the keyboard` を出します。IME へ渡したキーは、アプリへ送り直しません。
 
 Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas はその場でフォーカスを移しますが、IME が virtual-keyboard で戻す「Alt を離した」は、その後で届きます。
 
 - virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡します。Seinas は、virtual-keyboard で「押した」を渡したキーを覚え、キーボードのフォーカスを動かしたら(同じクライアントへの leave と enter のし直しも含む)、記録を空にします。Smithay の `forwarded_pressed_keys` は、Smithay の外から読めず、virtual-keyboard のキーも入らないので使いません。
 - そのため、新しいフォーカスのクライアントには、押したことを知らない Alt の「離した」が届きません。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントもありません。
-- 渡さなかった「離した」も、下の「応答しない IME」の判定では、IME の要求として数えます。
 
-## 応答しない IME(取り消した決まり。作り直すまでの実装)
+## IME の復旧(接続断と緊急解除)
 
-この節の、時間切れで「応答しない」と見なす決まりは、2026-10-15 に取り消しました(ADR 0004 の「取り消した決定」)。input-method-v2 の commit はキーごとの返事ではなく、文字を出さずにキーを使うのはふつうの IME の動きなので、正しく動いている IME を止まったと見なすことがあるためです。接続断の検出と、緊急解除の操作の形に作り直します(ADR 0004 の 1.5)。作り直すまでは、今の実装として次のとおり動きます。
+時間切れで「応答しない」と見なす決まりは、2026-10-15 に取り消し、実装からも外しました(ADR 0004 の 1.5 と「取り消した決定」)。文字を出さずにキーを使うのは、ふつうの IME の動きです。IME にキーごとの返事は求めません。直接の道に戻すのは、次の 2 つのときだけです。
 
-- キーの押下を IME へ送ってから 1,000 ms(仮の値)の間に、その IME のクライアントから要求が 1 つも届かなければ、応答しないと見なします。keyboard の grab を外し、次のキーから直接の道にします。ログに `the input method did not answer a key in 1000 ms; keys go straight to the applications` を出します。
-- 修飾キーだけの押下は、数えません(返事を待ち始めません)。
-- input-method の要求のほか、同じクライアントからの virtual-keyboard の要求も、返事として数えます。
-- 返事を待ち始めるのは、待っていないときの最初の押下です。続けて押したキーで、期限は延びません。
-- 応答しないと見なした後に、その IME から要求が届いたら、grab を戻し、次のキーから IME を通る道に戻します。ログに `the input method answered again; keys go through it again` を出します。外している間に IME が grab を手放していたら(`InputMethodHandle::keyboard_grabbed()` が偽なら)、戻しません。Smithay は grab を手放すと入れ物の grab のオブジェクトを空にするので、空の入れ物を Smithay の外で付け直すと、次のキーで Smithay が `unwrap` で止まるためです(中が空の grab になるのは、この場合だけです)。
-- 返事の無かったキーは、アプリへ送り直しません(同じキーが 2 度届かないように)。
-- 待つ時間は、seinas-standalone の `--ime-timeout MS` で変えられます(テストのため)。期限は、イベントループの待ち時間で待ち、タイマーの fd は作りません。
+- 接続断:IME のクライアントが去った(接続を切った、input method と grab を destroy した)とき。
+- 緊急解除:Seinas のショートカット(既定は Alt+Shift+F12。仮の値。`seinas.conf` の `ime-release` で変えられる。`docs/config.md`)を押したとき。IME のクライアントの接続を切ります。ログに `the input method was released with the emergency key; its connection is closed and keys go straight to the applications` を出します。
+  - 物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけで発動します。IME が virtual-keyboard で送ったキーは、ショートカットの判定を通らないので、発動しません。
+  - 押し続けても 1 回だけです(同じキーを離すまで、繰り返しの押下は使って捨てる)。
+  - IME がつないでいないときに押すと、ログに `the emergency release key was pressed, but no input method is running` を出すだけです。
+
+緊急解除の順番:
+
+1. その接続の認可を消します。この後、その接続の input-method と virtual-keyboard の要求は捨てます。
+2. keyboard の grab を外し(次のキーから直接の道)、候補の窓を隠し、接続を切ります。切った接続のクリーンアップは、その場で行わせます(バックエンドの `reap_dead_clients`)。
+3. IME へ渡したキーは、アプリへ送り直しません。
+
+IME が去った後(接続断でも緊急解除でも)は、次の順に届きます。text-input の leave と `wl_keyboard` の leave は、別のものです。
+
+| 順 | 届くもの | 相手 | 送るもの |
+| --- | --- | --- | --- |
+| 1 | text-input-v3 の leave | フォーカスのあるアプリの text-input | Smithay(IME の `zwp_input_method_v2` の destroy の中で) |
+| 2 | `wl_keyboard` の leave と enter | フォーカスのあるアプリの `wl_keyboard` | Seinas(IME の input method と grab が両方とも無くなったとき) |
+
+- 変換中の文字:Seinas から、空の preedit_string と done は送りません(先に届いていた commit_string まで、アプリに適用させるおそれがあるため)。text-input の leave で、アプリが変換中の文字を消します(text-input-v3 の leave の「The client should reset any preedit string previously set」)。テスト用のアプリは、そのとおりに消し、`window: reset preedit` を書きます。
+- 押されたままのキー:`wl_keyboard` の enter に入るのは、物理のキーボードで今押されていて、IME かアプリへ渡したキーだけです(Smithay の `forwarded_pressed_keys`)。IME が virtual-keyboard で押したキーは入らないので、leave でアプリから消えます。Seinas が使ったショートカットのキー(緊急解除の F12 など)も入りません。物理のキーボードで押しているキーは、離したことが直接アプリへ届きます。
+- 繰り返し:Seinas には、キーの繰り返しのタイマーがありません(繰り返しは、アプリと IME が `repeat_info` で行う)。アプリの繰り返しは `wl_keyboard` の leave で止まり、IME の繰り返しは、接続を切ると届かなくなります。
+- 戻すのは、IME が新しい接続でつなぎ直したときだけです。古い接続のクリーンアップ(Smithay の部品で、古い input method と grab の destroy)が済むまでは、新しい `get_input_method` を断ります(ログに `the released input method is not cleaned up yet`)。Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため、新しい IME の grab を消さないようにするためです。新しい IME がつながると、フォーカスのあるアプリに text-input の enter が届き、同じ欄で続けて打てます(クリックし直さなくてよい)。
+- 保証していない範囲:serial の合わない古い要求が、新しいアプリに入りえます(Smithay 0.7.0 は、IME の文字の要求を、届いたその場で、そのときアクティブな text-input へ送るため)。commit の前に切れた IME の commit_string は、アプリの pending の状態に残り、アプリの作りによっては、後の done で適用されます。次の課題で扱います(ADR 0004 の 1.5)。
 
 ## 文字の受け渡し
 
@@ -115,8 +131,14 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
-| `an_unresponsive_ime_is_bypassed_and_comes_back`(取り消した決まりのテスト。作り直すときに置き換える) | `--ime-timeout 300` で、Shift だけの押下を 3 回(合わせて 300 ms を超える)しても応答しないと見なさず、返事の無い x の後に直接の道になり、IME が要求を送ったら IME を通る道に戻る |
-| `an_ime_that_answers_is_not_bypassed`(同じ) | 変換中の文字(input-method の要求)と、戻したキー(virtual-keyboard の要求)で答える IME は、間を空けて打っても応答しないと見なされない |
+| `a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit` | IME が commit_string を送り、commit の前に接続を切ると、アプリには text-input の leave だけが届き(done は届かない)、アプリが変換中の文字を消す。押されたキーの無い enter が送り直され、次のキーは直接届く |
+| `the_release_key_closes_the_ime_and_keys_go_straight_to_the_window` | delete_surrounding を送った IME を緊急解除すると、IME の接続が切れ、アプリに text-input の leave が届く(done は届かない)。送り直した enter には、押している Alt と Shift だけが入り、F12 は入らない。次のキーは直接届く |
+| `an_ime_that_swallows_a_key_is_not_bypassed` | 文字を出さずにキーを使う IME(`--swallow`)は、間を空けて何度使っても、直接の道にならない |
+| `a_key_held_on_the_keyboard_and_through_the_ime_is_not_left_pressed` | 物理のキーボードで押したままのキーを、IME も virtual-keyboard で押していたとき、緊急解除の後の enter にそのキーが入り、離したことが直接届く |
+| `a_key_pressed_only_through_the_ime_is_not_left_pressed` | IME が virtual-keyboard で押したまま(離したことをためている)のキーは、緊急解除の後の enter に入らない |
+| `the_release_key_works_once_while_it_is_held` | 緊急解除のキーを押し続けた繰り返しの押下では、新しくつないだ IME を切らない。離した後に押せば、また解除する |
+| `a_virtual_keyboard_key_does_not_release_the_ime` | IME が virtual-keyboard で送った Alt+Shift+F12 では、緊急解除にならない |
+| `a_new_ime_connection_continues_in_the_same_field` | 古い IME が去った後、新しい接続の IME がつながると、同じウィンドウの同じ欄に enter が届き、クリックし直さずに続けて打てる |
 | `the_candidate_window_follows_the_cursor_inside_the_output` | 候補の窓(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |
 | `the_candidate_window_goes_above_the_cursor_at_the_bottom_edge` | 下に入らないときは、カーソルの矩形の上に出る |
 | `the_candidate_window_stays_inside_a_resized_output` | 出力の高さを縮めると、下から上へ移る |
@@ -136,12 +158,15 @@ WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
 - `--popup WxH` を付けると、その大きさの候補の窓を、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
-- `--ignore-keys` を付けると、キーを受けても何も返しません。標準入力の `answer` で、ふつうの動きに戻り、input-method の commit を 1 つ送ります。上の「応答しない IME」(取り消した決まり)のテストのためのものです。空の commit は、仕様ではキーへの返事ではなく、状態を適用する要求です。IME に、キーごとに何かを返すことは求めません(ADR 0004 の 1.3)。
+- `--swallow KEY` を付けると、evdev の番号 KEY のキーを、文字を出さずに使います(押下も解放も、何も返さない。半角/全角のように、IME の状態だけを変えるキーのまね)。
+- 標準入力の `hold` で、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard のキーと修飾キー)をためはじめ、`send` で、ためた順に送ります(遅れて届く返事のまね)。
+- 標準入力の `commit-string TEXT`・`delete-surrounding BEFORE AFTER` は、その要求だけを送り、commit は送りません(commit の前に切れる IME のまね)。
+- 標準入力の `vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED` は、受けたキーと関係なく、virtual-keyboard でキーと修飾キーの状態を送ります。`again` は、同じ接続から 2 つ目の `get_input_method` を頼み、`destroy-input-method` は、input method だけを destroy します。`--virtual-keyboard-only` は、`get_input_method` を頼まずに virtual-keyboard を作ります(認可の無いクライアントのまね)。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
 
 ### テスト用のアプリ
 
-`test-client window --text-input` は、ふだんのソケットへつなぎ、text-input-v3 を使います。enter が届くたびに有効にして、カーソルの矩形(`--cursor X,Y,W,H`。既定は 10,20,2,16)を送ります。届いた enter・leave・preedit・commit・done を、`window: preedit あい` のような行で標準出力に書きます。
+`test-client window --text-input` は、ふだんのソケットへつなぎ、text-input-v3 を使います。enter が届くたびに有効にして、カーソルの矩形(`--cursor X,Y,W,H`。既定は 10,20,2,16)を送ります。届いた enter・leave・preedit・commit・done を、`window: preedit あい` のような行で標準出力に書きます。text-input-v3 のとおり、届いた状態は done で効かせ(確定した文字を効かせたら `window: applied commit あい`)、leave では変換中の文字を消します(消すものがあれば `window: reset preedit`)。
 
 ```bash
 WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input

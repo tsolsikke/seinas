@@ -120,6 +120,7 @@ tools/demo-c1s3.sh
 | 橙のウィンドウを最大化して、Seinas の窓を小さくする | 紫の四角が、Seinas の窓の中に収まったまま |
 | 青のウィンドウをクリック | 紫の四角が消える。`ime.log` に `ime: deactivate`。`window-text.log` に `window: text-input leave` |
 | Alt+F6 で橙のウィンドウへ戻す | `window-text.log` に `window: text-input enter`。紫の四角がまた出る。橙のウィンドウには、IME が戻した「Alt を離した」は届かない(`window-text.log` の、enter の後に `window: key 56 released` が無い) |
+| `a` を打ってから、Alt+Shift+F12(緊急解除。仮のキー)を押す | テスト用の IME が終わる(`ime.log` の終わり)。`seinas.log` に `the input method was released with the emergency key` と `the input method left`。`window-text.log` に `window: text-input leave` と `window: reset preedit`。紫の四角が消える。この後の `x` は、`window-text.log` に `window: key 45 pressed` が直接出る(`ime.log` には出ない)。届かないときは、Windows の側が先に使っている(`DEMO_LOG_KEYS=1` で起こし直し、`seinas.log` の `key:` の行で確かめる) |
 
 ## 終わり方
 

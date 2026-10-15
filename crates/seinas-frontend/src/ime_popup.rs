@@ -1,4 +1,4 @@
-//! IME の候補の窓(input popup surface)を置く位置の決まり(ADR 0004 の 5)。
+//! IME の候補の窓(input popup surface)を置く位置の決まり(ADR 0004 の 1.11)。
 //!
 //! ADR 0001 の決まりで、Smithay の型を使わない。
 

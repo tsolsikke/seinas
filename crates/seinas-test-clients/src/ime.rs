@@ -15,14 +15,17 @@
 //! - `--popup-text`: 候補の窓に、候補(変換中の文字と、そのカタカナ)を白い文字で書く(スクリーンショットのため)。
 //! - `--virtual-keyboard-only`: get_input_method を頼まずに virtual-keyboard を作る(認可の無いクライアントのまね)。
 //!   断られたら `ime: protocol error …` を書いて終わる。
-//! - `--ignore-keys`: キーを受けても、何も返さない(応答しない IME のまね)。標準入力の `answer` の行で、ふつうの
-//!   動きに戻り、input-method の commit を 1 つ送る。
+//! - `--swallow KEY`: evdev の番号 KEY のキーを、文字を出さずに使う(押下も解放も、何も返さない。半角/全角の
+//!   ように、IME の状態だけを変えるキーのまね)。何度でも付けられる。
 //!
-//! 標準入力の行: `release`(keyboard の grab を手放す)、`quit`(接続を切って終わる)、`answer`(上)、
+//! 標準入力の行: `release`(keyboard の grab を手放す)、`quit`(接続を切って終わる)、
 //! `sync`(それまでの頼みをコンポジタが処理し終えたら `ime: synced` を書く)、`again`(同じ接続から 2 つ目の
 //! get_input_method を頼む)、`destroy-input-method`(input method だけを destroy する。grab と virtual-keyboard は
 //! 残す)、`vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED`(受けたキーと関係なく、virtual-keyboard で
-//! キーと修飾キーの状態を送る)。
+//! キーと修飾キーの状態を送る)、`hold`(この後、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard の
+//! キーと修飾キー)を送らずにためる)、`send`(ためた要求を、ためた順に送り、ためるのをやめる)、
+//! `commit-string TEXT`(commit_string だけを送り、commit は送らない)、`delete-surrounding BEFORE AFTER`
+//! (delete_surrounding_text だけを送り、commit は送らない)。
 //!
 //! 標準出力には、次の行を書く。
 //!
@@ -31,7 +34,7 @@
 //! - `ime: activate`、`ime: deactivate`、`ime: done`: input-method のイベントが届いた。
 //! - `ime: key 30 pressed`(または `released`): grab でキーが届いた。
 //! - `ime: preedit あい`、`ime: commit あい`: 送った変換中の文字と、確定した文字。
-//! - `ime: released`、`ime: answered`、`ime: synced`: 標準入力の行を処理した。
+//! - `ime: released`、`ime: synced`、`ime: holding`、`ime: sent N`: 標準入力の行を処理した(N は送った要求の数)。
 //! - `ime: second unavailable`: `again` の 2 つ目が断られた。`ime: input method destroyed`: `destroy-input-method` を送った。
 //! - `ime: protocol error …`: コンポジタからプロトコルのエラーが届いた(この後、終わる)。
 
@@ -71,14 +74,20 @@ fn kana(key: u32) -> Option<char> {
 
 /// 接続を切られるか、`quit` の行が届くまで動く。断られたら(unavailable)falseを返す。
 pub fn run(args: &[String]) -> Result<bool, String> {
-    let mut ignore_keys = false;
+    let mut swallow: HashSet<u32> = HashSet::new();
     let mut popup_size = None;
     let mut popup_text = false;
     let mut virtual_keyboard_only = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
-            "--ignore-keys" => ignore_keys = true,
+            "--swallow" => {
+                let key = args.next().ok_or("--swallow needs KEY")?;
+                swallow.insert(
+                    key.parse()
+                        .map_err(|_| format!("invalid --swallow value: {key}"))?,
+                );
+            }
             "--popup-text" => popup_text = true,
             "--virtual-keyboard-only" => virtual_keyboard_only = true,
             "--popup" => {
@@ -152,6 +161,8 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut released = false;
     // 標準入力の `again` で、同じ接続から頼んだ 2 つ目の input method。
     let mut second = None;
+    // 標準入力の `hold` の後、キーを受けて送る要求をためる所。
+    let mut held: Option<Vec<Vec<u8>>> = None;
 
     loop {
         let event = match wire.poll_event()? {
@@ -235,7 +246,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                         "key {key} {}",
                         if pressed { "pressed" } else { "released" }
                     ));
-                    if ignore_keys {
+                    if swallow.contains(&key) {
                         continue;
                     }
                     if !pressed && used.remove(&key) {
@@ -244,7 +255,9 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     if pressed && active {
                         if let Some(kana) = kana(key) {
                             preedit.push(kana);
-                            send_preedit(&mut wire, input_method, &preedit, serial)?;
+                            for request in preedit_requests(input_method, &preedit, serial) {
+                                out(&mut wire, &mut held, request)?;
+                            }
                             if let Some(view) = &mut popup_view {
                                 view.show(&mut wire, &preedit)?;
                             }
@@ -254,8 +267,16 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                         }
                         if key == KEY_ENTER && !preedit.is_empty() {
                             // zwp_input_method_v2.commit_string → commit(serial)
-                            wire.send(&message(input_method, 0, &string(&preedit)))?;
-                            wire.send(&message(input_method, 3, &serial.to_le_bytes()))?;
+                            out(
+                                &mut wire,
+                                &mut held,
+                                message(input_method, 0, &string(&preedit)),
+                            )?;
+                            out(
+                                &mut wire,
+                                &mut held,
+                                message(input_method, 3, &serial.to_le_bytes()),
+                            )?;
                             say(&format!("commit {preedit}"));
                             preedit.clear();
                             if let Some(view) = &mut popup_view {
@@ -266,20 +287,28 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                         }
                     }
                     // zwp_virtual_keyboard_v1.key(時刻、キー、状態)
-                    wire.send(&message(
-                        keyboard,
-                        1,
-                        &[
-                            time.to_le_bytes(),
-                            key.to_le_bytes(),
-                            (pressed as u32).to_le_bytes(),
-                        ]
-                        .concat(),
-                    ))?;
+                    out(
+                        &mut wire,
+                        &mut held,
+                        message(
+                            keyboard,
+                            1,
+                            &[
+                                time.to_le_bytes(),
+                                key.to_le_bytes(),
+                                (pressed as u32).to_le_bytes(),
+                            ]
+                            .concat(),
+                        ),
+                    )?;
                 }
                 // modifiers(serial、押されている、ラッチ、ロック、グループ)→ virtual-keyboard の modifiers
-                (object, 2) if object == grab && !ignore_keys => {
-                    wire.send(&message(keyboard, 2, &event.body[4..20]))?;
+                (object, 2) if object == grab => {
+                    out(
+                        &mut wire,
+                        &mut held,
+                        message(keyboard, 2, &event.body[4..20]),
+                    )?;
                 }
                 _ => {}
             }
@@ -293,10 +322,16 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     released = true;
                     say("released");
                 }
-                "answer" => {
-                    ignore_keys = false;
-                    wire.send(&message(input_method, 3, &serial.to_le_bytes()))?;
-                    say("answered");
+                "hold" => {
+                    held = Some(Vec::new());
+                    say("holding");
+                }
+                "send" => {
+                    let requests = held.take().unwrap_or_default();
+                    for request in &requests {
+                        wire.send(request)?;
+                    }
+                    say(&format!("sent {}", requests.len()));
                 }
                 "sync" => {
                     let id = wire.new_id();
@@ -319,7 +354,18 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     say("input method destroyed");
                 }
                 other => {
-                    if let Some(body) = virtual_keyboard_line(other) {
+                    if let Some(text) = other.strip_prefix("commit-string ") {
+                        // zwp_input_method_v2.commit_string(commit は送らない)
+                        wire.send(&message(input_method, 0, &string(text)))?;
+                    } else if let Some(lengths) = other.strip_prefix("delete-surrounding ") {
+                        // zwp_input_method_v2.delete_surrounding_text(commit は送らない)
+                        let body: Vec<u8> = lengths
+                            .split_whitespace()
+                            .filter_map(|n| n.parse::<u32>().ok())
+                            .flat_map(|n| n.to_le_bytes())
+                            .collect();
+                        wire.send(&message(input_method, 2, &body))?;
+                    } else if let Some(body) = virtual_keyboard_line(other) {
                         wire.send(&message(keyboard, body.0, &body.1))?;
                     }
                 }
@@ -387,20 +433,31 @@ fn virtual_keyboard_alone(
     }
 }
 
-/// 変換中の文字 `text` を送る(カーソルは終わり)。
-fn send_preedit(
+/// 要求 `request` を送る。`hold` でためているときは、送らずにためる。
+fn out(
     wire: &mut crate::wire::Wire,
-    input_method: u32,
-    text: &str,
-    serial: u32,
+    held: &mut Option<Vec<Vec<u8>>>,
+    request: Vec<u8>,
 ) -> Result<(), String> {
+    match held {
+        Some(queue) => {
+            queue.push(request);
+            Ok(())
+        }
+        None => wire.send(&request),
+    }
+}
+
+/// 変換中の文字 `text` を送る要求(カーソルは終わり)。set_preedit_string と commit(serial)。
+fn preedit_requests(input_method: u32, text: &str, serial: u32) -> [Vec<u8>; 2] {
     let end = text.len() as i32;
     let mut body = string(text);
     body.extend(end.to_le_bytes());
     body.extend(end.to_le_bytes());
-    // zwp_input_method_v2.set_preedit_string → commit(serial)
-    wire.send(&message(input_method, 1, &body))?;
-    wire.send(&message(input_method, 3, &serial.to_le_bytes()))
+    [
+        message(input_method, 1, &body),
+        message(input_method, 3, &serial.to_le_bytes()),
+    ]
 }
 
 /// 候補の窓の色(B, G, R, X。紫)。

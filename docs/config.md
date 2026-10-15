@@ -17,18 +17,21 @@ Seinas の設定のファイルは、どれも `$XDG_CONFIG_HOME/seinas/` の下
 # ウィンドウの切り替え(docs/window-placement.md の「Alt+Tab」)
 switch-next = Alt+Tab, Alt+F6
 switch-prev = Alt+Shift+Tab, Alt+Shift+F6
+# IME の緊急解除(docs/ime.md の「IME の復旧」。既定は仮の値)
+ime-release = Alt+Shift+F12
 ```
 
 | キー | 意味 | 既定 |
 | --- | --- | --- |
 | `switch-next` | 次のウィンドウへ切り替えるキー | `Alt+Tab`。入れ子の構成(`seinas`)では `Alt+Tab, Alt+F6` |
 | `switch-prev` | 前のウィンドウへ切り替えるキー | `Alt+Shift+Tab`。入れ子の構成では `Alt+Shift+Tab, Alt+Shift+F6` |
+| `ime-release` | IME の緊急解除のキー(IME の接続を切り、次のキーから直接アプリへ渡す。押し続けても 1 回だけ) | `Alt+Shift+F12`(どの構成でも。仮の値で、入れ子の WSLg と QEMU で届くかを確かめてから決める) |
 
 - キーの書き方:修飾キー(`Alt`・`Shift`・`Ctrl`・`Super`)と、キーの名前を `+` でつなぎます。キーの名前は、xkb の keysym の名前(`Tab`、`F6`、`Escape`、`a` など。大文字と小文字は区別しない)で、終わりに 1 つだけ書きます。
 - `,` で区切って、いくつでも書けます。書いたキーは、既定のキーと置き換わります(足すのではありません)。入れ子で Alt+F6 を残したまま別のキーを足すときは、`Alt+F6` も書きます。
 - Shift を含むキーは、Shift を押したときの keysym(Shift+Tab なら `ISO_Left_Tab`)でも、Shift を外した keysym(`Tab`)でも書けます。
-- 読めない値(知らない修飾キー、知らないキーの名前、修飾キーだけ)は、ログに出して、そのキー(次へ・前へ)を既定のままにします。知らないキーの行も、ログに出して飛ばします。
-- 決まったキーは、起動のときに `switch windows: next Alt+Tab, Alt+F6; previous Alt+Shift+Tab, Alt+Shift+F6` の形でログに出します。
+- 読めない値(知らない修飾キー、知らないキーの名前、修飾キーだけ)は、ログに出して、そのキー(次へ・前へ・緊急解除)を既定のままにします。知らないキーの行も、ログに出して飛ばします。
+- 決まったキーは、起動のときに `switch windows: next Alt+Tab, Alt+F6; previous Alt+Shift+Tab, Alt+Shift+F6` と `release the input method: Alt+Shift+F12` の形でログに出します。
 
 ### どのキーが届くかを確かめる
 
