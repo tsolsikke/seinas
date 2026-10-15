@@ -8,6 +8,9 @@
 //!   見せ(シェルの部品とアプリには見せない。ADR 0004 の 1.6)、seat にキーボードがあるときだけ作る(Smithay 0.7.0 は、キーボードの無い seat で
 //!   `get_input_method` や virtual-keyboard のキーを受けると、`unwrap` で止まるため)。text-input の global は、
 //!   全部のクライアントに見せる。
+//! - virtual-keyboard の認可:作れるのは、`get_input_method` を受け入れたクライアントだけ(ほかは `unauthorized`
+//!   のエラー)。認可は、接続と、受け入れた IME の世代に結び付ける(seat は 1 つ)。受け入れた input method が
+//!   無くなったら認可も消え、それまでに作った virtual-keyboard からの要求は捨てる(ADR 0004 の 1.6)。
 //! - IME は同時に 1 つだけ:2 つ目からの `get_input_method` は、Smithay へ渡さずにここで受け、Seinas の側の
 //!   入れ物([`RefusedInputMethod`])で作って、すぐ `unavailable` を送る。その後の要求は、何もせずに捨てる。
 //! - IME が去ったこと、keyboard の grab を手放したことをログに出す。
@@ -34,7 +37,7 @@
 //! 位置は、描くときに、親のウィンドウのいまの位置と、カーソルの矩形と、画面の大きさから求める(`ime_popup.rs`)。
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet, VecDeque},
     time::{Duration, Instant},
 };
 
@@ -53,13 +56,14 @@ use smithay::{
                 zwp_input_popup_surface_v2::{self, ZwpInputPopupSurfaceV2},
             },
             zwp_virtual_keyboard_v1::server::{
-                zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
+                zwp_virtual_keyboard_manager_v1::{self, ZwpVirtualKeyboardManagerV1},
                 zwp_virtual_keyboard_v1::{self, ZwpVirtualKeyboardV1},
             },
         },
         wayland_server::{
-            backend::ClientId, protocol::wl_surface::WlSurface, Client, DataInit, Dispatch,
-            DisplayHandle, GlobalDispatch,
+            backend::{ClientId, ObjectId},
+            protocol::wl_surface::WlSurface,
+            Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, Resource,
         },
     },
     wayland::{
@@ -102,11 +106,19 @@ pub struct ImeState {
     /// 変わったら空にする(前のクライアントには leave が届き、押したキーは離したことになる)。
     vk_pressed: HashSet<u32>,
     vk_focus: Option<WlSurface>,
+    /// 受け入れた IME の世代(受け入れるたびに 1 つ進める)。
+    generation: u64,
+    /// virtual-keyboard を作ったときの世代。作ってから最初の要求が届くまでは、クライアントごとの待ち行列に
+    /// 置く(Smithay が作るオブジェクトの番号は、作るときには分からないため)。
+    vk_pending: HashMap<ClientId, VecDeque<u64>>,
+    vk_generation: HashMap<ObjectId, u64>,
 }
 
 /// Smithay へ通した IME のクライアントと、そのオブジェクトが残っているか。
 struct Connected {
     client: ClientId,
+    /// 受け入れたときの世代。
+    generation: u64,
     /// `zwp_input_method_v2` が残っているか。
     input_method: bool,
     /// 残っている keyboard の grab(`zwp_input_method_keyboard_grab_v2`)の数。
@@ -116,6 +128,11 @@ struct Connected {
 /// Smithay へ渡さなかった IME(2 つ目から)のオブジェクトに付けるもの。要求は、何もせずに捨てる。
 #[derive(Debug)]
 pub struct RefusedInputMethod;
+
+/// 認可の無いクライアントが作ろうとした virtual-keyboard に付けるもの(作った直後に `unauthorized` のエラーで
+/// 接続を切る)。要求は、何もせずに捨てる。
+#[derive(Debug)]
+pub struct RefusedVirtualKeyboard;
 
 impl ImeState {
     /// global を作る。input-method と virtual-keyboard は、`keyboard` が真(seat にキーボードがある)ときだけ作り、
@@ -152,7 +169,18 @@ impl ImeState {
             popup: None,
             vk_pressed: HashSet::new(),
             vk_focus: None,
+            generation: 0,
+            vk_pending: HashMap::new(),
+            vk_generation: HashMap::new(),
         }
+    }
+
+    /// `client` が、いま認められた IME なら、その世代。受け入れた input method が残っているときだけ。
+    fn authorized(&self, client: &ClientId) -> Option<u64> {
+        self.connected
+            .as_ref()
+            .filter(|connected| connected.client == *client && connected.input_method)
+            .map(|connected| connected.generation)
     }
 
     /// キーボードのフォーカスを動かしたときに呼ぶ(同じクライアントへの leave と enter のし直しも含む)。
@@ -198,7 +226,9 @@ impl ImeState {
             .as_ref()
             .is_some_and(|connected| !connected.input_method && connected.grabs == 0)
         {
-            self.connected = None;
+            if let Some(connected) = self.connected.take() {
+                self.vk_pending.remove(&connected.client);
+            }
             self.reset_watch();
             info!("the input method left; keys go straight to the applications");
         }
@@ -331,8 +361,11 @@ where
                     warn!("an input method was refused ({reason}); it got unavailable");
                     return;
                 }
-                state.frontend_mut().ime.connected = Some(Connected {
+                let ime = &mut state.frontend_mut().ime;
+                ime.generation += 1;
+                ime.connected = Some(Connected {
                     client: client.id(),
+                    generation: ime.generation,
                     input_method: true,
                     grabs: 0,
                 });
@@ -450,6 +483,10 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
+        if !vk_authorized(state, &client.id(), &resource.id()) {
+            // 認可の無い(消えた)virtual-keyboard からの要求は、捨てる。
+            return;
+        }
         if let zwp_virtual_keyboard_v1::Request::Key { key, state: 0, .. } = request {
             if !take_vk_press(state, key) {
                 // 押したことを渡していないキーの「離した」は、渡さない(返事としては数える)。
@@ -471,6 +508,43 @@ where
         }
         answered(state, &client.id());
     }
+    fn destroyed(
+        state: &mut D,
+        client: ClientId,
+        resource: &ZwpVirtualKeyboardV1,
+        data: &VirtualKeyboardUserData<D>,
+    ) {
+        <VirtualKeyboardManagerState as Dispatch<
+            ZwpVirtualKeyboardV1,
+            VirtualKeyboardUserData<D>,
+            D,
+        >>::destroyed(state, client, resource, data);
+        state
+            .frontend_mut()
+            .ime
+            .vk_generation
+            .remove(&resource.id());
+    }
+}
+
+/// virtual-keyboard `object`(クライアント `client` のもの)が、いま認められているか。作ったときの世代が、いま
+/// 認められた IME の世代と同じときだけ。最初の要求で、作ったときの世代を決める(待ち行列の先頭)。
+fn vk_authorized<D: FrontendHost>(state: &mut D, client: &ClientId, object: &ObjectId) -> bool {
+    let ime = &mut state.frontend_mut().ime;
+    let generation = match ime.vk_generation.get(object) {
+        Some(&generation) => Some(generation),
+        None => {
+            let pending = ime
+                .vk_pending
+                .get_mut(client)
+                .and_then(|queue| queue.pop_front());
+            if let Some(generation) = pending {
+                ime.vk_generation.insert(object.clone(), generation);
+            }
+            pending
+        }
+    };
+    generation.is_some() && generation == ime.authorized(client)
 }
 
 /// いまのキーボードのフォーカス。
@@ -550,6 +624,65 @@ impl<D> Dispatch<ZwpInputPopupSurfaceV2, RefusedInputMethod, D> for ImeState {
         _resource: &ZwpInputPopupSurfaceV2,
         _request: zwp_input_popup_surface_v2::Request,
         _data: &RefusedInputMethod,
+        _dhandle: &DisplayHandle,
+        _data_init: &mut DataInit<'_, D>,
+    ) {
+    }
+}
+
+impl<D> Dispatch<ZwpVirtualKeyboardManagerV1, (), D> for ImeState
+where
+    D: Dispatch<ZwpVirtualKeyboardManagerV1, ()>
+        + Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData<D>>
+        + Dispatch<ZwpVirtualKeyboardV1, RefusedVirtualKeyboard>
+        + FrontendHost,
+{
+    fn request(
+        state: &mut D,
+        client: &Client,
+        resource: &ZwpVirtualKeyboardManagerV1,
+        request: zwp_virtual_keyboard_manager_v1::Request,
+        data: &(),
+        dhandle: &DisplayHandle,
+        data_init: &mut DataInit<'_, D>,
+    ) {
+        if let zwp_virtual_keyboard_manager_v1::Request::CreateVirtualKeyboard { seat, id } =
+            request
+        {
+            let ime = &mut state.frontend_mut().ime;
+            let Some(generation) = ime.authorized(&client.id()) else {
+                // get_input_method を受け入れていないクライアント。新しいオブジェクトは作らないといけないので、
+                // Seinas の側の入れ物で作り、unauthorized のエラーで接続を切る。
+                data_init.init(id, RefusedVirtualKeyboard);
+                resource.post_error(
+                    zwp_virtual_keyboard_manager_v1::Error::Unauthorized,
+                    "only the accepted input method may create a virtual keyboard",
+                );
+                warn!(
+                    "a virtual keyboard was refused (the client is not the accepted input method)"
+                );
+                return;
+            };
+            ime.vk_pending
+                .entry(client.id())
+                .or_default()
+                .push_back(generation);
+            let request =
+                zwp_virtual_keyboard_manager_v1::Request::CreateVirtualKeyboard { seat, id };
+            <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardManagerV1, (), D>>::request(
+                state, client, resource, request, data, dhandle, data_init,
+            );
+        }
+    }
+}
+
+impl<D> Dispatch<ZwpVirtualKeyboardV1, RefusedVirtualKeyboard, D> for ImeState {
+    fn request(
+        _state: &mut D,
+        _client: &Client,
+        _resource: &ZwpVirtualKeyboardV1,
+        _request: zwp_virtual_keyboard_v1::Request,
+        _data: &RefusedVirtualKeyboard,
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {

@@ -13,6 +13,7 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 IME の権限は、シェルの部品の権限と分けています(ADR 0004 の 1.6)。これは権限を分けることで、相手が誰かを確かめる認証ではありません。
 
 - IME のためのソケットは、ふだんのソケットのパスに `-ime` を付けたものです(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)。シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard を見せません。IME のソケットには、layer-shell と foreign-toplevel を見せません(候補の窓に要る `wl_compositor`・`wl_shm` などは見せる)。
+- virtual-keyboard を作れるのは、`get_input_method` を受け入れたクライアントだけです。ほかは、virtual-keyboard の `unauthorized` のエラーで接続を切ります(ログに `a virtual keyboard was refused`)。認可は、接続と、受け入れた IME の世代に結び付けます。受け入れた input method が destroy されたら認可も消え、それまでに作った virtual-keyboard から届いたキーは捨てます。同じ接続からの 2 つ目の `get_input_method` を断っても、1 つ目の認可は消しません。
 - 守れないこと:IME のソケットにつなげるプロセスは、どれも IME になれます。先につないで、IME の枠(同時に 1 つ)を取ることも防げません。
 - Linux:ソケットは `XDG_RUNTIME_DIR`(0700)の下にあるので、つなげるのは同じ利用者のプロセスだけです。
 - ZeikOS:ソケットの名前はカーネルの表で、利用者の概念も、ファイルの権限の検査もありません。0700 は効かず、どのプロセスも IME のソケットにつなげます。効くのは、ソケットを分けた役割の分け方だけです。
@@ -102,13 +103,15 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | テスト | 確かめること |
 | --- | --- |
 | `keys_go_through_the_ime_and_come_back_to_the_window` | キーが IME を通り、IME が virtual-keyboard で戻したキーがウィンドウに届く |
-| `the_input_method_globals_are_only_on_the_shell_socket` | ふだんのソケットには、input-method の global が無い |
-| `the_input_method_globals_need_a_keyboard` | xkb のファイルが無く、seat にキーボードを足せなかった構成では、シェルの部品のソケットにも input-method と virtual-keyboard の global が無い(キーボードのある構成では、両方ある) |
+| `the_input_method_globals_are_only_on_the_ime_socket` | input-method と virtual-keyboard の global は IME のソケットにだけあり、シェルの部品のソケットとふだんのソケットには無い。IME のソケットには layer-shell と foreign-toplevel が無い。シェルの部品のソケットからつないだ IME は、準備の段階で失敗する |
+| `the_input_method_globals_need_a_keyboard` | xkb のファイルが無く、seat にキーボードを足せなかった構成では、IME のソケットにも input-method と virtual-keyboard の global が無い(キーボードのある構成では、両方ある) |
 | `the_compositor_starts_without_an_xkb_include_path` | xkb の置き場が無く、xkbcommon の context そのものを作れない構成でも、コンポジタが落ちずに、キーボードの無い構成として動く(IME の global も無い) |
 | `alt_tab_works_while_the_ime_has_the_keyboard` | IME が grab している間も、Alt+Tab が効き、Tab は IME に渡らない。切り替えた先には、IME が戻した「Alt を離した」が届かない |
 | `alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press` | Alt+Tab で行き来しても、IME が戻した Alt の押す・離すは、押したことを受けたウィンドウにだけ届き、切り替えた先で押して離した Alt は両方とも届く |
 | `keys_go_straight_to_the_window_after_the_ime_leaves` | IME が去ったら、直接の道になる |
 | `keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard` | IME が grab を手放したら、直接の道になる |
+| `a_virtual_keyboard_needs_the_accepted_input_method` | `get_input_method` を受け入れていないクライアントの virtual-keyboard は unauthorized で断られ、受け入れた IME が input method を destroy した後は、その virtual-keyboard のキーがウィンドウに届かない |
+| `a_second_input_method_on_the_same_connection_keeps_the_first` | 同じ接続からの 2 つ目の `get_input_method` は断られ、1 つ目の grab と virtual-keyboard は使える |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |

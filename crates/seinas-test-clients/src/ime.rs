@@ -13,11 +13,16 @@
 //! - `--popup WxH`: 大きさ WxH の候補の窓(input popup surface)を、紫(8000ff)の単色で出す。コンポジタから届いた
 //!   カーソルの矩形を `ime: popup rectangle X Y W H` の形で書く。
 //! - `--popup-text`: 候補の窓に、候補(変換中の文字と、そのカタカナ)を白い文字で書く(スクリーンショットのため)。
+//! - `--virtual-keyboard-only`: get_input_method を頼まずに virtual-keyboard を作る(認可の無いクライアントのまね)。
+//!   断られたら `ime: protocol error …` を書いて終わる。
 //! - `--ignore-keys`: キーを受けても、何も返さない(応答しない IME のまね)。標準入力の `answer` の行で、ふつうの
 //!   動きに戻り、input-method の commit を 1 つ送る。
 //!
 //! 標準入力の行: `release`(keyboard の grab を手放す)、`quit`(接続を切って終わる)、`answer`(上)、
-//! `sync`(それまでの頼みをコンポジタが処理し終えたら `ime: synced` を書く)。
+//! `sync`(それまでの頼みをコンポジタが処理し終えたら `ime: synced` を書く)、`again`(同じ接続から 2 つ目の
+//! get_input_method を頼む)、`destroy-input-method`(input method だけを destroy する。grab と virtual-keyboard は
+//! 残す)、`vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED`(受けたキーと関係なく、virtual-keyboard で
+//! キーと修飾キーの状態を送る)。
 //!
 //! 標準出力には、次の行を書く。
 //!
@@ -27,6 +32,8 @@
 //! - `ime: key 30 pressed`(または `released`): grab でキーが届いた。
 //! - `ime: preedit あい`、`ime: commit あい`: 送った変換中の文字と、確定した文字。
 //! - `ime: released`、`ime: answered`、`ime: synced`: 標準入力の行を処理した。
+//! - `ime: second unavailable`: `again` の 2 つ目が断られた。`ime: input method destroyed`: `destroy-input-method` を送った。
+//! - `ime: protocol error …`: コンポジタからプロトコルのエラーが届いた(この後、終わる)。
 
 use std::{
     collections::HashSet,
@@ -67,11 +74,13 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut ignore_keys = false;
     let mut popup_size = None;
     let mut popup_text = false;
+    let mut virtual_keyboard_only = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--ignore-keys" => ignore_keys = true,
             "--popup-text" => popup_text = true,
+            "--virtual-keyboard-only" => virtual_keyboard_only = true,
             "--popup" => {
                 let size = args.next().ok_or("--popup needs WxH")?;
                 popup_size = Some(crate::layer::parse_size(size)?);
@@ -86,6 +95,9 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let seat = wire.seat().ok_or("no seat")?;
     let manager = wire.bind("zwp_input_method_manager_v2", 1)?;
     let virtual_manager = wire.bind("zwp_virtual_keyboard_manager_v1", 1)?;
+    if virtual_keyboard_only {
+        return virtual_keyboard_alone(&mut wire, virtual_manager, seat);
+    }
     // zwp_input_method_manager_v2.get_input_method(seat、新しい番号)
     let input_method = wire.new_id();
     wire.send(&message(
@@ -138,6 +150,8 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut ready_sync = None;
     let mut sync = None;
     let mut released = false;
+    // 標準入力の `again` で、同じ接続から頼んだ 2 つ目の input method。
+    let mut second = None;
 
     loop {
         let event = match wire.poll_event()? {
@@ -147,9 +161,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
         };
         if let Some(event) = event {
             if let Some(error) = protocol_error(&event) {
+                say(&format!("protocol error {error}"));
                 return Err(format!("protocol error: {error}"));
             }
             match (event.object, event.opcode) {
+                // 同じ接続から頼んだ 2 つ目の unavailable。
+                (object, 6) if Some(object) == second => say("second unavailable"),
                 (object, _) if Some(object) == ready_sync => {
                     ready_sync = None;
                     say("ready");
@@ -286,7 +303,85 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     wire.send(&message(WL_DISPLAY, 0, &id.to_le_bytes()))?;
                     sync = Some(id);
                 }
-                _ => {}
+                "again" => {
+                    // 同じ接続から、もう 1 つ get_input_method を頼む。
+                    let id = wire.new_id();
+                    wire.send(&message(
+                        manager,
+                        0,
+                        &[seat.to_le_bytes(), id.to_le_bytes()].concat(),
+                    ))?;
+                    second = Some(id);
+                }
+                "destroy-input-method" => {
+                    // zwp_input_method_v2.destroy(grab と virtual-keyboard は残す)
+                    wire.send(&message(input_method, 6, &[]))?;
+                    say("input method destroyed");
+                }
+                other => {
+                    if let Some(body) = virtual_keyboard_line(other) {
+                        wire.send(&message(keyboard, body.0, &body.1))?;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 標準入力の `vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED` を、virtual-keyboard の要求(番号とコンテンツ)
+/// にする。IME が受けたキーと関係なく、virtual-keyboard でキーを送るため。
+fn virtual_keyboard_line(line: &str) -> Option<(u16, Vec<u8>)> {
+    let (command, value) = line.split_once(' ')?;
+    let value: u32 = value.trim().parse().ok()?;
+    match command {
+        // zwp_virtual_keyboard_v1.key(時刻、キー、状態)
+        "vk-press" | "vk-release" => Some((
+            1,
+            [0u32, value, (command == "vk-press") as u32]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
+        )),
+        // zwp_virtual_keyboard_v1.modifiers(押されている、ラッチ、ロック、グループ)
+        "vk-mods" => Some((
+            2,
+            [value, 0, 0, 0]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect(),
+        )),
+        _ => None,
+    }
+}
+
+/// `--virtual-keyboard-only`:get_input_method を頼まずに virtual-keyboard を作り、コンポジタの返事を書く。
+/// 断られたら(プロトコルのエラー)`ime: protocol error …` を書いて終わる。
+fn virtual_keyboard_alone(
+    wire: &mut crate::wire::Wire,
+    virtual_manager: u32,
+    seat: u32,
+) -> Result<bool, String> {
+    let keyboard = wire.new_id();
+    wire.send(&message(
+        virtual_manager,
+        0,
+        &[seat.to_le_bytes(), keyboard.to_le_bytes()].concat(),
+    ))?;
+    let id = wire.new_id();
+    wire.send(&message(WL_DISPLAY, 0, &id.to_le_bytes()))?;
+    loop {
+        match wire.poll_event()? {
+            Polled::Closed => return Ok(true),
+            Polled::Nothing => {}
+            Polled::Event(event) => {
+                if let Some(error) = protocol_error(&event) {
+                    say(&format!("protocol error {error}"));
+                    return Ok(true);
+                }
+                if event.object == id {
+                    say("virtual keyboard accepted");
+                    return Ok(false);
+                }
             }
         }
     }

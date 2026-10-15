@@ -147,6 +147,19 @@ impl TestClient {
         while self.next_line(line) != line {}
     }
 
+    /// `duration` の間に届いた行(届いていないことを確かめるのに使う)。
+    pub fn lines_within(&self, duration: std::time::Duration) -> Vec<String> {
+        let deadline = Instant::now() + duration;
+        let mut lines = Vec::new();
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            match self.lines.recv_timeout(left) {
+                Ok(line) => lines.push(line),
+                Err(_) => break,
+            }
+        }
+        lines
+    }
+
     /// 標準入力へ、1行を送る。
     pub fn send_line(&mut self, line: &str) {
         use std::io::Write;

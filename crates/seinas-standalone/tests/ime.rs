@@ -157,6 +157,74 @@ fn the_input_method_globals_are_only_on_the_ime_socket() {
 }
 
 #[test]
+fn a_virtual_keyboard_needs_the_accepted_input_method() {
+    let mut seinas = Compositor::start_with_input("it");
+    // get_input_method を受け入れていないクライアントは、IME のソケットからでも virtual-keyboard を作れない
+    // (unauthorized のエラーで切られる)。
+    let refused = seinas.connect_ime_client(&["ime", "--virtual-keyboard-only"]);
+    let line = refused.next_line("the refusal");
+    assert!(line.starts_with("ime: protocol error"), "{line}");
+    assert!(line.contains("only the accepted input method"), "{line}");
+    wait_for_log(&seinas, "a virtual keyboard was refused");
+    assert!(seinas.process.is_running());
+
+    // 受け入れた IME の virtual-keyboard は使える。input method を destroy すると認可が消え、同じ
+    // virtual-keyboard から送ったキーは捨てる。
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime.send_line(&format!("vk-press {KEY_Y}"));
+    ime.send_line(&format!("vk-release {KEY_Y}"));
+    assert_eq!(
+        next_key_line(&window, "y from the IME"),
+        "window: key 21 pressed"
+    );
+    assert_eq!(
+        next_key_line(&window, "y from the IME"),
+        "window: key 21 released"
+    );
+    ime.send_line("destroy-input-method");
+    ime.wait_for_line("ime: input method destroyed");
+    ime.send_line(&format!("vk-press {KEY_X}"));
+    ime.send_line(&format!("vk-release {KEY_X}"));
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+    let lines = window.lines_within(std::time::Duration::from_millis(300));
+    assert!(
+        !lines.iter().any(|line| line.starts_with("window: key 45")),
+        "{lines:?}"
+    );
+    tap(&mut seinas, KEY_Y);
+    assert!(seinas.process.is_running());
+}
+
+#[test]
+fn a_second_input_method_on_the_same_connection_keeps_the_first() {
+    let mut seinas = Compositor::start_with_input("iu");
+    let window = open_window(&seinas, "窓");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime.send_line("again");
+    ime.wait_for_line("ime: second unavailable");
+    // 1 つ目の grab と virtual-keyboard は、そのまま使える。
+    tap(&mut seinas, KEY_X);
+    assert_eq!(
+        next_ime_key(&ime, "x on the first IME"),
+        "ime: key 45 pressed"
+    );
+    assert_eq!(
+        next_key_line(&window, "x from the IME"),
+        "window: key 45 pressed"
+    );
+    ime.send_line(&format!("vk-press {KEY_Y}"));
+    ime.send_line(&format!("vk-release {KEY_Y}"));
+    loop {
+        let line = next_key_line(&window, "y from the IME");
+        if line == "window: key 21 pressed" {
+            break;
+        }
+    }
+}
+
+#[test]
 fn the_input_method_globals_need_a_keyboard() {
     // Smithay 0.7.0 は、キーボードの無い seat への get_input_method と、virtual-keyboard の key・modifiers で
     // panic する。xkb のファイルが読めず、seat にキーボードを足せなかった構成(ポインターだけの seat)では、

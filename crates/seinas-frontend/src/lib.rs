@@ -43,7 +43,8 @@ pub use decoration::{
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use ime::{
-    check_ime, popup_hidden, popup_shown, ImeState, RefusedInputMethod, DEFAULT_IME_TIMEOUT,
+    check_ime, popup_hidden, popup_shown, ImeState, RefusedInputMethod, RefusedVirtualKeyboard,
+    DEFAULT_IME_TIMEOUT,
 };
 pub use ime_popup::popup_location;
 pub use interaction::{
@@ -2228,7 +2229,10 @@ macro_rules! delegate_frontend {
         ] => $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState);
         $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
             $crate::smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1: ()
-        ] => $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState);
+        ] => $crate::ImeState);
+        $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
+            $crate::smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1: $crate::RefusedVirtualKeyboard
+        ] => $crate::ImeState);
         $crate::smithay::reexports::wayland_server::delegate_dispatch!($ty: [
             $crate::smithay::reexports::wayland_protocols_misc::zwp_virtual_keyboard_v1::server::zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1:
             $crate::smithay::wayland::virtual_keyboard::VirtualKeyboardUserData<Self>
