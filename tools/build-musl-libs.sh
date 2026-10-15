@@ -31,7 +31,9 @@ fetch() {
     sha256=$2
     file="$work/$(basename "$url")"
     if [ ! -f "$file" ]; then
-        curl --fail --location --silent --show-error --output "$file.part" "$url"
+        # 取ってくる先の接続が切れることがある(CI で 2 回あった)ので、どの失敗でも 3 回まで試し直す。
+        curl --fail --location --silent --show-error --retry 3 --retry-all-errors --retry-delay 2 \
+            --output "$file.part" "$url"
         mv "$file.part" "$file"
     fi
     echo "$sha256  $file" | sha256sum --check --quiet
