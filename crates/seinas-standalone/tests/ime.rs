@@ -493,6 +493,20 @@ fn preedit_and_commit_reach_the_window() {
     // IME が使ったキーは、ウィンドウの wl_keyboard には届かない。使わなかったキーは、IME から戻る。
     tap(&mut seinas, KEY_X);
     assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    // ふだんのログ(--log-keys を付けない)には、キー・keysym・変換中の文字・確定した文字が出ない
+    // (ADR 0004 の 1.6)。
+    let log = seinas.log();
+    for text in [
+        "あ",
+        "い",
+        "key:",
+        "Return",
+        "keysym",
+        "preedit",
+        "commit_string",
+    ] {
+        assert!(!log.contains(text), "{text:?} in the log:\n{log}");
+    }
 }
 
 #[test]

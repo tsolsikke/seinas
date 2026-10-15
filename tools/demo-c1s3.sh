@@ -4,13 +4,15 @@
 # 使い方(リポジトリの先頭から。WSLg などの Wayland のセッションの中で):
 #     tools/demo-c1s3.sh
 #
-# 起こすもの:入れ子の Seinas(--log-keys)、壁紙、タスクバー、テスト用のウィンドウ 3 つ(text-input と IME、
+# 起こすもの:入れ子の Seinas、壁紙、タスクバー、テスト用のウィンドウ 3 つ(text-input と IME、
 # キーボード、ping に答えない)、テスト用の IME。どれも同じ親の Wayland(WAYLAND_DISPLAY)の中の Seinas に
 # つなぐ。
 #
 # - 設定(フォント、壁紙、時計、切り替えのキー)は、一時的な XDG_CONFIG_HOME に置く。~/.config は読まず、書き換えない。
 # - Seinas のソケットは、一時的な XDG_RUNTIME_DIR に置く(いつもの seinas-0 と重ならない)。
-# - 各プロセスのログは、別の場所(終わった後も残す)のファイルに分けて書き、終わりにその場所を出す。
+# - 各プロセスのログは、別の場所(終わった後も残す)のファイルに分けて書き、終わりにその場所を出す。ログの場所は
+#   0700、ファイルは 0600 で作る(umask 077)。
+# - Seinas の --log-keys(届いたキーをログに出す)は、DEMO_LOG_KEYS=1 のときだけ付ける。ふだんは付けない。
 # - Seinas のウィンドウを閉じるか、Ctrl+C で終わる。終わるときは、起こしたものを全部止め、一時的な場所を消し、
 #   tools/check-leftovers.py で、残りが 0 であることを確かめる。
 # - 子には PR_SET_PDEATHSIG(setpriv があれば)と、印の環境変数 SEINAS_TEST_CHILD を付ける。この script が
@@ -21,7 +23,10 @@
 # 環境変数:
 #   DEMO_LOG_DIR       ログの置き場(無ければ /tmp/seinas-demo-logs-<日時>)
 #   DEMO_SEINAS_CONF   seinas.conf の代わりに使うファイル(切り替えのキーを変えて確かめるとき)
+#   DEMO_LOG_KEYS      1 なら、Seinas に --log-keys を付ける(どのキーが届くかを確かめるとき)
 set -u
+# この script が作るファイルとディレクトリは、自分だけが読めるようにする(ログにキーが出ることがあるため)。
+umask 077
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
@@ -47,7 +52,7 @@ mkdir "$work" || exit 2
 : > "$work/.seinas-test"
 logs=${DEMO_LOG_DIR:-/tmp/seinas-demo-logs-$(date +%Y%m%d-%H%M%S)}
 mkdir -p "$logs" "$work/run" "$work/config/seinas"
-chmod 700 "$work/run"
+chmod 700 "$work/run" "$logs"
 
 # 確かめ用の設定。
 cat > "$work/config/seinas/fonts.conf" <<'EOF'
@@ -124,7 +129,9 @@ trap cleanup INT TERM EXIT
 
 echo "== 設定:$work/config/seinas(終わるときに消す)"
 echo "== 起こす(親:$parent)"
-start seinas env WAYLAND_DISPLAY="$parent" "$bin/seinas" --log-keys --fonts "$root/target/fonts"
+log_keys=()
+[ "${DEMO_LOG_KEYS:-}" = 1 ] && log_keys=(--log-keys)
+start seinas env WAYLAND_DISPLAY="$parent" "$bin/seinas" "${log_keys[@]}" --fonts "$root/target/fonts"
 seinas_pid=${pids[0]}
 for _ in $(seq 1 100); do
     [ -S "$work/run/seinas-0" ] && [ -S "$work/run/seinas-0-shell" ] && [ -S "$work/run/seinas-0-ime" ] && break

@@ -67,7 +67,9 @@ class Run:
     def start(self, name, args, env):
         full = dict(os.environ, SEINAS_TEST_CHILD=str(os.getpid()), **env)
         full.pop("SEINAS_FONTS", None)
-        log = open(os.path.join(self.work, f"{name}.log"), "w")
+        # ログは、自分だけが読めるようにする(0600。作業用の場所は 0700)。
+        log = os.fdopen(os.open(os.path.join(self.work, f"{name}.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600),
+                        "w")
         proc = subprocess.Popen([os.path.join(self.bin, args[0])] + args[1:], env=full,
                                 stdin=subprocess.DEVNULL, stdout=log, stderr=log,
                                 preexec_fn=pdeathsig)
@@ -149,7 +151,7 @@ def main():
     print("| --- | --- | --- | --- | --- |")
     for kind in [args.only] if args.only else ["standalone", "nested"]:
         work = os.path.join(tempfile.gettempdir(), f"seinas-idle-{os.getpid()}")
-        os.makedirs(work)
+        os.mkdir(work, 0o700)
         open(os.path.join(work, ".seinas-test"), "w").close()
         run = Run(bin_dir, work)
         try:

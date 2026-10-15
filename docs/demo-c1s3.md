@@ -10,7 +10,7 @@ WSLg の端末で、リポジトリの先頭から次を動かします(ビル�
 tools/demo-c1s3.sh
 ```
 
-- 起こすもの:入れ子の Seinas(`--log-keys`)、壁紙、タスクバー、テスト用のウィンドウ 3 つ、テスト用の IME。
+- 起こすもの:入れ子の Seinas、壁紙、タスクバー、テスト用のウィンドウ 3 つ、テスト用の IME。
   - 青「キーボード」:キーボードとポインターのイベントを書く(`window-keyboard.log`)。
   - 赤「応答なし(ping に答えない)」:ping に答えず、閉じるように頼まれても終わらない(`window-unresponsive.log`)。
   - 橙「文字入力(text-input)」:text-input-v3 を使い、届いた変換中の文字と確定した文字を書く(`window-text.log`)。
@@ -20,7 +20,8 @@ tools/demo-c1s3.sh
   - 壁紙:テスト用の小さな画像(48x32)を中央に置き、余白を緑(`2f6f4f`)にする。
   - 時計:`utc-offset = +09:00`。
   - 切り替えのキー:入れ子の既定と同じ(Alt+Tab と Alt+F6)。変えるときは、`DEMO_SEINAS_CONF=<ファイル> tools/demo-c1s3.sh` で、`seinas.conf` の代わりのファイルを渡します(書き方は `docs/config.md`)。
-- ログは、起動のときに表示する場所(`/tmp/seinas-demo-logs-<日時>/`)に、プロセスごとのファイルで書きます。終わった後も残ります。下の手順で「ログ」とあるのは、この場所のファイルです。別の端末で `tail -f <場所>/window-text.log` のように見ながら進めると楽です。
+- `DEMO_LOG_KEYS=1 tools/demo-c1s3.sh` で起こすと、Seinas に `--log-keys` を付け、届いたキーを `seinas.log` に書きます(どのキーが届くかを確かめるときだけ。ふだんは付けません)。下の表の `key:` の行は、このときだけ出ます。
+- ログは、起動のときに表示する場所(`/tmp/seinas-demo-logs-<日時>/`)に、プロセスごとのファイルで書きます。場所は 0700、ファイルは 0600 で作ります(自分だけが読める)。終わった後も残ります。下の手順で「ログ」とあるのは、この場所のファイルです。別の端末で `tail -f <場所>/window-text.log` のように見ながら進めると楽です。
 - 終わり方:Seinas のウィンドウを閉じるか、script の端末で Ctrl+C を押します。起こしたものを全部止め、一時的な場所を消し、`tools/check-leftovers.py` で残りが 0 であることを確かめて、ログの場所を表示します。
 
 ## チェックリスト
@@ -65,14 +66,14 @@ tools/demo-c1s3.sh
 
 | 操作 | 期待する見え方・ログ |
 | --- | --- |
-| Alt を押したまま F6 を 1 回押す | 次のウィンドウが手前に見える(タイトルバーは灰色のまま)。`seinas.log` に `key: Alt_L pressed`、`key: Alt+F6 pressed` |
+| Alt を押したまま F6 を 1 回押す | 次のウィンドウが手前に見える(タイトルバーは灰色のまま)。`DEMO_LOG_KEYS=1` なら、`seinas.log` に `key: Alt_L pressed`、`key: Alt+F6 pressed` |
 | Alt を押したまま、F6 を続けて押す | 押すたびに、次のウィンドウへ進む(端では反対の端へ回る) |
 | Alt を離す | 見えていたウィンドウが選ばれる(タイトルバーが青くなり、キーボードのフォーカスが移る) |
 | Alt+Shift+F6 | 逆の順に進む |
 | 切り替えの最中に Esc | 取り消し。始める前のウィンドウのまま |
 | ウィンドウを 1 つ最小化してから、Alt+F6 で進める | 最小化したウィンドウも候補に出る。Alt を離して決めると、戻る |
-| Alt+Tab を押す | Windows が先に使うときは、Seinas では何も起きず、`seinas.log` に `key: Alt+Tab` の行が出ない(Windows の側の切り替えが出たら、Esc で閉じる) |
-| 届かないキーがあったとき | `seinas.log` の `key:` の行で、どの組み合わせが届くかを見る。届く組み合わせを `seinas.conf` の形のファイルに書き、`DEMO_SEINAS_CONF=<ファイル>` で起こし直す(`docs/config.md`)。起動のときの `switch windows: next …` の行で、使うキーを確かめられる |
+| Alt+Tab を押す | Windows が先に使うときは、Seinas では何も起きず、`DEMO_LOG_KEYS=1` なら、`seinas.log` に `key: Alt+Tab` の行が出ない(Windows の側の切り替えが出たら、Esc で閉じる) |
+| 届かないキーがあったとき | `DEMO_LOG_KEYS=1` で起こし直し、`seinas.log` の `key:` の行で、どの組み合わせが届くかを見る。届く組み合わせを `seinas.conf` の形のファイルに書き、`DEMO_SEINAS_CONF=<ファイル>` で起こし直す(`docs/config.md`)。起動のときの `switch windows: next …` の行で、使うキーを確かめられる |
 
 ### 6. 応答なし
 

@@ -95,12 +95,14 @@ def main():
     bin_dir = os.path.join(ROOT, "target", "debug")
     fonts = os.path.join(ROOT, "target", "fonts")
     work = f"/tmp/seinas-review-{os.getpid()}"
+    # 作業用の場所とログは、自分だけが読めるようにする(0700 と 0600)。
+    os.mkdir(work, 0o700)
     os.makedirs(os.path.join(work, "config", "seinas"))
     open(os.path.join(work, ".seinas-test"), "w").close()
     with open(os.path.join(work, "config", "seinas", "wallpaper.conf"), "w") as f:
         f.write("color = 2f5f7f\n")
     clients = []
-    log = open(os.path.join(work, "log"), "w")
+    log = os.fdopen(os.open(os.path.join(work, "log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w")
     env = dict(os.environ, SEINAS_TEST_CHILD=str(os.getpid()), XDG_CONFIG_HOME=os.path.join(work, "config"),
                XDG_RUNTIME_DIR=work, SEINAS_FONTS=fonts)
     dump = os.path.join(work, "screen.ppm")

@@ -44,4 +44,4 @@ INFO seinas_frontend: key: Alt+F6 pressed
 INFO seinas_frontend: key: Alt+F6 released
 ```
 
-ログに出た組み合わせ(`Alt+F6` など)を、そのまま `seinas.conf` に書けます。ログに出ないキーは、親の側が使っています。`--log-keys` は、`seinas-standalone` にもあります。既定では出しません。
+ログに出た組み合わせ(`Alt+F6` など)を、そのまま `seinas.conf` に書けます。ログに出ないキーは、親の側が使っています。`--log-keys` は、`seinas-standalone` にもあります。既定では出しません。打ったキーがそのままログに残るので、確かめるときだけ明示して付けるテスト用のものです(ふだんのログには、キー・keysym・変換中の文字・確定した文字を出しません。ADR 0004 の 1.6)。
