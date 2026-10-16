@@ -1260,3 +1260,48 @@ fn too_many_waiting_virtual_keyboards_are_refused() {
         }
     }
 }
+
+#[test]
+fn a_virtual_keyboard_key_released_after_the_grab_release_is_not_left_pressed() {
+    // virtual-keyboard で押す → grab を release → virtual-keyboard で離す。
+    let seinas = Compositor::start_with_input("jm");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(&mut ime, &[&format!("vk-press {KEY_X}")]);
+    assert_eq!(
+        next_key_line(&window, "x pressed"),
+        "window: key 45 pressed"
+    );
+    ime.send_line("release");
+    ime.wait_for_line("ime: released");
+    ime_lines(&mut ime, &[&format!("vk-release {KEY_X}")]);
+    assert_eq!(
+        next_key_line(&window, "x released"),
+        "window: key 45 released"
+    );
+}
+
+#[test]
+#[ignore = "再現する:IME が grab だけを release し、virtual-keyboard で押したキーの離したことを送らないと、アプリにはキーが押されたまま残る(フォーカスが動くまで)。直し方は C1S4 で決める"]
+fn a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_pressed() {
+    // virtual-keyboard で押す → grab を release → 離したことは来ない。
+    let seinas = Compositor::start_with_input("jn");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(&mut ime, &[&format!("vk-press {KEY_X}")]);
+    assert_eq!(
+        next_key_line(&window, "x pressed"),
+        "window: key 45 pressed"
+    );
+    ime.send_line("release");
+    ime.wait_for_line("ime: released");
+    wait_for_log(&seinas, "the input method released the keyboard");
+    // アプリから x が離れる(離したことか、leave が届く)なら、押されたまま残らない。
+    let lines = window.lines_within(std::time::Duration::from_millis(500));
+    assert!(
+        lines
+            .iter()
+            .any(|line| line == "window: key 45 released" || line == "window: keyboard leave"),
+        "x is left pressed: {lines:?}"
+    );
+}

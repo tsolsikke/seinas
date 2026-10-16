@@ -70,6 +70,7 @@ IME が去った後(接続断でも緊急解除でも)は、次の順に届き�
 
 - 変換中の文字:Seinas から、空の preedit_string と done は送りません(先に届いていた commit_string まで、アプリに適用させるおそれがあるため)。text-input の leave で、アプリが変換中の文字を消します(text-input-v3 の leave の「The client should reset any preedit string previously set」)。テスト用のアプリは、そのとおりに消し、`window: reset preedit` を書きます。
 - 押されたままのキー:`wl_keyboard` の enter に入るのは、物理のキーボードで今押されていて、IME かアプリへ渡したキーだけです(Smithay の `forwarded_pressed_keys`)。IME が virtual-keyboard で押したキーは入らないので、leave でアプリから消えます。Seinas が使ったショートカットのキー(緊急解除の F12 など)も入りません。物理のキーボードで押しているキーは、離したことが直接アプリへ届きます。
+- まだ直していないこと(2026-10-16 に再現した):IME が grab だけを release し(input method は残す)、virtual-keyboard で押したキーの離したことを送らないと、アプリにはそのキーが押されたまま残ります(フォーカスが動くまで)。grab の release では、`wl_keyboard` の leave と enter を送り直さないためです。試験 `a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_pressed` を `#[ignore]` で置いてあります。直し方は C1S4 で決めます。
 - 繰り返し:Seinas には、キーの繰り返しのタイマーがありません(繰り返しは、アプリと IME が `repeat_info` で行う)。アプリの繰り返しは `wl_keyboard` の leave で止まり、IME の繰り返しは、接続を切ると届かなくなります。
 - 戻すのは、IME が新しい接続でつなぎ直したときだけです。古い接続のクリーンアップ(Smithay の部品で、古い input method と grab の destroy)が済むまでは、新しい `get_input_method` を断ります(ログに `the released input method is not cleaned up yet`)。Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため、新しい IME の grab を消さないようにするためです。新しい IME がつながると、フォーカスのあるアプリに text-input の enter が届き、同じ欄で続けて打てます(クリックし直さなくてよい)。
 - 保証していない範囲:serial の合わない古い要求が、新しいアプリに入りえます(Smithay 0.7.0 は、IME の文字の要求を、届いたその場で、そのときアクティブな text-input へ送るため)。commit の前に切れた IME の commit_string は、アプリの pending の状態に残り、アプリの作りによっては、後の done で適用されます。次の課題で扱います(ADR 0004 の 1.5)。
@@ -136,6 +137,8 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `virtual_keyboards_of_two_generations_are_not_mixed_up` | 前の世代で作った A と今の世代で作った B が両方待っているとき、B から先に要求しても、どちらも認めない。その後に作ったものは使える |
 | `a_virtual_keyboard_destroyed_before_its_first_request_does_not_shift_the_queue` | 作ってすぐ destroy するのを 10 回くり返しても、上限にかからず、次に作ったものが使える |
 | `too_many_waiting_virtual_keyboards_are_refused` | 要求を送らずに 9 個目を作ると unauthorized で切られ、その後につないだ IME はふつうに使える |
+| `a_virtual_keyboard_key_released_after_the_grab_release_is_not_left_pressed` | virtual-keyboard で押し、grab を release した後に virtual-keyboard で離すと、離したことがウィンドウに届く |
+| `a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_pressed`(`#[ignore]`) | 離したことが来ないと、押されたまま残る(再現する。まだ直していない) |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
