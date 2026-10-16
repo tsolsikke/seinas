@@ -10,8 +10,10 @@
 #
 # - 設定(フォント、壁紙、時計、切り替えのキー)は、一時的な XDG_CONFIG_HOME に置く。~/.config は読まず、書き換えない。
 # - Seinas のソケットは、一時的な XDG_RUNTIME_DIR に置く(いつもの seinas-0 と重ならない)。
-# - 各プロセスのログは、別の場所(終わった後も残す)のファイルに分けて書き、終わりにその場所を出す。ログの場所は
-#   0700、ファイルは 0600 で作る(umask 077)。
+# - 各プロセスのログは、別の場所(終わった後も残す)のファイルに分けて書き、終わりにその場所を出す。ログの場所は、
+#   DEMO_LOG_DIR(無ければ TMPDIR か /tmp)の下に、実行ごとに mktemp -d で 0700 のディレクトリを作る(名前は
+#   ぶつからない)。ファイルは 0600(umask 077)。DEMO_LOG_DIR そのものの権限は変えない。DEMO_LOG_DIR が
+#   シンボリックリンクか、ディレクトリでなければ、何も作らずに終わる。
 # - Seinas の --log-keys(届いたキーをログに出す)は、DEMO_LOG_KEYS=1 のときだけ付ける。ふだんは付けない。
 # - Seinas のウィンドウを閉じるか、Ctrl+C で終わる。終わるときは、起こしたものを全部止め、一時的な場所を消し、
 #   tools/check-leftovers.py で、残りが 0 であることを確かめる。
@@ -21,12 +23,27 @@
 # Windows の側の操作(入力の送り込み、ウィンドウの操作)は、何もしない(CLAUDE.md の決まり 1)。
 #
 # 環境変数:
-#   DEMO_LOG_DIR       ログの置き場(無ければ /tmp/seinas-demo-logs-<日時>)
+#   DEMO_LOG_DIR       ログの置き場を作る親のディレクトリ(既にあるもの。無ければ TMPDIR か /tmp)。その下に
+#                      seinas-demo-logs-<日時>-XXXXXX を作る
 #   DEMO_SEINAS_CONF   seinas.conf の代わりに使うファイル(切り替えのキーを変えて確かめるとき)
 #   DEMO_LOG_KEYS      1 なら、Seinas に --log-keys を付ける(どのキーが届くかを確かめるとき)
 set -u
 # この script が作るファイルとディレクトリは、自分だけが読めるようにする(ログにキーが出ることがあるため)。
 umask 077
+
+# ログの置き場を作り、そのパスを出す。親(DEMO_LOG_DIR)は、シンボリックリンクではない、既にあるディレクトリで
+# なければならない。親の権限は変えない。作ったディレクトリは mktemp -d の 0700 で、既にある名前やリンクは使わない。
+make_log_dir() {
+    local base=${DEMO_LOG_DIR:-${TMPDIR:-/tmp}}
+    if [ -L "$base" ] || [ ! -d "$base" ]; then
+        echo "demo-c1s3.sh: ログの置き場の親 $base は、シンボリックリンクではない、既にあるディレクトリにしてください。" >&2
+        return 1
+    fi
+    mktemp -d "$base/seinas-demo-logs-$(date +%Y%m%d-%H%M%S)-XXXXXX" || {
+        echo "demo-c1s3.sh: $base の下に、ログの置き場を作れませんでした。" >&2
+        return 1
+    }
+}
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 2
@@ -46,13 +63,13 @@ cargo build --locked --quiet -p seinas -p seinas-taskbar -p seinas-wallpaper -p 
 [ -d target/fonts ] || echo "注意:target/fonts がありません(tools/fetch-fonts.sh)。文字は出ません。"
 bin=$root/target/debug
 
-# 一時的な場所(終わるときに消す。印を付け、残ったときは check-leftovers.py が見つける)と、ログの置き場(残す)。
+# ログの置き場(残す)と、一時的な場所(終わるときに消す。印を付け、残ったときは check-leftovers.py が見つける)。
+logs=$(make_log_dir) || exit 2
 work="${TMPDIR:-/tmp}/seinas-demo-$$"
 mkdir "$work" || exit 2
 : > "$work/.seinas-test"
-logs=${DEMO_LOG_DIR:-/tmp/seinas-demo-logs-$(date +%Y%m%d-%H%M%S)}
-mkdir -p "$logs" "$work/run" "$work/config/seinas"
-chmod 700 "$work/run" "$logs"
+mkdir -p "$work/run" "$work/config/seinas"
+chmod 700 "$work/run"
 
 # 確かめ用の設定。
 cat > "$work/config/seinas/fonts.conf" <<'EOF'

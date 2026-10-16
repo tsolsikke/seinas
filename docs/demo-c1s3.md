@@ -21,7 +21,7 @@ tools/demo-c1s3.sh
   - 時計:`utc-offset = +09:00`。
   - 切り替えのキー:入れ子の既定と同じ(Alt+Tab と Alt+F6)。変えるときは、`DEMO_SEINAS_CONF=<ファイル> tools/demo-c1s3.sh` で、`seinas.conf` の代わりのファイルを渡します(書き方は `docs/config.md`)。
 - `DEMO_LOG_KEYS=1 tools/demo-c1s3.sh` で起こすと、Seinas に `--log-keys` を付け、届いたキーを `seinas.log` に書きます(どのキーが届くかを確かめるときだけ。ふだんは付けません)。下の表の `key:` の行は、このときだけ出ます。
-- ログは、起動のときに表示する場所(`/tmp/seinas-demo-logs-<日時>/`)に、プロセスごとのファイルで書きます。場所は 0700、ファイルは 0600 で作ります(自分だけが読める)。終わった後も残ります。下の手順で「ログ」とあるのは、この場所のファイルです。別の端末で `tail -f <場所>/window-text.log` のように見ながら進めると楽です。
+- ログは、起動のときに表示する場所(`/tmp/seinas-demo-logs-<日時>-XXXXXX/`。XXXXXX は実行ごとに変わる)に、プロセスごとのファイルで書きます。場所は `mktemp -d` の 0700、ファイルは 0600 で作ります(自分だけが読める)。`DEMO_LOG_DIR=<ディレクトリ>` で、その場所を作る親を選べます(既にある、シンボリックリンクでないディレクトリ。親の権限は変えません。条件に合わないか作れないときは、何も起こさずに終わる)。終わった後も残ります。下の手順で「ログ」とあるのは、この場所のファイルです。別の端末で `tail -f <場所>/window-text.log` のように見ながら進めると楽です。
 - 終わり方:Seinas のウィンドウを閉じるか、script の端末で Ctrl+C を押します。起こしたものを全部止め、一時的な場所を消し、`tools/check-leftovers.py` で残りが 0 であることを確かめて、ログの場所を表示します。
 
 ## チェックリスト
@@ -129,7 +129,7 @@ Seinas のウィンドウを閉じるか、script の端末で Ctrl+C を押し�
 ```text
 == 止める
 残ったテストのプロセスと作業用の場所は、ありません。
-ログ:/tmp/seinas-demo-logs-<日時>
+ログ:/tmp/seinas-demo-logs-<日時>-XXXXXX
 ```
 
 script が SIGKILL などで途中で終わったときも、子のプロセスは止まります(PR_SET_PDEATHSIG)。残った一時的な場所は、`python3 tools/check-leftovers.py --clean` で消せます。
