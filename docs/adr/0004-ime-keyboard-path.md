@@ -94,6 +94,9 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
   - 片付けるのは、その接続・seat・世代のものだけ。keyboard の grab は、それが IME の grab のときだけ外す。物理のキーボードの状態には触れない。
   - 片付けは 1 回だけ行う。input method と grab の destroy の順が違っても、接続断と重なっても、`wl_keyboard` の leave と enter の送り直しは 1 回。
   - 古い世代の grab のオブジェクトが残っている間は、新しい `get_input_method` を断る(ログに `the destroyed input method still has a keyboard grab`)。古い grab の destroy(Smithay 0.7.0 の部品は、seat の grab を外す)が、新しい IME の grab を外さないようにするため。
+    - これは暫定の守り(2026-10-16 に確かめた)。Smithay 0.7.0 の `src/wayland/input_method/input_method_keyboard_grab.rs` 106〜114 行の `destroyed` は、持ち主も世代も確かめずに、共有の grab を `None` にし(112 行 `data.handle.inner.lock().unwrap().grab = None`)、seat の keyboard の `unset_grab` を呼ぶ(113 行)。共有の grab は seat に 1 つで(`input_method_handle.rs` 30〜35 行の `InputMethod` の `keyboard_grab`)、どの grab のオブジェクトの user data も、その同じものを持つ(同じファイルの 277〜292 行の `GrabKeyboard`)。`unset_grab`(`src/input/keyboard/mod.rs` 892〜898 行)は、そのとき付いている grab を、何のものかを問わずに外す。そのため、古い grab を残したまま新しい IME を受け入れると、古い grab の destroy で、新しい IME の grab が外れる。
+    - 本来の形は、古い grab を効力の無いものとして扱い、新しい IME を受け入れること。それには、grab の破棄の処理で、持ち主と世代を確かめることが要る。Smithay を変えずにできるか(Seinas の側で destroyed を包むなど)は、C1S4 で調べる。
+    - 次の 2 つは、別の条件として扱う。1 つは「古い grab のリソースが残っているだけ」で、本来は新しい IME を受け入れられる(今断っているのは、上の Smithay の動きのため)。もう 1 つは「古い virtual-keyboard の世代を安全に見分けられない」(1.6 の限界)で、これは同じ接続のままでは安全にできず、再接続が要る。
 - 緊急解除:Seinas が IME より先に見るショートカット(1.8)で、IME のクライアントの接続を切る(R-b)。
   - 既定のキーは Alt+Shift+F12。入れ子(WSLg)では、運用者が、届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認(Seinas のキーボードの入力の装置が、まだ無い)。`seinas.conf` の `ime-release` で変えられる。
   - 発動するのは、物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけ。IME が virtual-keyboard で送ったキーでは発動しない(Smithay 0.7.0 の virtual-keyboard のキーは、ショートカットの判定を通らず、フォーカスのあるクライアントへ直に届く)。
