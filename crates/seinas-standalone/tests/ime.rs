@@ -1108,3 +1108,155 @@ fn a_second_release_before_the_cleanup_says_so() {
     assert!(!log.contains("no input method is running"), "{log}");
     lift_release_key(&mut seinas);
 }
+
+/// IME に `lines` を送り、sync で、コンポジタが処理し終えるまで待つ。
+fn ime_lines(ime: &mut TestClient, lines: &[&str]) {
+    for line in lines {
+        ime.send_line(line);
+    }
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+}
+
+/// ウィンドウに、`duration` の間にキー `code` の行が届いたか。
+fn key_arrived(window: &TestClient, code: u32, duration: std::time::Duration) -> bool {
+    window
+        .lines_within(duration)
+        .iter()
+        .any(|line| line.starts_with(&format!("window: key {code} ")))
+}
+
+#[test]
+fn virtual_keyboards_of_one_generation_work_in_any_order() {
+    let seinas = Compositor::start_with_input("ji");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // A・B の順に作り、B から先に使う。
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-new b",
+            "vk-keymap b",
+            "vk-key b 45 press",
+            "vk-key b 45 release",
+        ],
+    );
+    assert_eq!(next_key_line(&window, "x from b"), "window: key 45 pressed");
+    ime_lines(
+        &mut ime,
+        &["vk-keymap a", "vk-key a 21 press", "vk-key a 21 release"],
+    );
+    loop {
+        if next_key_line(&window, "y from a") == "window: key 21 pressed" {
+            break;
+        }
+    }
+}
+
+#[test]
+fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
+    let mut seinas = Compositor::start_with_input("jj");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // A を前の世代で作り(要求は送らない)、IME を去らせてから、同じ接続で次の世代を受け入れ、B を作る。
+    ime_lines(&mut ime, &["vk-new a", "destroy-input-method", "release"]);
+    wait_for_log(&seinas, "the input method left");
+    ime_lines(&mut ime, &["again", "vk-new b"]);
+    common::wait_for("the second generation", || {
+        (seinas.log().matches("an input method connected").count() == 2).then_some(())
+    });
+    // B(今の世代)から先に、続けて A(前の世代)が要求する。どちらがどちらか見分けられないので、両方とも認めない。
+    ime_lines(
+        &mut ime,
+        &["vk-keymap b", "vk-key b 45 press", "vk-key b 45 release"],
+    );
+    ime_lines(
+        &mut ime,
+        &["vk-keymap a", "vk-key a 21 press", "vk-key a 21 release"],
+    );
+    let wait = std::time::Duration::from_millis(300);
+    assert!(!key_arrived(&window, 45, wait) && !key_arrived(&window, 21, wait));
+    // 混ざりが無くなった後に作ったものは、今の世代として使える。
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new c",
+            "vk-keymap c",
+            "vk-key c 30 press",
+            "vk-key c 30 release",
+        ],
+    );
+    loop {
+        if next_key_line(&window, "a from c") == "window: key 30 pressed" {
+            break;
+        }
+    }
+    tap(&mut seinas, KEY_X);
+}
+
+#[test]
+fn a_virtual_keyboard_destroyed_before_its_first_request_does_not_shift_the_queue() {
+    let seinas = Compositor::start_with_input("jk");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // 要求を送らずに destroy したものは、待ち行列から外れる(上限の 8 を越えて、作って destroy をくり返せる)。
+    for i in 0..10 {
+        ime_lines(
+            &mut ime,
+            &[&format!("vk-new a{i}"), &format!("vk-destroy a{i}")],
+        );
+    }
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new b",
+            "vk-keymap b",
+            "vk-key b 45 press",
+            "vk-key b 45 release",
+        ],
+    );
+    assert_eq!(next_key_line(&window, "x from b"), "window: key 45 pressed");
+}
+
+#[test]
+fn too_many_waiting_virtual_keyboards_are_refused() {
+    let seinas = Compositor::start_with_input("jl");
+    let _window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // 最初の要求を送らずに 8 個まで作れて、9 個目は unauthorized のエラーで切られる。
+    for i in 0..8 {
+        ime.send_line(&format!("vk-new k{i}"));
+    }
+    ime_lines(&mut ime, &[]);
+    ime.send_line("vk-new k8");
+    let line = loop {
+        let line = ime.next_line("the refusal");
+        if line.starts_with("ime: protocol error") {
+            break line;
+        }
+    };
+    assert!(line.contains("too many virtual keyboards"), "{line}");
+    wait_for_log(
+        &seinas,
+        "a virtual keyboard was refused (too many wait for their first request)",
+    );
+    // 切れた接続の後につないだ IME の virtual-keyboard は、ふつうに使える。
+    wait_for_log(&seinas, "the input method left");
+    let window = open_window(&seinas, "ウィンドウ 2");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            "vk-key a 45 press",
+            "vk-key a 45 release",
+        ],
+    );
+    loop {
+        if next_key_line(&window, "x from a") == "window: key 45 pressed" {
+            break;
+        }
+    }
+}

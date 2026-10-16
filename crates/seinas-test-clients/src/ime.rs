@@ -25,7 +25,9 @@
 //! キーと修飾キーの状態を送る)、`hold`(この後、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard の
 //! キーと修飾キー)を送らずにためる)、`send`(ためた要求を、ためた順に送り、ためるのをやめる)、
 //! `commit-string TEXT`(commit_string だけを送り、commit は送らない)、`delete-surrounding BEFORE AFTER`
-//! (delete_surrounding_text だけを送り、commit は送らない)。
+//! (delete_surrounding_text だけを送り、commit は送らない)、`vk-new NAME`(名前 NAME の virtual-keyboard を
+//! もう 1 つ作る)、`vk-keymap NAME`(grab で届いた keymap を送る)、`vk-key NAME CODE press|release`、
+//! `vk-destroy NAME`。
 //!
 //! 標準出力には、次の行を書く。
 //!
@@ -39,7 +41,7 @@
 //! - `ime: protocol error …`: コンポジタからプロトコルのエラーが届いた(この後、終わる)。
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     io::{BufRead, Write},
     os::fd::AsRawFd,
     sync::mpsc,
@@ -163,6 +165,10 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut second = None;
     // 標準入力の `hold` の後、キーを受けて送る要求をためる所。
     let mut held: Option<Vec<Vec<u8>>> = None;
+    // grab で届いた keymap の形式とコンテンツ(`vk-keymap` で、ほかの virtual-keyboard にも送るため)。
+    let mut keymap_copy: Option<(u32, Vec<u8>)> = None;
+    // `vk-new NAME` で作った virtual-keyboard。
+    let mut named: HashMap<String, u32> = HashMap::new();
 
     loop {
         let event = match wire.poll_event()? {
@@ -225,6 +231,11 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     let format = event.u32_at(0).ok_or("a broken keymap")?;
                     let size = event.u32_at(4).ok_or("a broken keymap")?;
                     let fd = wire.fds.pop_front().ok_or("the keymap came without a fd")?;
+                    let mut copy = vec![0; size as usize];
+                    let file = std::fs::File::from(fd.try_clone().map_err(|e| e.to_string())?);
+                    std::os::unix::fs::FileExt::read_exact_at(&file, &mut copy, 0)
+                        .map_err(|e| format!("cannot read the keymap: {e}"))?;
+                    keymap_copy = Some((format, copy));
                     wire.send_with_fd(
                         &message(
                             keyboard,
@@ -354,7 +365,40 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     say("input method destroyed");
                 }
                 other => {
-                    if let Some(text) = other.strip_prefix("commit-string ") {
+                    let words: Vec<&str> = other.split_whitespace().collect();
+                    if let ["vk-new", name] = words[..] {
+                        // zwp_virtual_keyboard_manager_v1.create_virtual_keyboard(seat、新しい番号)
+                        let id = wire.new_id();
+                        wire.send(&message(
+                            virtual_manager,
+                            0,
+                            &[seat.to_le_bytes(), id.to_le_bytes()].concat(),
+                        ))?;
+                        named.insert(name.to_owned(), id);
+                    } else if let ["vk-keymap", name] = words[..] {
+                        let (Some(&id), Some((format, bytes))) = (named.get(name), &keymap_copy)
+                        else {
+                            continue;
+                        };
+                        let file = crate::wire::make_pool_from(bytes)?;
+                        let body = [format.to_le_bytes(), (bytes.len() as u32).to_le_bytes()];
+                        wire.send_with_fd(&message(id, 0, &body.concat()), file.as_raw_fd())?;
+                    } else if let ["vk-key", name, code, what] = words[..] {
+                        let (Some(&id), Ok(code)) = (named.get(name), code.parse::<u32>()) else {
+                            continue;
+                        };
+                        let pressed = (what == "press") as u32;
+                        let body = [
+                            0u32.to_le_bytes(),
+                            code.to_le_bytes(),
+                            pressed.to_le_bytes(),
+                        ];
+                        wire.send(&message(id, 1, &body.concat()))?;
+                    } else if let ["vk-destroy", name] = words[..] {
+                        if let Some(id) = named.remove(name) {
+                            wire.send(&message(id, 3, &[]))?;
+                        }
+                    } else if let Some(text) = other.strip_prefix("commit-string ") {
                         // zwp_input_method_v2.commit_string(commit は送らない)
                         wire.send(&message(input_method, 0, &string(text)))?;
                     } else if let Some(lengths) = other.strip_prefix("delete-surrounding ") {

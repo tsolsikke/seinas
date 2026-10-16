@@ -98,11 +98,70 @@ pub struct ImeState {
     vk_focus: Option<WlSurface>,
     /// 受け入れた IME の世代(受け入れるたびに 1 つ進める)。
     generation: u64,
-    /// virtual-keyboard を作ったときの世代。作ってから最初の要求が届くまでは、クライアントごとの待ち行列に
-    /// 置く(Smithay が作るオブジェクトの番号は、作るときには分からないため)。
-    vk_pending: HashMap<ClientId, VecDeque<u64>>,
+    /// virtual-keyboard を作ったときの世代。作ってから最初の要求が届くまでは、クライアントごとの待ち行列
+    /// ([`PendingKeyboards`])に置く(Smithay が作るオブジェクトの番号は、作るときには分からないため)。
+    vk_pending: HashMap<ClientId, PendingKeyboards>,
     vk_generation: HashMap<ObjectId, u64>,
 }
+
+/// 1 つのクライアントの、作ったが、まだ最初の要求が届いていない virtual-keyboard。
+///
+/// `queue` は、今の世代で作ったものの世代(どれも同じ世代。世代が変わるのは、前の IME が去った後だけで、その
+/// ときに `queue` は `stale` に移すため)。`stale` は、前の世代で作ったものの数。どのオブジェクトがどれかは
+/// 分からないので、`stale` と `queue` の両方があるときに最初の要求が届いたら、見分けられないとして、そのとき
+/// 待っているものを全部認めない(安全側)。
+#[derive(Debug, Default)]
+struct PendingKeyboards {
+    queue: VecDeque<u64>,
+    stale: usize,
+}
+
+impl PendingKeyboards {
+    fn len(&self) -> usize {
+        self.queue.len() + self.stale
+    }
+
+    /// 前の IME が去った(認可が消えた)。待っているものは、どれも前の世代のものになる。
+    fn retire(&mut self) {
+        self.stale += self.queue.len();
+        self.queue.clear();
+    }
+
+    /// 最初の要求が届いたオブジェクトの世代。見分けられないか、前の世代のものなら None。
+    fn take(&mut self) -> Option<u64> {
+        match (self.stale, self.queue.is_empty()) {
+            (0, _) => self.queue.pop_front(),
+            (_, true) => {
+                self.stale -= 1;
+                None
+            }
+            (_, false) => {
+                // 見分けられない:このオブジェクトを認めず、ほかの待っているものも、前の世代として扱う。
+                self.stale = self.len() - 1;
+                self.queue.clear();
+                None
+            }
+        }
+    }
+
+    /// 最初の要求を送らずに destroy された。
+    fn forget_one(&mut self) {
+        match (self.stale, self.queue.is_empty()) {
+            (0, _) => {
+                self.queue.pop_front();
+            }
+            (_, true) => self.stale -= 1,
+            (_, false) => {
+                self.stale = self.len() - 1;
+                self.queue.clear();
+            }
+        }
+    }
+}
+
+/// 1 つのクライアントが、最初の要求を送らずに持てる virtual-keyboard の数の上限。越えて作ろうとしたら、
+/// `unauthorized` のエラーにする(待ち行列が増え続けないように)。
+const MAX_PENDING_KEYBOARDS: usize = 8;
 
 /// Smithay へ通した IME のクライアントと、そのオブジェクトが残っているか。
 struct Connected {
@@ -207,7 +266,9 @@ impl ImeState {
         let Some(connected) = self.connected.take() else {
             return false;
         };
-        self.vk_pending.remove(&connected.client);
+        if let Some(pending) = self.vk_pending.get_mut(&connected.client) {
+            pending.retire();
+        }
         info!("the input method left; keys go straight to the applications");
         !connected.refreshed
     }
@@ -279,7 +340,9 @@ fn retire<D: FrontendHost>(state: &mut D, client: &ClientId) -> bool {
         return false;
     };
     connected.retired = true;
-    frontend.ime.vk_pending.remove(client);
+    if let Some(pending) = frontend.ime.vk_pending.get_mut(client) {
+        pending.retire();
+    }
     frontend.ime.popup = None;
     if let Some(keyboard) = frontend.keyboard.clone() {
         if ime_grab(&keyboard).is_some() {
@@ -566,12 +629,19 @@ where
             ZwpVirtualKeyboardV1,
             VirtualKeyboardUserData<D>,
             D,
-        >>::destroyed(state, client, resource, data);
-        state
-            .frontend_mut()
-            .ime
-            .vk_generation
-            .remove(&resource.id());
+        >>::destroyed(state, client.clone(), resource, data);
+        let ime = &mut state.frontend_mut().ime;
+        if ime.vk_generation.remove(&resource.id()).is_none() {
+            // 最初の要求を送らずに destroy された:待ち行列から 1 つ外す。
+            if let Some(pending) = ime.vk_pending.get_mut(&client) {
+                pending.forget_one();
+            }
+        }
+        // 待っているものが無くなったクライアントの記録は消す(接続が切れたら、全部の virtual-keyboard が
+        // destroy されるので、記録は残らない)。
+        if ime.vk_pending.get(&client).is_some_and(|p| p.len() == 0) {
+            ime.vk_pending.remove(&client);
+        }
     }
 }
 
@@ -585,10 +655,10 @@ fn vk_authorized<D: FrontendHost>(state: &mut D, client: &ClientId, object: &Obj
             let pending = ime
                 .vk_pending
                 .get_mut(client)
-                .and_then(|queue| queue.pop_front());
-            if let Some(generation) = pending {
-                ime.vk_generation.insert(object.clone(), generation);
-            }
+                .and_then(PendingKeyboards::take);
+            // 認めないものも、0(どの世代とも違う)で覚え、次からは待ち行列を見ない。
+            ime.vk_generation
+                .insert(object.clone(), pending.unwrap_or(0));
             pending
         }
     };
@@ -711,10 +781,17 @@ where
                 );
                 return;
             };
-            ime.vk_pending
-                .entry(client.id())
-                .or_default()
-                .push_back(generation);
+            let pending = ime.vk_pending.entry(client.id()).or_default();
+            if pending.len() >= MAX_PENDING_KEYBOARDS {
+                data_init.init(id, RefusedVirtualKeyboard);
+                resource.post_error(
+                    zwp_virtual_keyboard_manager_v1::Error::Unauthorized,
+                    "too many virtual keyboards wait for their first request",
+                );
+                warn!("a virtual keyboard was refused (too many wait for their first request)");
+                return;
+            }
+            pending.queue.push_back(generation);
             let request =
                 zwp_virtual_keyboard_manager_v1::Request::CreateVirtualKeyboard { seat, id };
             <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardManagerV1, (), D>>::request(
@@ -734,5 +811,58 @@ impl<D> Dispatch<ZwpVirtualKeyboardV1, RefusedVirtualKeyboard, D> for ImeState {
         _dhandle: &DisplayHandle,
         _data_init: &mut DataInit<'_, D>,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PendingKeyboards;
+
+    fn pending(queue: &[u64], stale: usize) -> PendingKeyboards {
+        PendingKeyboards {
+            queue: queue.iter().copied().collect(),
+            stale,
+        }
+    }
+
+    #[test]
+    fn keyboards_of_one_generation_get_it_in_any_order() {
+        let mut p = pending(&[3, 3], 0);
+        assert_eq!(p.take(), Some(3));
+        assert_eq!(p.take(), Some(3));
+        assert_eq!(p.take(), None);
+    }
+
+    #[test]
+    fn a_keyboard_of_a_past_generation_is_not_taken_for_a_new_one() {
+        // 前の世代で作ったもの(stale)だけが残っていれば、認めない。
+        let mut p = pending(&[1], 0);
+        p.retire();
+        assert_eq!(p.take(), None);
+        assert_eq!(p.len(), 0);
+        // 前の世代と今の世代が混ざっていれば、どちらの順で要求が来ても、全部認めない。
+        let mut p = pending(&[1], 0);
+        p.retire();
+        p.queue.push_back(2);
+        assert_eq!(p.take(), None);
+        assert_eq!(p.take(), None);
+        assert_eq!(p.len(), 0);
+        // 混ざりが無くなった後に作ったものは、認める。
+        p.queue.push_back(2);
+        assert_eq!(p.take(), Some(2));
+    }
+
+    #[test]
+    fn a_keyboard_destroyed_before_its_first_request_leaves_the_queue() {
+        let mut p = pending(&[4, 4], 0);
+        p.forget_one();
+        assert_eq!(p.len(), 1);
+        assert_eq!(p.take(), Some(4));
+        let mut p = pending(&[], 2);
+        p.forget_one();
+        assert_eq!(p.len(), 1);
+        let mut p = pending(&[5], 1);
+        p.forget_one();
+        assert_eq!((p.queue.len(), p.stale), (0, 1));
     }
 }

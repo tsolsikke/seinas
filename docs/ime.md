@@ -14,7 +14,7 @@ IME の権限は、シェルの部品の権限と分けています(ADR 0004 の
 
 - IME のためのソケットは、ふだんのソケットのパスの名前に `-ime` を入れたもの(名前に拡張子があれば、その前に入れる。`docs/standalone.md`)です(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)。シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard を見せません。IME のソケットには、layer-shell と foreign-toplevel を見せません(候補の窓に要る `wl_compositor`・`wl_shm` などは見せる)。
 - virtual-keyboard を作れるのは、`get_input_method` を受け入れたクライアントだけです。ほかは、virtual-keyboard の `unauthorized` のエラーで接続を切ります(ログに `a virtual keyboard was refused`)。認可は、接続と、受け入れた IME の世代に結び付けます。受け入れた input method が destroy されたら認可も消え、それまでに作った virtual-keyboard から届いたキーは捨てます。同じ接続からの 2 つ目の `get_input_method` を断っても、1 つ目の認可は消しません。
-  - 限界:virtual-keyboard を作ったときの世代は、そのオブジェクトの最初の要求で決めます(Smithay が作るオブジェクトの番号は、作る要求の時点では分からないため)。世代が変わる前後に作った virtual-keyboard を、作った順と違う順で使い始めたときだけ、新しい方が捨てられることがあります(安全側。ADR 0004 の 1.6)。
+  - 限界:virtual-keyboard を作ったときの世代は、そのオブジェクトの最初の要求で決めます(Smithay が作るオブジェクトの番号は、作る要求の時点では分からないため)。前の世代で作って要求を送っていないものと、今の世代で作ったものが両方待っているときは、見分けられないので、待っているものを全部捨てます(安全側)。要求を送らずに待てるのは 1 つのクライアントで 8 個までで、越えると `unauthorized` のエラー(ログに `a virtual keyboard was refused (too many wait for their first request)`)になります(ADR 0004 の 1.6)。
 - 守れないこと:IME のソケットにつなげるプロセスは、どれも IME になれます。先につないで、IME の枠(同時に 1 つ)を取ることも防げません。
 - Linux:ソケットは `XDG_RUNTIME_DIR`(0700)の下にあるので、つなげるのは同じ利用者のプロセスだけです。
 - ZeikOS:ソケットの名前はカーネルの表で、利用者の概念も、ファイルの権限の検査もありません。0700 は効かず、どのプロセスも IME のソケットにつなげます。効くのは、ソケットを分けた役割の分け方だけです。
@@ -132,6 +132,10 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard` | IME が grab を手放したら、直接の道になる |
 | `a_virtual_keyboard_needs_the_accepted_input_method` | `get_input_method` を受け入れていないクライアントの virtual-keyboard は unauthorized で断られ、受け入れた IME が input method を destroy した後は、その virtual-keyboard のキーがウィンドウに届かない |
 | `a_second_input_method_on_the_same_connection_keeps_the_first` | 同じ接続からの 2 つ目の `get_input_method` は断られ、1 つ目の grab と virtual-keyboard は使える |
+| `virtual_keyboards_of_one_generation_work_in_any_order` | 同じ世代で A・B の順に作った virtual-keyboard を、B から先に使っても、両方とも使える |
+| `virtual_keyboards_of_two_generations_are_not_mixed_up` | 前の世代で作った A と今の世代で作った B が両方待っているとき、B から先に要求しても、どちらも認めない。その後に作ったものは使える |
+| `a_virtual_keyboard_destroyed_before_its_first_request_does_not_shift_the_queue` | 作ってすぐ destroy するのを 10 回くり返しても、上限にかからず、次に作ったものが使える |
+| `too_many_waiting_virtual_keyboards_are_refused` | 要求を送らずに 9 個目を作ると unauthorized で切られ、その後につないだ IME はふつうに使える |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
