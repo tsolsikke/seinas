@@ -53,6 +53,7 @@ Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas �
   - 物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけで発動します。IME が virtual-keyboard で送ったキーは、ショートカットの判定を通らないので、発動しません。
   - 押し続けても 1 回だけです(同じキーを離すまで、繰り返しの押下は使って捨てる)。
   - IME がつないでいないときに押すと、ログに `the emergency release key was pressed, but no input method is running` を出すだけです。
+  - 緊急解除の後、切った接続のクリーンアップが済む前にもう一度押したときは、ログに `the emergency release key was pressed, but the input method is already released and its connection is being cleaned up` を出すだけです。
 
 緊急解除の順番:
 
@@ -144,6 +145,7 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `keys_reach_the_window_after_the_ime_destroys_only_its_input_method` | IME が input method だけを destroy し、grab を残しても、次のキーがウィンドウに届き、IME には届かない |
 | `the_cleanup_runs_once_whatever_the_order` | input method が先・grab が先のどちらの順で消えても、leave の送り直しは 1 回で、次のキーは直接届く |
 | `the_old_cleanup_does_not_remove_the_grab_of_a_new_ime` | 古い世代の grab が残っている間は新しい IME を断り、release の後につないだ IME の grab は、古い接続が切れても外れない |
+| `a_second_release_before_the_cleanup_says_so` | 緊急解除の後、クリーンアップの前にもう一度押すと、「no input method is running」ではなく、クリーンアップの途中であることをログに書く |
 | `a_new_ime_connection_continues_in_the_same_field` | 古い IME が去った後、新しい接続の IME がつながると、同じウィンドウの同じ欄に enter が届き、クリックし直さずに続けて打てる |
 | `the_candidate_window_follows_the_cursor_inside_the_output` | 候補の窓(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |
 | `the_candidate_window_goes_above_the_cursor_at_the_bottom_edge` | 下に入らないときは、カーソルの矩形の上に出る |

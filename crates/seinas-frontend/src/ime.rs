@@ -234,7 +234,9 @@ pub fn release_ime<D: FrontendHost>(state: &mut D) -> bool {
         return false;
     };
     if connected.revoked {
-        info!("the emergency release key was pressed, but no input method is running");
+        info!(
+            "the emergency release key was pressed, but the input method is already released and its connection is being cleaned up"
+        );
         return false;
     }
     // 1. 認可を消す。

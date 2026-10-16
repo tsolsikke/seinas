@@ -1088,3 +1088,23 @@ fn the_old_cleanup_does_not_remove_the_grab_of_a_new_ime() {
     new.wait_for_line("ime: key 30 pressed");
     while next_text_line(&window, "あ") != "window: preedit あ" {}
 }
+
+#[test]
+fn a_second_release_before_the_cleanup_says_so() {
+    let mut seinas = Compositor::start_with_input("jh");
+    let _window = open_window(&seinas, "ウィンドウ");
+    let _ime = connect_ime(&seinas, &[]);
+    // 緊急解除を押し、F12 だけを離して、もう一度押す。1 回の書き込みで送るので、切った接続のクリーンアップ
+    // (イベントループの 1 回の終わり)より先に、2 回目の押下が届く。
+    seinas.pointer(&format!(
+        "key {KEY_LEFT_ALT} press\nkey {KEY_LEFT_SHIFT} press\nkey {KEY_F12} press\nkey {KEY_F12} release\nkey {KEY_F12} press"
+    ));
+    wait_for_log(&seinas, "the input method left");
+    let log = seinas.log();
+    assert!(
+        log.contains("the input method is already released and its connection is being cleaned up"),
+        "{log}"
+    );
+    assert!(!log.contains("no input method is running"), "{log}");
+    lift_release_key(&mut seinas);
+}
