@@ -113,6 +113,10 @@ struct Connected {
     generation: u64,
     /// 緊急解除で認可を消したか(接続を切った後、クリーンアップが済むまで残る)。
     revoked: bool,
+    /// この世代の grab・virtual-keyboard の認可・候補ウィンドウを片付けたか([`retire`]。1 回だけ行う)。
+    retired: bool,
+    /// IME が去った後の `wl_keyboard` の leave と enter を送り直したか(1 回だけ行う)。
+    refreshed: bool,
     /// `zwp_input_method_v2` が残っているか。
     input_method: bool,
     /// 残っている keyboard の grab(`zwp_input_method_keyboard_grab_v2`)の数。
@@ -170,7 +174,10 @@ impl ImeState {
         self.connected
             .as_ref()
             .filter(|connected| {
-                connected.client == *client && connected.input_method && !connected.revoked
+                connected.client == *client
+                    && connected.input_method
+                    && !connected.revoked
+                    && !connected.retired
             })
             .map(|connected| connected.generation)
     }
@@ -187,8 +194,8 @@ impl ImeState {
         self.connected.is_some()
     }
 
-    /// IME の `zwp_input_method_v2` か grab が 1 つ消えた後に呼ぶ。両方とも無くなったら、IME が去ったことにして
-    /// trueを返す。
+    /// IME の `zwp_input_method_v2` か grab が 1 つ消えた後に呼ぶ。両方とも無くなったら、IME が去ったことにする。
+    /// そのとき、`wl_keyboard` の leave と enter をまだ送り直していなければtrueを返す。
     fn forget_if_gone(&mut self) -> bool {
         if !self
             .connected
@@ -197,11 +204,12 @@ impl ImeState {
         {
             return false;
         }
-        if let Some(connected) = self.connected.take() {
-            self.vk_pending.remove(&connected.client);
-        }
+        let Some(connected) = self.connected.take() else {
+            return false;
+        };
+        self.vk_pending.remove(&connected.client);
         info!("the input method left; keys go straight to the applications");
-        true
+        !connected.refreshed
     }
 }
 
@@ -221,22 +229,20 @@ fn ime_grab<D: FrontendHost>(keyboard: &KeyboardHandle<D>) -> Option<InputMethod
 /// IME が去った後の `wl_keyboard` の leave と enter)は、バックエンドが [`crate::reap_dead_clients`] で、すぐ行わせる。
 pub fn release_ime<D: FrontendHost>(state: &mut D) -> bool {
     let frontend = state.frontend_mut();
-    let Some(connected) = frontend.ime.connected.as_mut().filter(|c| !c.revoked) else {
+    let Some(connected) = frontend.ime.connected.as_mut() else {
         info!("the emergency release key was pressed, but no input method is running");
         return false;
     };
+    if connected.revoked {
+        info!("the emergency release key was pressed, but no input method is running");
+        return false;
+    }
     // 1. 認可を消す。
     connected.revoked = true;
     let client = connected.handle.clone();
-    frontend.ime.vk_pending.remove(&client.id());
-    // 2. grab を外し、候補の窓を隠し、接続を切る。
-    if let Some(keyboard) = frontend.keyboard.clone() {
-        if ime_grab(&keyboard).is_some() {
-            keyboard.unset_grab(state);
-        }
-    }
+    // 2. grab を外し、候補ウィンドウを隠し、接続を切る。
+    retire(state, &client.id());
     let frontend = state.frontend_mut();
-    frontend.ime.popup = None;
     client.kill(
         &frontend.display_handle,
         ProtocolError {
@@ -251,6 +257,33 @@ pub fn release_ime<D: FrontendHost>(state: &mut D) -> bool {
     warn!(
         "the input method was released with the emergency key; its connection is closed and keys go straight to the applications"
     );
+    true
+}
+
+/// 受け入れた IME の今の世代の、grab・virtual-keyboard の認可・候補ウィンドウを片付ける(クライアント `client` の
+/// ものだけ。1 回だけ行い、2 回目からは何もしない)。keyboard の grab は、それが IME の grab のときだけ外す(次の
+/// キーから直接の道)。物理のキーボードの状態には触れない。片付けたらtrue。
+///
+/// 新しい IME は、この世代の input method と grab が両方とも無くなるまで受け入れない([`refusal`])ので、ここで
+/// 外す grab は、いつもこの世代のもの。
+fn retire<D: FrontendHost>(state: &mut D, client: &ClientId) -> bool {
+    let frontend = state.frontend_mut();
+    let Some(connected) = frontend
+        .ime
+        .connected
+        .as_mut()
+        .filter(|c| c.client == *client && !c.retired)
+    else {
+        return false;
+    };
+    connected.retired = true;
+    frontend.ime.vk_pending.remove(client);
+    frontend.ime.popup = None;
+    if let Some(keyboard) = frontend.keyboard.clone() {
+        if ime_grab(&keyboard).is_some() {
+            keyboard.unset_grab(state);
+        }
+    }
     state.redraw_needed();
     true
 }
@@ -295,6 +328,8 @@ fn refusal<D: FrontendHost>(state: &D, seat: &Seat<D>) -> Option<&'static str> {
     } else if let Some(connected) = &state.frontend().ime.connected {
         Some(if connected.revoked {
             "the released input method is not cleaned up yet"
+        } else if !connected.input_method {
+            "the destroyed input method still has a keyboard grab"
         } else {
             "another input method is running"
         })
@@ -339,6 +374,8 @@ where
                     handle: client.clone(),
                     generation: ime.generation,
                     revoked: false,
+                    retired: false,
+                    refreshed: false,
                     input_method: true,
                     grabs: 0,
                 });
@@ -412,11 +449,25 @@ where
             state, client.clone(), resource, data,
         );
         let ime = &mut state.frontend_mut().ime;
-        if let Some(connected) = ime.connected.as_mut().filter(|c| c.client == client) {
-            connected.input_method = false;
-        }
-        if ime.forget_if_gone() {
+        let Some(connected) = ime.connected.as_mut().filter(|c| c.client == client) else {
+            return;
+        };
+        connected.input_method = false;
+        // 仕様では、input method の destroy は、その子(候補ウィンドウと keyboard の grab)も破棄する
+        // (input-method-unstable-v2.xml の destroy)。grab のオブジェクトが残っていても、この世代を片付けて、
+        // 直接の道に戻す。Smithay の部品は、ここで text-input の leave を送り終えている。
+        let grab_left = connected.grabs > 0;
+        let retired = retire(state, &client);
+        if state.frontend_mut().ime.forget_if_gone() {
             refresh_keyboard_focus(state);
+        } else if retired && grab_left {
+            info!(
+                "the input method was destroyed; its keyboard grab is ignored and keys go straight to the applications"
+            );
+            refresh_keyboard_focus(state);
+            if let Some(connected) = state.frontend_mut().ime.connected.as_mut() {
+                connected.refreshed = true;
+            }
         }
     }
 }

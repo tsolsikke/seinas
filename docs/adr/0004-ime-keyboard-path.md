@@ -90,6 +90,10 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 時間切れで「応答しない」と見なして直接の経路へ逃がす決まりは、2026-10-15 に取り消した(下の「取り消した決定」)。代わりに、次の 2 つで直接の経路に戻す。どちらも、IME にキーごとの返事を求めない。
 
 - 接続断:IME のクライアントが去った、または keyboard の grab を手放したら、次のキーから直接の経路にする(1.4)。
+- input method の destroy(2026-10-16 に決めた):IME が `zwp_input_method_v2` だけを destroy して、grab のオブジェクトを残していても、その世代の grab・virtual-keyboard の認可・候補ウィンドウを片付けて、直接の経路にする(IME が去ったときと同じ片付け)。仕様の根拠は input-method-unstable-v2.xml(wayland-protocols-misc 0.3.12)357〜363 行の `zwp_input_method_v2.destroy`:「Destroys the zwp_text_input_v2 object and any associated child objects, i.e. zwp_input_popup_surface_v2 and zwp_input_method_keyboard_grab_v2.」(対象を zwp_text_input_v2 と書いているのは XML の書き損じで、input method の destroy の説明)。
+  - 片付けるのは、その接続・seat・世代のものだけ。keyboard の grab は、それが IME の grab のときだけ外す。物理のキーボードの状態には触れない。
+  - 片付けは 1 回だけ行う。input method と grab の destroy の順が違っても、接続断と重なっても、`wl_keyboard` の leave と enter の送り直しは 1 回。
+  - 古い世代の grab のオブジェクトが残っている間は、新しい `get_input_method` を断る(ログに `the destroyed input method still has a keyboard grab`)。古い grab の destroy(Smithay 0.7.0 の部品は、seat の grab を外す)が、新しい IME の grab を外さないようにするため。
 - 緊急解除:Seinas が IME より先に見るショートカット(1.8)で、IME のクライアントの接続を切る(R-b)。
   - 既定のキーは Alt+Shift+F12。入れ子(WSLg)では、運用者が、届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認(Seinas のキーボードの入力の装置が、まだ無い)。`seinas.conf` の `ime-release` で変えられる。
   - 発動するのは、物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけ。IME が virtual-keyboard で送ったキーでは発動しない(Smithay 0.7.0 の virtual-keyboard のキーは、ショートカットの判定を通らず、フォーカスのあるクライアントへ直に届く)。

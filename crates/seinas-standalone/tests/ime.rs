@@ -989,3 +989,102 @@ fn a_new_ime_connection_continues_in_the_same_field() {
     tap(&mut seinas, KEY_I);
     while next_text_line(&window, "い") != "window: preedit い" {}
 }
+
+/// ウィンドウの、`duration` の間の `window: keyboard leave` の行の数。
+fn keyboard_leaves_within(window: &TestClient, duration: std::time::Duration) -> usize {
+    window
+        .lines_within(duration)
+        .iter()
+        .filter(|line| *line == "window: keyboard leave")
+        .count()
+}
+
+#[test]
+fn keys_reach_the_window_after_the_ime_destroys_only_its_input_method() {
+    let mut seinas = Compositor::start_with_input("jd");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // input method だけを destroy し、grab は release しない。仕様では、子の grab も破棄されたことになる。
+    ime.send_line("destroy-input-method");
+    ime.wait_for_line("ime: input method destroyed");
+    wait_for_log(
+        &seinas,
+        "the input method was destroyed; its keyboard grab is ignored",
+    );
+    assert_eq!(next_reentered_keys(&window), Vec::<u32>::new());
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 released");
+    // IME には届かない。
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+    let lines = ime.lines_within(std::time::Duration::from_millis(200));
+    assert!(
+        !lines.iter().any(|line| line.starts_with("ime: key")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn the_cleanup_runs_once_whatever_the_order() {
+    // input method を先に destroy し、後で grab を release する。leave と enter の送り直しは 1 回だけ。
+    let mut seinas = Compositor::start_with_input("je");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime.send_line("destroy-input-method");
+    ime.wait_for_line("ime: input method destroyed");
+    ime.send_line("release");
+    ime.wait_for_line("ime: released");
+    wait_for_log(&seinas, "the input method left");
+    assert_eq!(
+        keyboard_leaves_within(&window, std::time::Duration::from_millis(400)),
+        1
+    );
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+
+    // grab を先に release し、後で input method を destroy する。
+    let mut seinas = Compositor::start_with_input("jf");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime.send_line("release");
+    ime.wait_for_line("ime: released");
+    tap(&mut seinas, KEY_Y);
+    assert_eq!(next_key_line(&window, "y"), "window: key 21 pressed");
+    ime.send_line("destroy-input-method");
+    ime.wait_for_line("ime: input method destroyed");
+    wait_for_log(&seinas, "the input method left");
+    assert_eq!(
+        keyboard_leaves_within(&window, std::time::Duration::from_millis(400)),
+        1
+    );
+    tap(&mut seinas, KEY_X);
+    assert_eq!(next_key_line(&window, "x"), "window: key 45 pressed");
+}
+
+#[test]
+fn the_old_cleanup_does_not_remove_the_grab_of_a_new_ime() {
+    let mut seinas = Compositor::start_with_input("jg");
+    let window = open_text_window(&seinas, "ウィンドウ");
+    let mut old = connect_ime_to_window(&seinas);
+    old.send_line("destroy-input-method");
+    old.wait_for_line("ime: input method destroyed");
+    // 古い世代の grab のオブジェクトが残っている間は、新しい IME を受け入れない。
+    let mut refused = seinas.connect_ime_client(&["ime"]);
+    refused.wait_for_line("ime: unavailable");
+    let _ = refused.process.0.wait();
+    wait_for_log(
+        &seinas,
+        "the destroyed input method still has a keyboard grab",
+    );
+    // 古い grab を release した後につないだ IME は使え、古い接続が切れても、その grab は外れない。
+    old.send_line("release");
+    old.wait_for_line("ime: released");
+    wait_for_log(&seinas, "the input method left");
+    let new = connect_ime_to_window(&seinas);
+    old.send_line("quit");
+    let _ = old.process.0.wait();
+    tap(&mut seinas, KEY_A);
+    new.wait_for_line("ime: key 30 pressed");
+    while next_text_line(&window, "あ") != "window: preedit あ" {}
+}
