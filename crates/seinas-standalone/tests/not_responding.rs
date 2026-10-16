@@ -98,9 +98,15 @@ fn a_client_that_does_not_answer_the_ping_is_marked_and_cut_off() {
     seinas.wait_for_screen("only the other window", |shot| {
         shot.pixel(150, 150) == ORANGE && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
     });
-    assert!(seinas
-        .log()
-        .contains("disconnecting a client that does not respond (the window \"frozen\")"));
+    // ログには、切る理由と接続・オブジェクトの id があり、ウィンドウのタイトル(frozen)は無い。
+    let log = seinas.log();
+    assert!(
+        log.contains("disconnecting a client that does not respond (connection"),
+        "{log}"
+    );
+    assert!(log.contains("xdg_toplevel@"), "{log}");
+    assert!(log.contains("did not answer a ping"), "{log}");
+    assert!(!log.contains("frozen"), "{log}");
 
     // Seinas と、ほかのクライアントは動き続ける。
     seinas.pointer("key 30 press");

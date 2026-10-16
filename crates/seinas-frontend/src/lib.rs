@@ -816,9 +816,13 @@ impl<D: FrontendHost> Frontend<D> {
             self.request_close(id);
             return;
         }
-        let title = toplevel_title(&window.item);
+        // ふだんのログには、ウィンドウのタイトルを書かない(ADR 0004 の 1.6)。接続とオブジェクトの id と、切る理由を
+        // 書く。
+        let surface = window.item.wl_surface();
+        let connection = surface.client().map(|client| client.id());
         warn!(
-            "disconnecting a client that does not respond (the window \"{title}\"); its process is not killed"
+            "disconnecting a client that does not respond (connection {connection:?}, {}): the close button was pressed after it did not answer a ping; its process is not killed",
+            window.item.xdg_toplevel().id()
         );
         // xdg_wm_base の unresponsive のエラーを送り、接続を切る。
         if let Err(e) = client.unresponsive() {
