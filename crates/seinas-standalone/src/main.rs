@@ -438,15 +438,25 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         options.ime_socket,
         IME_SOCKET_SUFFIX,
     );
-    let given: Vec<&Path> = [
-        options.socket.as_deref(),
-        shell_path.as_deref(),
-        ime_path.as_deref(),
+    // パスの指定が無いソケットは、XDG_RUNTIME_DIR の下の既定の名前で作るので、それも比べる。
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    let shell_name = format!("{DEFAULT_SOCKET_NAME}{SHELL_SOCKET_SUFFIX}");
+    let ime_name = format!("{DEFAULT_SOCKET_NAME}{IME_SOCKET_SUFFIX}");
+    let effective = |given: Option<&PathBuf>, name: &str| {
+        given
+            .cloned()
+            .or_else(|| runtime_dir.as_ref().map(|dir| dir.join(name)))
+    };
+    let paths: Vec<PathBuf> = [
+        effective(options.socket.as_ref(), DEFAULT_SOCKET_NAME),
+        effective(shell_path.as_ref(), &shell_name),
+        effective(ime_path.as_ref(), &ime_name),
     ]
     .into_iter()
     .flatten()
     .collect();
-    if let Some(conflict) = lock_conflict(&given) {
+    let paths: Vec<&Path> = paths.iter().map(PathBuf::as_path).collect();
+    if let Some(conflict) = lock_conflict(&paths) {
         return Err(conflict.into());
     }
     let listener = bind_socket(options.socket, DEFAULT_SOCKET_NAME)?;
@@ -459,7 +469,6 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             Ok(PostAction::Continue)
         },
     )?;
-    let shell_name = format!("{DEFAULT_SOCKET_NAME}{SHELL_SOCKET_SUFFIX}");
     let shell_listener = bind_socket(shell_path, &shell_name)?;
     event_loop.handle().insert_source(
         Generic::new(shell_listener, Interest::READ, Mode::Level),
@@ -470,7 +479,6 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             Ok(PostAction::Continue)
         },
     )?;
-    let ime_name = format!("{DEFAULT_SOCKET_NAME}{IME_SOCKET_SUFFIX}");
     let ime_listener = bind_socket(ime_path, &ime_name)?;
     event_loop.handle().insert_source(
         Generic::new(ime_listener, Interest::READ, Mode::Level),

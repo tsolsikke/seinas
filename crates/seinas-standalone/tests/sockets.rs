@@ -36,6 +36,11 @@ fn work_dir(name: &str) -> WorkDir {
 
 /// seinas-standalone を、fake screen と引数 `args` で起こす(標準エラーは `dir/log`)。
 fn start(dir: &Path, args: &[&str]) -> Running {
+    start_with_env(dir, args, &[])
+}
+
+/// [`start`] と同じだが、環境変数 `env` も付ける。
+fn start_with_env(dir: &Path, args: &[&str], env: &[(&str, &Path)]) -> Running {
     let log = fs::File::create(dir.join("log")).expect("create the log file");
     Running(
         child_command(env!("CARGO_BIN_EXE_seinas-standalone"))
@@ -45,6 +50,7 @@ fn start(dir: &Path, args: &[&str]) -> Running {
             .args(args)
             .env_remove("SEINAS_FONTS")
             .env("XDG_CONFIG_HOME", dir)
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stderr(log)
             .spawn()
@@ -127,4 +133,24 @@ fn socket_paths_that_would_share_a_lock_file_are_refused() {
     let log = fs::read_to_string(dir.join("log")).unwrap_or_default();
     assert!(log.contains("would share the lock file"), "{log}");
     assert!(!socket.exists() && !shell.exists());
+}
+
+#[test]
+fn a_given_path_that_would_share_the_lock_file_of_a_default_socket_is_refused() {
+    // --socket が無いと、ふだんのソケットは XDG_RUNTIME_DIR の下の seinas-0(ロックファイルは seinas-0.lock)。
+    // --shell-socket に seinas-0.x を選ぶと、同じロックファイルになる。
+    let work = work_dir("kc");
+    let dir = &work.0;
+    let shell = dir.join("seinas-0.x");
+    let mut seinas = start_with_env(
+        dir,
+        &["--shell-socket", &shell.to_string_lossy()],
+        &[("XDG_RUNTIME_DIR", dir)],
+    );
+    let status = seinas.0.wait().expect("seinas-standalone ends");
+    assert_eq!(status.code(), Some(1));
+    let log = fs::read_to_string(dir.join("log")).unwrap_or_default();
+    assert!(log.contains("would share the lock file"), "{log}");
+    assert!(log.contains("seinas-0.lock"), "{log}");
+    assert!(!dir.join("seinas-0").exists() && !shell.exists());
 }
