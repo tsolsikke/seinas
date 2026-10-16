@@ -7,14 +7,14 @@
 
 運用者の決定(2026-10-15)で、セルフホスティングを、ZeikOS と Seinas のロードマップのゴールの 1 つにした。ゴールは「ZeikOS の上で、ZeikOS と Seinas のソースを編集し、ビルドし、できたものに切り替えて動かせる」こと。長期の目標で、今のスプリントの優先順位は変えない。
 
-正本は Confluence の「長期ゴール — セルフホスティング(ZeikOS・Seinas)」のページ(https://zeikos.atlassian.net/wiki/spaces/SCRUM/pages/5767169)。段階(S0〜S5)、ZeikOS の側の条件、今の計画への影響は、そちらに書いてある。zeikos のリポジトリにも、ZeikOS を再開したときに ADR を作る。できたら、ここにその参照を足す。この ADR には、Seinas の側の条件だけを短く書く。
+正本は Confluence の「長期ゴール — セルフホスティング(ZeikOS・Seinas)」のページ(https://zeikos.atlassian.net/wiki/spaces/SCRUM/pages/5767169)。段階(S0〜S5)、ZeikOS の側の条件、今の計画への影響は、そちらに書いてある。zeikos のリポジトリの側の決定と、ZeikOS の側の条件・現在地は、zeikos の `docs/adr/0086-self-hosting-as-a-long-term-goal.md`(ADR-0086。2026-10-15)にある。この ADR には、Seinas の側の条件だけを短く書く。
 
 ## 決定
 
 ### 1. 段階と、達成とする所
 
 - S4「ZeikOS の中で ZeikOS と Seinas をビルドできる」を、ゴールの達成とする。S5(中でビルドしたものに切り替えて動かし、中で全部の検査も回す)は、発展の目標。
-- 段階の一覧と、それぞれの位置づけは、Confluence のページを見る。
+- 段階の一覧と、それぞれの位置づけは、Confluence のページと zeikos の ADR-0086 を見る。
 
 ### 2. ビルドの依存(proc-macro と build.rs)
 
@@ -49,7 +49,7 @@
 
 ### 4. ZeikOS への要求(今の Seinas から見えるもの)
 
-- Seinas のコンポジタは、listen のソケットを 3 つ使う(ふだん・シェルの部品・IME)。ZeikOS の今の上限は 1 つ(`docs/zeikos-requirements.md` の「ソケットの数」の行)。
+- Seinas のコンポジタは、listen のソケットを 3 つ使う(ふだん・シェルの部品・IME)。ZeikOS の今の上限は 1 つ(`docs/zeikos-requirements.md` の「ソケットの数」の行)。ZeikOS の側では、listen のソケットをパスに bind し、隣のロックファイルを flock で取る設計を、zeikos の ADR-0087(`docs/adr/0087-listen-sockets-bind-to-paths-and-flock-takes-the-lock-file.md`。2026-10-16)で決めている。
 - ZeikOS には、利用者と権限の概念が無い(ソケットの名前に、所有者と権限の検査が無い)。Seinas の IME の権限は、ソケットを分けた役割の分け方だけに頼る(`docs/ime.md` の「見せる global」、ADR 0004 の 1.6)。
 
 ## 結果
