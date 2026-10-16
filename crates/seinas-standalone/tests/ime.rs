@@ -787,7 +787,29 @@ fn the_release_key_closes_the_ime_and_keys_go_straight_to_the_window() {
     ime.send_line("delete-surrounding 1 0");
     ime.send_line("sync");
     ime.wait_for_line("ime: synced");
-    press_release_key(&mut seinas);
+    // Alt と Shift は IME を通ってウィンドウに届く。IME が virtual-keyboard で送り返し終えてから F12 を押す
+    // (送り返す途中で接続が切れると、IME の送信が EPIPE で失敗するため)。
+    key(&mut seinas, KEY_LEFT_ALT, true);
+    key(&mut seinas, KEY_LEFT_SHIFT, true);
+    let mut before = Vec::new();
+    loop {
+        let line = window.next_line("alt and shift");
+        let done = line == "window: key 42 pressed";
+        before.push(line);
+        if done {
+            break;
+        }
+    }
+    let keys: Vec<&String> = before
+        .iter()
+        .filter(|line| line.starts_with("window: key "))
+        .collect();
+    assert_eq!(
+        keys,
+        ["window: key 56 pressed", "window: key 42 pressed"],
+        "{before:?}"
+    );
+    key(&mut seinas, KEY_F12, true);
     // IME の接続は切れて、IME は終わる。
     let status = ime.process.0.wait().expect("the IME ends");
     assert!(status.success(), "{status}");
@@ -796,7 +818,12 @@ fn the_release_key_closes_the_ime_and_keys_go_straight_to_the_window() {
         "the input method was released with the emergency key",
     );
     wait_for_log(&seinas, "the input method left");
-    let lines = text_lines_until(&window, "window: reset preedit");
+    // delete_surrounding_text の行は、Seinas が IME の sync に答える前に送るので、Alt と Shift の行より先にある。
+    let mut lines: Vec<String> = before
+        .into_iter()
+        .filter(|line| line.starts_with("window: delete "))
+        .collect();
+    lines.extend(text_lines_until(&window, "window: reset preedit"));
     assert_eq!(
         lines,
         [
