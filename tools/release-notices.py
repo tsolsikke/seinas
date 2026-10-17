@@ -139,12 +139,12 @@ def main():
         f.write(f"`tools/release-notices.py` が作るファイルです。対象は、`{TARGET}` 向けに静的にリンクした `{package_name}` です。\n\n")
         f.write("## Seinas 自身\n\nMITライセンスです。`LICENSE` を見てください。\n\n")
         f.write(f"## Rustのクレート({len(rows)}個)\n\n")
-        f.write("| クレート | 版 | ライセンス | ライセンス文 |\n| --- | --- | --- | --- |\n")
+        f.write("| クレート | バージョン | ライセンス | ライセンス文 |\n| --- | --- | --- | --- |\n")
         for name, version, license_, where in rows:
             f.write(f"| {name} | {version} | {license_} | {where} |\n")
         f.write("\n複数のライセンスから選べるクレートは、MIT、Apache-2.0、Zlibのどれかで使います。\n\n")
         f.write("## Cのライブラリ(静的にリンクしたもの)\n\n")
-        f.write("| ライブラリ | 版 | ライセンス | 使われ方 | ライセンス文 |\n| --- | --- | --- | --- | --- |\n")
+        f.write("| ライブラリ | バージョン | ライセンス | 使われ方 | ライセンス文 |\n| --- | --- | --- | --- | --- |\n")
         for name, version, license_, directory, use, _ in c_libraries:
             files = ", ".join(sorted(os.listdir(os.path.join(out, "c-libraries", directory))))
             f.write(f"| {name} | {version} | {license_} | {use} | c-libraries/{directory}/({files}) |\n")
