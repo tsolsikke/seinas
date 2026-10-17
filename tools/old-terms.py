@@ -85,7 +85,8 @@ def strict_terms():
     end = text.index("\n## ", start + 1)
     found = []
     for line in text[start:end].splitlines():
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        # セルの中の「\|」は、区切りではなく文字の「|」。
+        cells = [c.strip().replace("\\|", "|") for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
         if len(cells) != 5 or cells[0] in ("使わない語", "---"):
             continue
         excluded = re.findall(r"`([^`]+)`", cells[3])
