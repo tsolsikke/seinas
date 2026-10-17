@@ -1,6 +1,6 @@
 //! 画面の形式と、描画結果をその形式に直して写す処理。
 //!
-//! 共通の描画が返すのは `Xrgb8888`(メモリー上でB, G, R, Xの順)の1種類だけである。
+//! 共通のレンダラーが返すのは `Xrgb8888`(メモリー上でB, G, R, Xの順)の1種類だけである。
 //! 画面の側の違い(色の位置、1行のバイト数、見えている範囲の位置)は、ここで吸収する。
 
 use seinas_render::{FrameView, PixelFormat};
@@ -69,7 +69,7 @@ impl Layout {
         if info.width == 0 || info.height == 0 {
             return Err(invalid_size);
         }
-        // 共通の描画は、幅×高さ×4がi32に収まる大きさまでしか描けない。
+        // 共通のレンダラーは、幅×高さ×4がi32に収まる大きさまでしか描けない。
         let fits = (info.width as u64) * (info.height as u64) * (BYTES_PER_PIXEL as u64)
             <= i32::MAX as u64;
         if !fits {
@@ -145,7 +145,7 @@ impl Layout {
                 needed: self.required_len(),
             });
         }
-        // 共通の描画の形式は1種類だけ。増えたら、ここで分ける。
+        // 共通のレンダラーの形式は1種類だけ。増えたら、ここで分ける。
         let PixelFormat::Xrgb8888 = view.format();
         // 描画結果のメモリー上の並びは B, G, R, X。
         let same_order = (self.blue, self.green, self.red) == (0, 1, 2) && self.alpha.is_none();
@@ -215,7 +215,7 @@ mod tests {
         }
     }
 
-    /// 左上が赤、右上が緑、左下が青、ほかは白の絵を描いて、`info` の形式の偽の画面へ写す。
+    /// 左上が赤、右上が緑、左下が青、ほかは白の絵を描いて、`info` の形式の fake screen へ写す。
     fn paint_to(info: &ScreenInfo, screen: &mut [u8]) -> Result<(), FbError> {
         let layout = Layout::new(info)?;
         let mut painter = Painter::new(WIDTH as i32, HEIGHT as i32).unwrap();
@@ -229,7 +229,7 @@ mod tests {
         layout.blit(&view, screen)
     }
 
-    /// 偽の画面の(x, y)のピクセルを、(赤, 緑, 青)で読む。
+    /// fake screen の(x, y)のピクセルを、(赤, 緑, 青)で読む。
     fn rgb(info: &ScreenInfo, screen: &[u8], x: u32, y: u32) -> [u8; 3] {
         let at = ((info.y_offset + y) * info.line_length + (info.x_offset + x) * 4) as usize;
         let pixel = u32::from_le_bytes(screen[at..at + 4].try_into().unwrap());

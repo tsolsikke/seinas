@@ -37,11 +37,11 @@ jobs:
         run: cargo build --workspace --locked
       - name: テスト
         run: cargo test --workspace --locked
-      - name: 受け口とfbdevの構成に、入れ子の裏側が入っていないこと
+      - name: フロントエンドとfbdevの構成に、入れ子のバックエンドが入っていないこと
         run: tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source
-      - name: 共通の描画だけのテスト(受け口を含めずにビルドする)
+      - name: 共通のレンダラーだけのテスト(フロントエンドを含めずにビルドする)
         run: cargo test -p seinas-render --locked
-      - name: fbdevの裏側に、Waylandの受け口が入っていないこと
+      - name: fbdevのバックエンドに、Waylandのフロントエンドが入っていないこと
         run: |
           cargo build --locked -p seinas-fbdev
           tools/check-no-wayland.sh seinas-fbdev target/debug/seinas-fbdev

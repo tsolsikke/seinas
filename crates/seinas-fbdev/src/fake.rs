@@ -1,4 +1,4 @@
-//! 偽の画面。装置を開かずに、メモリーの上へ描く。
+//! fake screen。装置を開かずに、メモリーの上へ描く。
 //!
 //! 装置の無い環境(WSLやCIなど)で、描いた結果を確かめるために使う。中身はPPM形式の画像として
 //! 書き出せる。
@@ -12,14 +12,14 @@ use crate::{
     FbError,
 };
 
-/// メモリーの上の画面。形式は、共通の描画と同じ並び(B, G, R, X)で、行に余りは無い。
+/// メモリーの上の画面。形式は、共通のレンダラーと同じ並び(B, G, R, X)で、行に余りは無い。
 pub struct FakeScreen {
     layout: Layout,
     pixels: Vec<u8>,
 }
 
 impl FakeScreen {
-    /// `width` × `height` ピクセルの偽の画面を作る。中身は0(黒)で始まる。
+    /// `width` × `height` ピクセルの fake screen を作る。中身は0(黒)で始まる。
     pub fn new(width: u32, height: u32) -> Result<Self, FbError> {
         let info = ScreenInfo {
             width,
@@ -57,7 +57,7 @@ impl FakeScreen {
         &self.pixels
     }
 
-    /// 描画結果を、偽の画面へ写す。
+    /// 描画結果を、fake screen へ写す。
     pub fn show(&mut self, view: &FrameView<'_>) -> Result<(), FbError> {
         self.layout.blit(view, &mut self.pixels)
     }

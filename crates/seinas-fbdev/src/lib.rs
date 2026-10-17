@@ -1,13 +1,13 @@
-//! Seinasの裏側の1つ: Linuxのfbdev(`/dev/fb0`)の形の画面へ、共通の描画の結果を出す。
+//! Seinasのバックエンドの1つ: Linuxのfbdev(`/dev/fb0`)の形の画面へ、共通のレンダラーの結果を出す。
 //!
-//! Waylandのソケットは開かない。依存は共通の描画(`seinas-render`)とlibcだけである。
+//! Waylandのソケットは開かない。依存は共通のレンダラー(`seinas-render`)とlibcだけである。
 //!
 //! - `layout`: 画面の形式(1ピクセルのビット数、色の位置、1行のバイト数)を調べ、描画結果を
-//!   その形式に直して写す。形式の差はここで吸収し、共通の描画には持ち込まない。
+//!   その形式に直して写す。形式の差はここで吸収し、共通のレンダラーには持ち込まない。
 //! - `device`: 装置を開き、画面の情報を読み、画面の領域を対応づける。
 //! - `present`: 書いた絵を画面へ反映する処理。OSごとに差し替えられる。
 //! - `picture`: 確かめやすい、決まった絵。
-//! - `fake`: 装置を開かずに描くための、メモリーの上の偽の画面。
+//! - `fake`: 装置を開かずに描くための、メモリーの上の fake screen。
 
 pub mod device;
 pub mod fake;
@@ -19,7 +19,7 @@ use std::{fmt, io};
 
 use seinas_render::RenderError;
 
-/// fbdevの裏側の失敗。
+/// fbdevのバックエンドの失敗。
 #[derive(Debug)]
 pub enum FbError {
     /// 装置を開けなかった。
@@ -54,7 +54,7 @@ pub enum FbError {
     },
     /// 画面への反映に失敗した。
     Present(io::Error),
-    /// 共通の描画が失敗した。
+    /// 共通のレンダラーが失敗した。
     Render(RenderError),
 }
 

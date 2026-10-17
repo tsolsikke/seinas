@@ -1,35 +1,35 @@
-# 受け口とfbdevを組み合わせた構成
+# フロントエンドとfbdevを組み合わせた構成
 
 `crates/seinas-standalone` は、親のWaylandを使わない構成のSeinasです。
-Waylandの受け口で受けたクライアントの画面を、共通の描画で合成し、fbdevの画面へ出します。
+Waylandのフロントエンドで受けたクライアントの画面を、共通のレンダラーで合成し、fbdevの画面へ present します。
 
 ## 構成
 
 | クレート | 役割 | この構成で使うか |
 | --- | --- | --- |
-| `seinas-frontend` | Waylandの受け口(Smithay) | 使う |
-| `seinas-render` | 共通の描画 | 使う |
-| `seinas-text` | 文字を描く(ウィンドウのタイトル)。受け口が使う | 使う |
-| `seinas-fbdev`(ライブラリ) | fbdevの裏側と、偽の画面 | 使う |
-| `seinas`(入れ子の裏側。SCTK、wayland-client) | 親のWaylandへ出す | 使わない |
+| `seinas-frontend` | Waylandのフロントエンド(Smithay) | 使う |
+| `seinas-render` | 共通のレンダラー | 使う |
+| `seinas-text` | 文字を描く(ウィンドウのタイトル)。フロントエンドが使う | 使う |
+| `seinas-fbdev`(ライブラリ) | fbdevのバックエンドと、fake screen | 使う |
+| `seinas`(入れ子のバックエンド。SCTK、wayland-client) | 親のWaylandへ出す | 使わない |
 
-受け口は、もとは `seinas` の中のモジュールでした。入れ子の構成とこの構成の両方から使えるように、`seinas-frontend` として切り出しています。
+フロントエンドは、もとは `seinas` の中のモジュールでした。入れ子の構成とこの構成の両方から使えるように、`seinas-frontend` として切り出しています。
 Smithayのハンドラは、コンポジタの状態の型そのものに実装する決まりなので、`seinas-frontend` は次の2つを用意しています。
 
-- `FrontendHost`: 状態の型が実装する。受け口の置き場所と、描き直しの知らせ方を教える。
-- `delegate_frontend!`: Smithayのハンドラと、受け口の作り方を、状態の型に実装するマクロ。
+- `FrontendHost`: 状態の型が実装する。フロントエンドの置き場所と、描き直しの知らせ方を教える。
+- `delegate_frontend!`: Smithayのハンドラと、フロントエンドの作り方を、状態の型に実装するマクロ。
 
-入れ子の裏側が依存に入っていないことは、次で確かめます。CIと `tools/build-musl.sh` にも入れてあります。
+入れ子のバックエンドが依存に入っていないことは、次で確かめます。CIと `tools/build-musl.sh` にも入れてあります。
 
 ```bash
 tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source
 ```
 
-受け口の側のwayland系のクレート(wayland-server、wayland-backend、wayland-protocolsなど)は、入っていて当然なので見ません。
+フロントエンドの側のwayland系のクレート(wayland-server、wayland-backend、wayland-protocolsなど)は、入っていて当然なので見ません。
 
 ## 動かし方
 
-装置を開かずに、偽の画面(メモリー上)で動かす例です。
+装置を開かずに、fake screen(メモリー上)で動かす例です。
 
 ```bash
 cargo run --locked -p seinas-standalone -- --fake 800x600 --dump /tmp/screen.ppm --socket /tmp/seinas.sock
@@ -44,8 +44,8 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | 引数 | 意味 |
 | --- | --- |
 | `--device PATH` | 画面の装置。無ければ環境変数 `SEINAS_FBDEV`、それも無ければ `/dev/fb0` |
-| `--fake WIDTHxHEIGHT` | 装置を開かず、その大きさの偽の画面へ描く |
-| `--dump FILE` | 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く(`--fake` のときだけ) |
+| `--fake WIDTHxHEIGHT` | 装置を開かず、その大きさの fake screen へ描く |
+| `--dump FILE` | fake screen の中身を、描くたびにPPM形式の画像としてファイルに書く(`--fake` のときだけ) |
 | `--socket PATH` | クライアントのために listen するソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0`。ロックファイルは、パスの拡張子を `.lock` に替えたもの(`/tmp/seinas.sock` なら `/tmp/seinas.lock`。wayland-server の決まり) |
 | `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`text-rendering.md` の「利用者が選んだフォント」) |
 | `--shell-socket PATH` | シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-shell` を入れたもの(名前に拡張子があれば、その前に入れる。`/tmp/seinas.sock` なら `/tmp/seinas-shell.sock`、`/tmp/wl` なら `/tmp/wl-shell`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。ここからつないだクライアントにだけ、layer-shell とウィンドウの一覧(foreign-toplevel)を見せる |
@@ -105,7 +105,7 @@ wl_seatは、ふだんは公開しません(入力の装置を扱わないため
 fbdevには、垂直同期の知らせがありません。そこで、次のようにしています。
 
 - クライアントがcommitすると、「描き直しが要る」と覚えます。
-- 描き直しが要るときにだけ、1枚を合成して画面へ出します。
+- 描き直しが要るときにだけ、1枚を合成して画面へ present します。
 - 出した直後に、クライアントへframeコールバックを返します。クライアントは、それを合図に次の絵を描きます。
 - 描く回数は、1秒に60回までです。前に描いてから1/60秒たっていなければ、その時刻まで待ってから描きます。
 - 起動したときは、クライアントがいなくても、背景を1枚出します。
@@ -153,7 +153,7 @@ fbdevには、垂直同期の知らせがありません。そこで、次のよ
 
 `crates/seinas-standalone/tests/with_client.rs` が、次を確かめます。親のWaylandも画面の装置も要らないので、CIで動きます。
 
-1. 偽の画面(640x480)で起動すると、背景が1枚出て、ソケットで待ち受ける。
+1. fake screen(640x480)で起動すると、背景が1枚出て、ソケットで待ち受ける。
 2. zeyes-minをつなぐと、そのウィンドウが画面の左上に描かれる(タイトルバーの下に、コンテンツが来る)。ポインターは無いままです。
 3. zeyes-minを強制終了すると、ウィンドウが消えて背景に戻り、後始末のスレッドが1本できる。
 4. もう一度つなぐと、同じように描かれる。スレッドは増えない。
@@ -166,7 +166,7 @@ fbdevには、垂直同期の知らせがありません。そこで、次のよ
 
 ## 使うシステムコール
 
-muslの静的版を `strace -f` の下で動かし、起動、クライアントの接続、描画、強制終了、再接続、もう一度の強制終了までを記録しました(2026-10-04、Linux 6.18、偽の画面800x600)。
+muslの静的版を `strace -f` の下で動かし、起動、クライアントの接続、描画、強制終了、再接続、もう一度の強制終了までを記録しました(2026-10-04、Linux 6.18、fake screen 800x600)。
 全体で230回です。
 
 ### コンポジタの側(seinas-standalone)
@@ -289,4 +289,4 @@ Program Headers:
 文字を描く部分で増えたぶんの中身は、`text-rendering.md` にあります。
 
 - YMM・ZMMを使う命令と `xgetbv` は、0個です。
-- 偽の画面800x600で、zeyes-minを1つつないだときの最大RSSは6,148 kB、主スレッドのスタックで触れた量は20 kBでした。
+- fake screen 800x600で、zeyes-minを1つつないだときの最大RSSは6,148 kB、主スレッドのスタックで触れた量は20 kBでした。

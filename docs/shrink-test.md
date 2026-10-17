@@ -11,7 +11,7 @@ Waylandのクライアントは、画面の絵を共有メモリー(wl_shmのプ
 2. クライアントが、`ftruncate` でプールを0バイトに縮める。コンポジタに伝えた大きさは、元のままです。
 3. クライアントが、もう一度commitする。コンポジタは、描くためにそのバッファを読む。
 4. 読んだ所にはもうファイルの中身が無いので、カーネルがコンポジタへ SIGBUS を送る。
-5. Smithayの受け口が、SIGBUSを受け止める。その範囲を、0で埋めた領域に差し替えて(`mmap` の `MAP_FIXED`)、読み出しを続けさせる。読み終えた後で、「読み出しは失敗した」として扱う。
+5. Smithayのハンドラーが、SIGBUSを受け止める。その範囲を、0で埋めた領域に差し替えて(`mmap` の `MAP_FIXED`)、読み出しを続けさせる。読み終えた後で、「読み出しは失敗した」として扱う。
 6. Smithayが、そのクライアントへプロトコルのエラーを送って切る。
 7. Seinasは、そのウィンドウだけを「描けなかった」として扱い、ほかのウィンドウはいつもどおり描く。そのあとすぐ、切られたクライアントのソケットとウィンドウを片付ける。
 
@@ -59,7 +59,7 @@ shrink: the compositor closed the connection
 
 ## 手で動かす
 
-偽の画面で動かす例です。3つの端末を使います。
+fake screen で動かす例です。3つの端末を使います。
 
 ```bash
 cargo run --locked -p seinas-standalone -- --fake 800x600 --dump /tmp/screen.ppm --socket /tmp/seinas.sock
@@ -77,9 +77,9 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 
 ## 自動のテスト
 
-`crates/seinas-standalone/tests/shrink.rs` が、上の流れを偽の画面で確かめます。`cargo test` で動き、CIでも動きます。
+`crates/seinas-standalone/tests/shrink.rs` が、上の流れを fake screen で確かめます。`cargo test` で動き、CIでも動きます。
 
-1. seinas-standaloneを偽の画面で起動し、zeyes-minをつなぐ。
+1. seinas-standaloneを fake screen で起動し、zeyes-minをつなぐ。
 2. `test-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、ピクセルで確かめる。
 3. 1行送って、縮めさせる。
 4. 標準出力の残りの3行と、終了コードが0であることを確かめる。
@@ -95,9 +95,9 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 | 働き | 使われる所 |
 | --- | --- |
 | 縮められた共有メモリーを読んだときに、シグナル(SIGBUS)で知らせる | 手順4 |
-| `sigaction` で `SA_SIGINFO` の受け口を置き、失敗したアドレス(`si_addr`)を受け取る | 手順5 |
-| 受け口の中から、`mmap`(`MAP_FIXED`、`MAP_PRIVATE`、`MAP_ANONYMOUS`)で、その範囲を差し替える | 手順5 |
-| 受け口から戻った後、読み出しを続ける | 手順5 |
+| `sigaction` で `SA_SIGINFO` のハンドラーを置き、失敗したアドレス(`si_addr`)を受け取る | 手順5 |
+| ハンドラーの中から、`mmap`(`MAP_FIXED`、`MAP_PRIVATE`、`MAP_ANONYMOUS`)で、その範囲を差し替える | 手順5 |
+| ハンドラーから戻った後、読み出しを続ける | 手順5 |
 
 クライアントの側は、`memfd_create`(封印なし)、`ftruncate` での縮小、fdの受け渡し(`sendmsg` の `SCM_RIGHTS`)を使います。
 

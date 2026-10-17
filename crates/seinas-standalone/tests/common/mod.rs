@@ -1,6 +1,6 @@
 //! seinas-standaloneのテストで共通に使うもの。
 //!
-//! seinas-standaloneを偽の画面で動かし、その写し(PPM)のピクセルを見て確かめる。親のWaylandも、画面の
+//! seinas-standaloneを fake screen で動かし、その写し(PPM)のピクセルを見て確かめる。親のWaylandも、画面の
 //! 装置も要らない。
 
 #![allow(dead_code)]
@@ -20,7 +20,7 @@ use std::{
 pub const TIMEOUT: Duration = Duration::from_secs(60);
 const POLL: Duration = Duration::from_millis(20);
 
-/// 偽の画面の大きさ。
+/// fake screen の大きさ。
 pub const WIDTH: usize = 640;
 pub const HEIGHT: usize = 480;
 
@@ -194,7 +194,7 @@ pub fn wait_for<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
     }
 }
 
-/// 偽の画面の写し。
+/// fake screen の写し。
 pub struct Shot {
     pub width: usize,
     pub height: usize,
@@ -203,7 +203,7 @@ pub struct Shot {
 }
 
 impl Shot {
-    /// 偽の画面の写し(PPM)を読む。まだ無いか、書きかけならNone。
+    /// fake screen の写し(PPM)を読む。まだ無いか、書きかけならNone。
     pub fn read(path: &Path) -> Option<Self> {
         let image = fs::read(path).ok()?;
         // ヘッダーは「P6 幅 高さ 255」と改行。
@@ -333,7 +333,7 @@ pub fn workspace_bin(package: &str, name: &str) -> PathBuf {
     bin
 }
 
-/// 偽の画面で動かしたseinas-standaloneと、その作業用の場所。
+/// fake screen で動かしたseinas-standaloneと、その作業用の場所。
 pub struct Compositor {
     pub process: Running,
     pub socket: PathBuf,
@@ -342,7 +342,7 @@ pub struct Compositor {
 }
 
 impl Compositor {
-    /// 偽の画面で起動し、最初の1枚(背景)が出て、ソケットで待ち受けるまで待つ。
+    /// fake screen で起動し、最初の1枚(背景)が出て、ソケットで待ち受けるまで待つ。
     ///
     /// `name` は、作業用の場所をテストごとに分けるための短い名前。
     pub fn start(name: &str) -> Self {

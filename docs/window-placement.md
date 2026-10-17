@@ -1,7 +1,7 @@
 # ウィンドウの重ね方と置き方
 
 クライアントのウィンドウ(toplevel)を、どの順に重ね、どこに置くかの決まりです。
-受け口(`crates/seinas-frontend` の `src/stack.rs`)で決めているので、入れ子の構成(`seinas`)でも、受け口とfbdevの構成(`seinas-standalone`)でも、同じに振る舞います。
+フロントエンド(`crates/seinas-frontend` の `src/stack.rs`)で決めているので、入れ子の構成(`seinas`)でも、フロントエンドとfbdevの構成(`seinas-standalone`)でも、同じに振る舞います。
 
 ## タイトルバーと、ウィンドウの外枠
 
@@ -337,13 +337,13 @@ zeyes-minは従わず、いつも320x240で描きます(外枠は320x264)。
 コンテンツの上でボタンを押している間は、ポインターが外へ出ても、離すまで、そのウィンドウへ渡し続けます。
 ウィンドウを動かしている間と、閉じるボタンを押している間は、どこにも渡しません。
 
-受け口とfbdevの構成は、入力の装置を扱いません。テスト用の入力インターフェース(`--test-input`。`standalone.md`)を開いたときだけ、同じ決まりで働きます。
+フロントエンドとfbdevの構成は、入力の装置を扱いません。テスト用の入力インターフェース(`--test-input`。`standalone.md`)を開いたときだけ、同じ決まりで働きます。
 
 ## テスト
 
 - スロット番号の決め方と折り返し、押した所のウィンドウの選び方、raise したときの順とスロット、`activated` が手前の1つだけに付くことは、`crates/seinas-frontend` のユニットテスト(`src/stack.rs`)で確かめています。
 - `activated` の知らせが実際に届くことは、`crates/seinas-standalone/tests/activation.rs` が確かめます。テスト用のクライアント(`test-client window`)が、届いたconfigureの中身を書き出し、それを読みます。
-- 実際の重なり方と位置は、`crates/seinas-standalone/tests/stacking.rs` が、色の違う2つのzeyes-minを偽の画面につないで、ピクセルで確かめます。
+- 実際の重なり方と位置は、`crates/seinas-standalone/tests/stacking.rs` が、色の違う2つのzeyes-minを fake screen につないで、ピクセルで確かめます。
   zeyes-minの目のまわりの色は、引数 `--skin RRGGBB` か、環境変数 `ZEYES_SKIN` で変えられます(既定は緑)。
   あわせて、タイトルバーの色が、手前のウィンドウと奥のウィンドウとで違うことも確かめます。
 - タイトルバーは、`crates/seinas-standalone/tests/title.rs` が、ピクセルで確かめます。確かめるのは、タイトルバーがあること、タイトルの位置に文字のピクセルがあること、タイトルを変えると描き直されること、activated かどうかでタイトルバーの色が違うこと、タイトルが無いときの表示、長いタイトルを切ること、控えのフォントでの表示、どのフォントにも無い文字の枠、フォントが無い・壊れているときに止まらないこと、xdg-decorationの答えです。

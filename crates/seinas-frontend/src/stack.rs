@@ -1,7 +1,7 @@
 //! ウィンドウのスタック(重ね方)と、スロットの決まり。
 //!
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
-//! 受け口は、`T` をtoplevelにして使う。決まりの説明は `docs/window-placement.md` にある。
+//! フロントエンドは、`T` をtoplevelにして使う。決まりの説明は `docs/window-placement.md` にある。
 
 use crate::geometry::{Point, PointF, Rect, Size};
 

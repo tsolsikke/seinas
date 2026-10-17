@@ -1,15 +1,15 @@
-//! Waylandの受け口(Smithay)。クライアントに見せる側。
+//! Waylandのフロントエンド(Smithay)。クライアントに見せる側。
 //!
-//! 受け口は、裏側(絵をどこへ出すか)を知らない。入れ子の構成(`seinas`)と、fbdevへ出す構成
-//! (`seinas-standalone`)の両方が、この受け口を使う。
+//! フロントエンドは、バックエンド(絵をどこへ出すか)を知らない。入れ子の構成(`seinas`)と、fbdevへ出す構成
+//! (`seinas-standalone`)の両方が、このフロントエンドを使う。
 //!
 //! Smithayのハンドラは、コンポジタの状態の型そのものに実装する決まりになっている。そこで、
 //! 使う側は次の2つを行う。
 //!
-//! 1. 状態の型に [`FrontendHost`] を実装する(受け口の置き場所と、描き直しの知らせ方を教える)。
-//! 2. [`delegate_frontend!`] を呼ぶ(Smithayのハンドラと、受け口の作り方をその型に実装する)。
+//! 1. 状態の型に [`FrontendHost`] を実装する(フロントエンドの置き場所と、描き直しの知らせ方を教える)。
+//! 2. [`delegate_frontend!`] を呼ぶ(Smithayのハンドラと、フロントエンドの作り方をその型に実装する)。
 //!
-//! 受け口を持たない構成(共通の描画だけ)では、このクレートごと使わない。
+//! フロントエンドを持たない構成(共通のレンダラーだけ)では、このクレートごと使わない。
 
 use std::{
     collections::HashMap,
@@ -141,7 +141,7 @@ pub fn font_dir(chosen: Option<PathBuf>) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_FONT_DIR))
 }
 
-/// 受け口の作り方の指定。
+/// フロントエンドの作り方の指定。
 #[derive(Debug, Clone)]
 pub struct Config {
     /// 画面の幅と高さ(ピクセル)。wl_outputで公開する。
@@ -212,7 +212,7 @@ pub const MAXIMIZE_MARK_WIDTH: i32 = 4;
 /// 最大化の予告の枠の色(activated のタイトルバーと同じ色)。
 pub const MAXIMIZE_MARK: [u8; 3] = ACTIVE_BAR;
 
-/// 受け口の状態。`D` は、コンポジタの状態の型。
+/// フロントエンドの状態。`D` は、コンポジタの状態の型。
 pub struct Frontend<D: SeatHandler> {
     pub display_handle: DisplayHandle,
     pub compositor_state: CompositorState,
@@ -271,7 +271,7 @@ pub struct Frontend<D: SeatHandler> {
     pub resize_anchors: HashMap<WindowId, ResizeStart>,
 }
 
-/// コンポジタの状態の型が、受け口を使うために実装するもの。
+/// コンポジタの状態の型が、フロントエンドを使うために実装するもの。
 ///
 /// `Dispatch` と `ForeignToplevelListHandler` は、[`delegate_frontend!`] が実装する。
 pub trait FrontendHost:
@@ -281,14 +281,14 @@ pub trait FrontendHost:
     + Sized
     + 'static
 {
-    /// 受け口の置き場所。
+    /// フロントエンドの置き場所。
     fn frontend(&self) -> &Frontend<Self>;
     fn frontend_mut(&mut self) -> &mut Frontend<Self>;
     /// クライアントの画面が変わり、描き直しが要るようになったときに呼ばれる。
     fn redraw_needed(&mut self);
 }
 
-/// 受け口を作る。[`delegate_frontend!`] が、状態の型に実装する。
+/// フロントエンドを作る。[`delegate_frontend!`] が、状態の型に実装する。
 pub trait BuildFrontend: SeatHandler + Sized {
     fn build_frontend(display_handle: &DisplayHandle, config: Config) -> Frontend<Self>;
 }
@@ -1161,7 +1161,7 @@ impl<D: FrontendHost> Frontend<D> {
     }
 }
 
-/// ポインターの知らせ。裏側(親のWayland、テスト用の入力インターフェース)が、受け口へ渡す。
+/// ポインターの知らせ。バックエンド(親のWayland、テスト用の入力インターフェース)が、フロントエンドへ渡す。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PointerInput {
     /// 画面の上の点へ動いた(入ってきたときも、これ)。
@@ -1857,7 +1857,7 @@ pub fn client_compositor_state(client: &Client) -> &CompositorClientState {
         .compositor_state
 }
 
-/// 状態の型 `$ty` に、Smithayのハンドラと、受け口の作り方([`BuildFrontend`])を実装する。
+/// 状態の型 `$ty` に、Smithayのハンドラと、フロントエンドの作り方([`BuildFrontend`])を実装する。
 ///
 /// `$ty` は [`FrontendHost`] を実装していること。
 #[macro_export]

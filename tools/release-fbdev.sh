@@ -52,7 +52,7 @@ cat > "$out/NOTES.md" <<NOTES
 # seinas-fbdev $tag
 
 ZeikOS の画面に Seinas の描いた絵を出すための、\`seinas-fbdev\` の実行ファイルです。
-Linux の fbdev(\`/dev/fb0\`)へ、共通の描画で作った絵を出します。Wayland の受け口は含みません。
+Linux の fbdev(\`/dev/fb0\`)へ、共通のレンダラーで作った絵を出します。Wayland のフロントエンドは含みません。
 x86-64 の Linux 向けに、musl で静的にリンクした PIE で、共有ライブラリに依存しません。
 ZeikOS 側の仕組みに合わせた変更は入れていません(Linux のプログラムをそのまま動かします)。
 

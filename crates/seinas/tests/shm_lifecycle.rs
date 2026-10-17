@@ -1,11 +1,11 @@
 //! Smithay 0.7.0 の共有メモリー(wl_shm)の実装が、どの操作でスレッドを作り、どの操作でSIGBUSの
-//! 受け口を置き換えるかを、段階ごとに確かめる。
+//! フロントエンドを置き換えるかを、段階ごとに確かめる。
 //!
 //! 見るのは `smithay/src/wayland/shm/pool.rs` の2つの仕掛けである。
 //!
 //! - プールを捨てるとき、初回だけ「Shm dropping thread」という名前のスレッドを作り、以後はそこへ
 //!   後始末を送る。スレッドを作れないと `unwrap` で落ちる。
-//! - バッファの中身を読むとき、初回だけSIGBUSの受け口を置き換える。クライアントが共有メモリーの
+//! - バッファの中身を読むとき、初回だけSIGBUSのハンドラーを置き換える。クライアントが共有メモリーの
 //!   ファイルを縮めていた場合に、読み出しを失敗として返すためである。
 //!
 //! サーバーとクライアントを1本のスレッドの中で交互に動かす。ソケットは `socketpair` で作るので、
@@ -171,7 +171,7 @@ fn has_drop_thread() -> bool {
     }
 }
 
-/// いまのSIGBUSの受け口(関数のアドレスとフラグ)。
+/// いまのSIGBUSのハンドラー(関数のアドレスとフラグ)。
 fn sigbus_action() -> (usize, i32) {
     // SAFETY: 新しい設定を渡さず(null)、いまの設定を読むだけである。
     unsafe {
@@ -320,7 +320,7 @@ fn run(mut observe: impl FnMut(&str)) {
     file.set_len(0).expect("shrink the memfd");
     let read = with_buffer_contents(&server_buffer, |ptr, len, _| {
         // SAFETY: Smithayが、プールの対応づけ(`len` バイト)の先頭を渡してくる。ファイルが縮んで
-        // いても、SIGBUSの受け口がその範囲を0で埋めた領域に差し替えるので、読み出しは完了する。
+        // いても、SIGBUSのハンドラーがその範囲を0で埋めた領域に差し替えるので、読み出しは完了する。
         unsafe { std::ptr::read_volatile(ptr.add(len - 1)) }
     });
     // 読み出しは失敗として返り、サーバーは落ちない。Smithayは、そのクライアントへプロトコルの
@@ -383,13 +383,13 @@ fn main() {
     assert_eq!(at("the server offers"), (false, false));
     assert_eq!(at("wl_shm.create_pool"), (false, false));
     assert_eq!(at("wl_surface.commit"), (false, false));
-    // バッファの中身を最初に読んだときに、SIGBUSの受け口が置き換わる。
+    // バッファの中身を最初に読んだときに、SIGBUSのハンドラーが置き換わる。
     assert_eq!(at("the first read"), (false, true));
     // プールを最初に捨てたときに、スレッドができる。
     assert_eq!(at("the last reference"), (true, true));
     // 縮んだプールを読んでも、プロセスは落ちない(ここまで来ていることが、その証拠である)。
     assert_eq!(at("reading a pool"), (true, true));
-    // 受け口は SA_NODEFER 付きで、代わりのスタックは使わない(SA_ONSTACK無し)。
+    // フロントエンドは SA_NODEFER 付きで、代わりのスタックは使わない(SA_ONSTACK無し)。
     let (_, flags) = sigbus_action();
     assert_ne!(flags & libc::SA_NODEFER, 0);
     assert_eq!(flags & libc::SA_ONSTACK, 0);

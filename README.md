@@ -8,19 +8,19 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 
 | 場所 | 中身 |
 | --- | --- |
-| `crates/seinas` | 入れ子の構成のコンポジタ。Waylandの受け口と、親のWaylandへ出す裏側(SCTK)を組み合わせる |
-| `crates/seinas-standalone` | 親のWaylandを使わない構成のコンポジタ。Waylandの受け口と、fbdevの裏側を組み合わせる |
-| `crates/seinas-frontend` | Waylandの受け口(Smithay)。クライアントの要求を受け、描く要素を並べる |
-| `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
+| `crates/seinas` | 入れ子の構成のコンポジタ。Waylandのフロントエンドと、親のWaylandへ出すバックエンド(SCTK)を組み合わせる |
+| `crates/seinas-standalone` | 親のWaylandを使わない構成のコンポジタ。Waylandのフロントエンドと、fbdevのバックエンドを組み合わせる |
+| `crates/seinas-frontend` | Waylandのフロントエンド(Smithay)。クライアントの要求を受け、描く要素を並べる |
+| `crates/seinas-render` | 共通のレンダラー。pixmanで1枚の絵に合成する。Waylandのフロントエンドには依存しない |
 | `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウのタイトルなど)。フォントをファイルから読み、1行の文字をピクセルにする |
-| `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
+| `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出すバックエンド。共通のレンダラーだけを使い、Waylandのソケットは開かない |
 | `crates/seinas-test-clients` | テスト用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いたイベントを書き出したりする。テスト用の IME と、text-input-v3 を使うアプリもある |
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
 | `crates/seinas-wallpaper` | 壁紙。コンポジタとは別のプログラム(layer-shell のクライアント)で、background の層に色か画像(PNG)を出す |
 | `crates/seinas-config` | 設定のファイル(1 行に「キー = 値」)の読み方。フォントと壁紙の設定が使う |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
-| `docs/render-boundary.md` | 共通の描画と裏側の境界の決まり |
-| `docs/standalone.md` | 受け口とfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
+| `docs/render-boundary.md` | 共通のレンダラーとバックエンドの境界の決まり |
+| `docs/standalone.md` | フロントエンドとfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
 | `docs/demo-c1s3.md` | C1S3 の機能を、入れ子の構成で 1 回の起動でまとめて確かめる手順(`tools/demo-c1s3.sh` とチェックリスト) |
 | `docs/config.md` | 設定のファイルの一覧と、`seinas.conf`(ウィンドウの切り替えのキー)の書き方、届いたキーの確かめ方(`--log-keys`) |
@@ -28,7 +28,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントのテストの、動かし方と期待する結果 |
-| `docs/fbdev.md` | fbdevの裏側の構成、動かし方、確かめ方 |
+| `docs/fbdev.md` | fbdevのバックエンドの構成、動かし方、確かめ方 |
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
 | `docs/release.md` | seinas-fbdevをGitHubのreleaseとして配る手順 |
 | `docs/m3-syscalls.md` | ZeikOS の M3 の準備として、seinas-standalone と zeyes-min を strace した記録 |

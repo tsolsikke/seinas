@@ -102,4 +102,4 @@ sha256sum --check SHA256SUMS
 ./seinas-fbdev --dry-run
 ```
 
-`--dry-run` は、装置を開かずに終わります。実際の画面へ出す動かし方は `docs/fbdev.md` にあります。
+`--dry-run` は、装置を開かずに終わります。実際の画面へ present する動かし方は `docs/fbdev.md` にあります。

@@ -1,4 +1,4 @@
-//! layer-shell(wlr-layer-shell)の受け口を、fake screen のピクセルと、テスト用のクライアントの出力で確かめる。
+//! layer-shell(wlr-layer-shell)のフロントエンドを、fake screen のピクセルと、テスト用のクライアントの出力で確かめる。
 //!
 //! 決まり(`docs/window-placement.md`、`docs/adr/0002-shell-components.md`):
 //! - layer-shell の global は、シェルの部品のためのソケット(ふだんのパスに `-shell` を付けたもの)から

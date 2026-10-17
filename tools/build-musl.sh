@@ -30,7 +30,7 @@ cargo_home=${CARGO_HOME:-$HOME/.cargo}
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$libs --remap-path-prefix=$root=/seinas --remap-path-prefix=$cargo_home=/cargo"
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas -p zeyes-min -p seinas-test-clients
 # 構成ごとに、別に作る。一緒に作ると、Cargoが機能を1つにまとめて、その構成に要らないもの
-# (fbdevだけの構成にWaylandの受け口、など)までビルドに入ってしまう。
+# (fbdevだけの構成にWaylandのフロントエンド、など)までビルドに入ってしまう。
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas-standalone
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas-fbdev
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas-taskbar
@@ -41,10 +41,10 @@ out=target/x86_64-unknown-linux-musl/release
 # 静的にリンクできているかを確かめる。
 tools/elf-report.sh "$out/seinas" "$out/seinas-standalone" "$out/seinas-fbdev" "$out/seinas-taskbar" "$out/seinas-wallpaper" "$out/zeyes-min" > /dev/null
 
-# seinas-standaloneに、入れ子の裏側(SCTK、wayland-client)が入っていないかを確かめる。
+# seinas-standaloneに、入れ子のバックエンド(SCTK、wayland-client)が入っていないかを確かめる。
 tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source
 
-# seinas-fbdevに、Waylandの受け口が入っていないかを確かめる。
+# seinas-fbdevに、Waylandのフロントエンドが入っていないかを確かめる。
 tools/check-no-wayland.sh seinas-fbdev "$out/seinas-fbdev"
 
 # seinas-taskbarは、コンポジタとは別のクライアントなので、Waylandのサーバーの側(Smithay)が入っていないことを確かめる。

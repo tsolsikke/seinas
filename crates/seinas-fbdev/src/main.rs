@@ -1,4 +1,4 @@
-//! seinas-fbdev: 共通の描画の結果を、fbdevの画面へ出す。
+//! seinas-fbdev: 共通のレンダラーの結果を、fbdevの画面へ present する。
 //!
 //! 決まった絵(背景、枠、四隅の印、中央の印)を、指定した時間だけ表示して終わる。
 //! Waylandのソケットは開かない。
@@ -12,7 +12,7 @@
 //!
 //! - `--device PATH`: 装置のパス。無ければ環境変数 `SEINAS_FBDEV`、それも無ければ `/dev/fb0`。
 //! - `--hold-ms N`: 絵を表示しておく時間(ミリ秒)。既定は3000。
-//! - `--dry-run`: 装置を開かず、メモリー上の偽の画面へ描いて、中身の要約を出す。
+//! - `--dry-run`: 装置を開かず、メモリー上の fake screen へ描いて、中身の要約を出す。
 //! - `--size WIDTHxHEIGHT`: `--dry-run` のときの画面の大きさ。既定は800x600。
 //! - `--dump FILE`: `--dry-run` で描いた絵を、PPM形式の画像としてファイルに書く。
 //!
@@ -85,7 +85,7 @@ fn parse_size(text: &str) -> Option<(u32, u32)> {
     Some((width.parse().ok()?, height.parse().ok()?))
 }
 
-/// 装置を開かずに、メモリー上の偽の画面へ描く。
+/// 装置を開かずに、メモリー上の fake screen へ描く。
 fn dry_run(size: (u32, u32), dump: Option<&Path>) -> Result<(), Box<dyn Error>> {
     let mut screen = FakeScreen::new(size.0, size.1)?;
     let layout = *screen.layout();

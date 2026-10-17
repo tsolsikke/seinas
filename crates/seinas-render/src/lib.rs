@@ -1,13 +1,13 @@
-//! Seinasの共通の描画。
+//! Seinasの共通のレンダラー。
 //!
 //! 画面1枚ぶんの絵を、pixmanで自分のメモリーの上に作る。どこへ表示するか(親のWayland、fbdevなど)は
-//! 知らない。Waylandの受け口(ソケット、wl_shmなど)にも依存しない。
+//! 知らない。Waylandのフロントエンド(ソケット、wl_shmなど)にも依存しない。
 //!
 //! 使い方は3つの段に分かれる。
 //!
 //! 1. 呼ぶ側が、描きたい要素([`RenderElement`])を手前から順に並べる。
 //! 2. [`Painter::paint`] が、背景と要素を合成して [`FrameView`] を返す。
-//! 3. 呼ぶ側(裏側)が、[`FrameView`] の中身を自分の表示先へ写す。
+//! 3. 呼ぶ側(バックエンド)が、[`FrameView`] の中身を自分の出力先へ写す。
 //!
 //! 境界の決まりは `docs/render-boundary.md` にまとめてある。
 
@@ -102,7 +102,7 @@ impl Painter {
         if width <= 0 || height <= 0 {
             return Err(invalid);
         }
-        // バイト数がi32に収まる大きさに限る(wl_shmなど、表示先の多くがi32で大きさを表すため)。
+        // バイト数がi32に収まる大きさに限る(wl_shmなど、出力先の多くがi32で大きさを表すため)。
         let bytes = width
             .checked_mul(height)
             .and_then(|pixels| pixels.checked_mul(PixelFormat::Xrgb8888.bytes_per_pixel() as i32));

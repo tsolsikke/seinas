@@ -32,7 +32,7 @@ Seinasが自分で描く文字(ウィンドウのタイトルなど)の、描き
 | --- | --- | --- |
 | `seinas-text` | 描く | cosmic-text(swash、fontdbなど)。Waylandにも、Smithayにも、pixmanにも依存しない |
 | `seinas-frontend` | タイトルバーを描くのに `seinas-text` を使う | Smithay、`seinas-text` |
-| `seinas`、`seinas-standalone` | 受け口を通じて使う | 上の2つ |
+| `seinas`、`seinas-standalone` | フロントエンドを通じて使う | 上の2つ |
 | `seinas-render`、`seinas-fbdev` | 描かない | `seinas-text` も、cosmic-textも、依存に入らない |
 
 文字を描かない構成に、文字を描くクレートが入っていないことは、次で確かめます。CIにも入れてあります。
@@ -160,7 +160,7 @@ Seinasは、フォントが読めなくても止まりません。原因は、�
 - 文字を描かないseinas-fbdevは、変わりません。
 - musl向けの実行ファイルに、YMM・ZMMのレジスタを使う命令と `xgetbv` は、組み込んだ後も0個です。
 
-メモリー(seinas-standaloneを800x600の偽の画面で動かしたときの `VmRSS`。単位はkB):
+メモリー(seinas-standaloneを800x600の fake screen で動かしたときの `VmRSS`。単位はkB):
 
 | 状態 | glibc、フォントあり | glibc、フォントなし | musl、フォントあり | musl、フォントなし |
 | --- | --- | --- | --- | --- |

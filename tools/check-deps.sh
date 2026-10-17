@@ -4,7 +4,7 @@
 # 使い方:
 #     tools/check-deps.sh <パッケージ名> <入っていてはいけないクレート>...
 #
-# 例(受け口とfbdevを組み合わせた構成に、入れ子の裏側が入っていないこと):
+# 例(フロントエンドとfbdevを組み合わせた構成に、入れ子のバックエンドが入っていないこと):
 #     tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client
 #
 # 見るのは、実行ファイルに入る依存だけ(cargo tree -e normal)。テストだけの依存は見ない。

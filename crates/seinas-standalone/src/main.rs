@@ -1,7 +1,7 @@
 //! seinas-standalone: 親のWaylandを使わない構成のSeinas。
 //!
-//! Waylandの受け口(`seinas-frontend`)で受けたクライアントの画面を、共通の描画(`seinas-render`)で
-//! 合成し、fbdevの裏側(`seinas-fbdev`)で画面へ出す。入れ子の裏側(SCTK、wayland-client)は含まない。
+//! Waylandのフロントエンド(`seinas-frontend`)で受けたクライアントの画面を、共通のレンダラー(`seinas-render`)で
+//! 合成し、fbdevのバックエンド(`seinas-fbdev`)で画面へ present する。入れ子のバックエンド(SCTK、wayland-client)は含まない。
 //!
 //! 使い方:
 //!
@@ -11,8 +11,8 @@
 //! ```
 //!
 //! - `--device PATH`: 画面の装置。無ければ環境変数 `SEINAS_FBDEV`、それも無ければ `/dev/fb0`。
-//! - `--fake WIDTHxHEIGHT`: 装置を開かず、その大きさの偽の画面(メモリー上)へ描く。
-//! - `--dump FILE`: 偽の画面の中身を、描くたびにPPM形式の画像としてファイルに書く。
+//! - `--fake WIDTHxHEIGHT`: 装置を開かず、その大きさの fake screen(メモリー上)へ描く。
+//! - `--dump FILE`: fake screen の中身を、描くたびにPPM形式の画像としてファイルに書く。
 //! - `--socket PATH`: クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、
 //!   それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0`。
 //! - `--shell-socket PATH`: シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットの
@@ -250,11 +250,11 @@ fn parse_size(text: &str) -> Option<(u32, u32)> {
 
 /// コンポジタの状態。Smithayのハンドラは、この型に実装する。
 struct Standalone {
-    /// Waylandの受け口。
+    /// Waylandのフロントエンド。
     frontend: Frontend<Standalone>,
-    /// 共通の描画。
+    /// 共通のレンダラー。
     painter: Painter,
-    /// 裏側(fbdevの装置か、偽の画面)。
+    /// バックエンド(fbdevの装置か、fake screen)。
     screen: Screen,
     start: Instant,
     needs_redraw: bool,
@@ -286,7 +286,7 @@ impl Standalone {
         }
     }
 
-    /// クライアントの画面を合成して画面へ出し、クライアントへframeコールバックを返す。
+    /// クライアントの画面を合成して画面へ present し、クライアントへframeコールバックを返す。
     /// 出力の大きさを `width` × `height` に変える(画面、共通のレンダラー、フロントエンド)。
     fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
         if (width as i32, height as i32) == self.screen.size() {

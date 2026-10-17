@@ -1,4 +1,4 @@
-//! seinas-standaloneを偽の画面で動かし、zeyes-minをつないで、そのウィンドウが画面に描かれることを
+//! seinas-standaloneを fake screen で動かし、zeyes-minをつないで、そのウィンドウが画面に描かれることを
 //! ピクセルで確かめる。
 //!
 //! あわせて、zeyes-minを強制終了してからもう一度つなぎ、2回目も描かれることを確かめる。

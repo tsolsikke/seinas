@@ -1,4 +1,4 @@
-//! 絵を出す先。fbdevの装置か、メモリーの上の偽の画面。
+//! 絵を出す先。fbdevの装置か、メモリーの上の fake screen。
 
 use std::{
     error::Error,
@@ -19,7 +19,7 @@ pub enum Screen {
         presenter: Box<dyn Presenter>,
         path: PathBuf,
     },
-    /// 偽の画面。`dump` があれば、描くたびにPPM形式で書き出す。
+    /// fake screen。`dump` があれば、描くたびにPPM形式で書き出す。
     Fake {
         screen: FakeScreen,
         dump: Option<PathBuf>,
@@ -37,7 +37,7 @@ impl Screen {
         })
     }
 
-    /// 偽の画面を作る。
+    /// fake screen を作る。
     pub fn fake(width: u32, height: u32, dump: Option<PathBuf>) -> Result<Self, Box<dyn Error>> {
         Ok(Screen::Fake {
             screen: FakeScreen::new(width, height)?,
@@ -78,7 +78,7 @@ impl Screen {
         }
     }
 
-    /// 描画結果を画面へ出す。
+    /// 描画結果を画面へ present する。
     pub fn show(&mut self, view: &FrameView<'_>) -> Result<(), Box<dyn Error>> {
         match self {
             Screen::Device {

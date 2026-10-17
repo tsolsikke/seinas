@@ -3,9 +3,9 @@
 //! 今は、親のWayland(WSLgなど)の中にウィンドウを1つ開き、その中で子のクライアントを合成して見せる
 //! 「入れ子」の形で動く。
 //!
-//! - `seinas-frontend`: Waylandの受け口(Smithay)。子のクライアントの要求を受ける。
-//! - `seinas-render`: 共通の描画。受け口が並べた要素を、1枚の絵に合成する。
-//! - `parent`: 裏側(SCTK)。合成した絵を、親のWaylandへ出す。
+//! - `seinas-frontend`: Waylandのフロントエンド(Smithay)。子のクライアントの要求を受ける。
+//! - `seinas-render`: 共通のレンダラー。フロントエンドが並べた要素を、1枚の絵に合成する。
+//! - `parent`: バックエンド(SCTK)。合成した絵を、親のWaylandへ出す。
 //!
 //! 3つは1つの状態 [`Seinas`] にまとまり、1つのcalloopの上で動く。
 //!
@@ -54,9 +54,9 @@ const IME_SOCKET: &str = "seinas-0-ime";
 
 /// コンポジタの状態。SmithayのハンドラもSCTKのハンドラも、この1つの型に実装する。
 pub struct Seinas {
-    /// Waylandの受け口(子のクライアントに見せる側)。
+    /// Waylandのフロントエンド(子のクライアントに見せる側)。
     frontend: Frontend<Seinas>,
-    /// 共通の描画。
+    /// 共通のレンダラー。
     painter: Painter,
     /// 親のWaylandへの提出(親に対してはクライアント)。
     parent: Parent,
