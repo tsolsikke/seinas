@@ -321,7 +321,7 @@ mod tests {
     use super::*;
 
     const SCREEN: (i32, i32) = (640, 480);
-    /// 試験のウィンドウの大きさ(どれも同じ)。
+    /// テストのウィンドウの大きさ(どれも同じ)。
     const SIZE: (i32, i32) = (320, 240);
 
     fn size(_: &&str) -> Option<Size> {

@@ -1161,7 +1161,7 @@ impl<D: FrontendHost> Frontend<D> {
     }
 }
 
-/// ポインターの知らせ。裏側(親のWayland、試験用の入力の口)が、受け口へ渡す。
+/// ポインターの知らせ。裏側(親のWayland、テスト用の入力インターフェース)が、受け口へ渡す。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PointerInput {
     /// 画面の上の点へ動いた(入ってきたときも、これ)。

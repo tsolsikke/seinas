@@ -27,7 +27,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/ime.md` | IME の道(見せる global、キーの道、IME の復旧(接続断と緊急解除)、文字の受け渡し、フォーカス、候補ウィンドウ、IME を 1 つに限ること)と、テスト用の IME での試し方 |
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
-| `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |
+| `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントのテストの、動かし方と期待する結果 |
 | `docs/fbdev.md` | fbdevの裏側の構成、動かし方、確かめ方 |
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
 | `docs/release.md` | seinas-fbdevをGitHubのreleaseとして配る手順 |

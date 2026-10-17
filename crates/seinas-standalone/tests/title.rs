@@ -7,7 +7,7 @@
 //! - 帯の色は、選ばれている(いちばん手前の)ウィンドウと、そうでないウィンドウとで違う。
 //! - フォントが読めないときは、帯だけを描く。
 //!
-//! 試験用のクライアント(`test-client window`)のウィンドウは、中身が200x150の橙。
+//! テスト用のクライアント(`test-client window`)のウィンドウは、中身が200x150の橙。
 
 mod common;
 
@@ -18,14 +18,14 @@ use common::{
     TITLE_PADDING,
 };
 
-/// 試験用のクライアントのウィンドウの、中身の大きさと色(橙)。
+/// テスト用のクライアントのウィンドウの、中身の大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const WINDOW_HEIGHT: usize = 150;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 /// 置き場所を1つずらす量。
 const STEP: usize = 32;
 
-/// 外形の左上が(`x0`, `y0`)にある試験用のウィンドウが、帯の色 `bar` で描かれているか。
+/// 外形の左上が(`x0`, `y0`)にあるテスト用のウィンドウが、帯の色 `bar` で描かれているか。
 fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
     bar_color(shot, x0, y0, WINDOW_WIDTH) == Some(bar)
         // 帯の左の端も、帯の色。

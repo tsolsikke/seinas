@@ -8,8 +8,8 @@
 //!   外へ出して離すと、取り消し。奥のウィンドウのボタンも、見えていれば1回で効く。
 //! - クライアントから頼まれた移動は、そのクライアントの上でボタンが押されている間だけ受ける。
 //!
-//! ポインターの知らせは、seinas-standaloneの試験のための入力の口(`--test-input`)から送る。
-//! 試験用のクライアント(`test-client window`)のウィンドウは、中身が200x150の橙。
+//! ポインターの知らせは、seinas-standaloneのテスト用の入力インターフェース(`--test-input`)から送る。
+//! テスト用のクライアント(`test-client window`)のウィンドウは、中身が200x150の橙。
 
 mod common;
 
@@ -18,12 +18,12 @@ use common::{
     HEIGHT, HOT_CLOSE_BUTTON, INACTIVE_BAR, WIDTH,
 };
 
-/// 試験用のクライアントのウィンドウの、中身の大きさと色(橙)。
+/// テスト用のクライアントのウィンドウの、中身の大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const WINDOW_HEIGHT: usize = 150;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 
-/// 外形の左上が(`x0`, `y0`)にある試験用のウィンドウが、帯の色 `bar` で、全体が見える形で描かれているか。
+/// 外形の左上が(`x0`, `y0`)にあるテスト用のウィンドウが、帯の色 `bar` で、全体が見える形で描かれているか。
 fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
     bar_color(shot, x0, y0, WINDOW_WIDTH) == Some(bar)
         && shot.pixel(x0, y0) == bar

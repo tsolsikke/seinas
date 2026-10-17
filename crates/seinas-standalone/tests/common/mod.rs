@@ -1,4 +1,4 @@
-//! seinas-standaloneの試験で共通に使うもの。
+//! seinas-standaloneのテストで共通に使うもの。
 //!
 //! seinas-standaloneを偽の画面で動かし、その写し(PPM)のピクセルを見て確かめる。親のWaylandも、画面の
 //! 装置も要らない。
@@ -128,7 +128,7 @@ impl Drop for Running {
     }
 }
 
-/// 試験用のクライアント(`test-client`)と、その標準出力。
+/// テスト用のクライアント(`test-client`)と、その標準出力。
 pub struct TestClient {
     pub process: Running,
     lines: mpsc::Receiver<String>,
@@ -344,7 +344,7 @@ pub struct Compositor {
 impl Compositor {
     /// 偽の画面で起動し、最初の1枚(背景)が出て、ソケットで待ち受けるまで待つ。
     ///
-    /// `name` は、作業用の場所を試験ごとに分けるための短い名前。
+    /// `name` は、作業用の場所をテストごとに分けるための短い名前。
     pub fn start(name: &str) -> Self {
         Self::start_with_fonts(name, &font_dir())
     }
@@ -354,7 +354,7 @@ impl Compositor {
         Self::start_with(name, fonts, false)
     }
 
-    /// [`Compositor::start`] と同じだが、試験のための入力の口を開く。ポインターの知らせは、
+    /// [`Compositor::start`] と同じだが、テスト用の入力インターフェースを開く。ポインターの知らせは、
     /// [`Compositor::pointer`] で送る。
     pub fn start_with_input(name: &str) -> Self {
         Self::start_with(name, &font_dir(), true)
@@ -459,7 +459,7 @@ impl Compositor {
         });
     }
 
-    /// 試験のための入力の口へ、1行を送る(`motion 100 10`、`press`、`release` など)。
+    /// テスト用の入力インターフェースへ、1行を送る(`motion 100 10`、`press`、`release` など)。
     pub fn pointer(&mut self, line: &str) {
         use std::io::Write;
         let stdin = self.process.0.stdin.as_mut().expect("the test input");
@@ -566,12 +566,12 @@ impl Compositor {
         PathBuf::from(name)
     }
 
-    /// 試験用のクライアント(`test-client`)を、引数 `args` でつなぐ。標準入力と標準出力は、こちらで持つ。
+    /// テスト用のクライアント(`test-client`)を、引数 `args` でつなぐ。標準入力と標準出力は、こちらで持つ。
     pub fn connect_test_client(&self, args: &[&str]) -> TestClient {
         self.connect_test_client_to(&self.socket, args)
     }
 
-    /// 試験用のクライアントを、シェルの部品のためのソケットへつなぐ。
+    /// テスト用のクライアントを、シェルの部品のためのソケットへつなぐ。
     pub fn connect_shell_client(&self, args: &[&str]) -> TestClient {
         self.connect_test_client_to(&self.shell_socket(), args)
     }

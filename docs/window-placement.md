@@ -337,23 +337,23 @@ zeyes-minは従わず、いつも320x240で描きます(外形は320x264)。
 中身の上でボタンを押している間は、ポインターが外へ出ても、離すまで、そのウィンドウへ渡し続けます。
 ウィンドウを動かしている間と、閉じるボタンを押している間は、どこにも渡しません。
 
-受け口とfbdevの構成は、入力の装置を扱いません。試験のための入力の口(`--test-input`。`standalone.md`)を開いたときだけ、同じ決まりで働きます。
+受け口とfbdevの構成は、入力の装置を扱いません。テスト用の入力インターフェース(`--test-input`。`standalone.md`)を開いたときだけ、同じ決まりで働きます。
 
-## 試験
+## テスト
 
-- 置き場所の番号の決め方と折り返し、押した所のウィンドウの選び方、手前に出したときの順と置き場所、`activated` が手前の1つだけに付くことは、`crates/seinas-frontend` の単体試験(`src/stack.rs`)で確かめています。
-- `activated` の知らせが実際に届くことは、`crates/seinas-standalone/tests/activation.rs` が確かめます。試験用のクライアント(`test-client window`)が、届いたconfigureの中身を書き出し、それを読みます。
+- 置き場所の番号の決め方と折り返し、押した所のウィンドウの選び方、手前に出したときの順と置き場所、`activated` が手前の1つだけに付くことは、`crates/seinas-frontend` のユニットテスト(`src/stack.rs`)で確かめています。
+- `activated` の知らせが実際に届くことは、`crates/seinas-standalone/tests/activation.rs` が確かめます。テスト用のクライアント(`test-client window`)が、届いたconfigureの中身を書き出し、それを読みます。
 - 実際の重なり方と位置は、`crates/seinas-standalone/tests/stacking.rs` が、色の違う2つのzeyes-minを偽の画面につないで、ピクセルで確かめます。
   zeyes-minの目のまわりの色は、引数 `--skin RRGGBB` か、環境変数 `ZEYES_SKIN` で変えられます(既定は緑)。
   あわせて、帯の色が、手前のウィンドウと奥のウィンドウとで違うことも確かめます。
 - 題名の帯は、`crates/seinas-standalone/tests/title.rs` が、ピクセルで確かめます。確かめるのは、帯があること、題名の位置に文字のピクセルがあること、題名を変えると描き直されること、選ばれているかどうかで帯の色が違うこと、題名が無いときの表示、長い題名を切ること、控えのフォントでの表示、どのフォントにも無い文字の枠、フォントが無い・壊れているときに止まらないこと、xdg-decorationの答えです。
-  試験用のクライアントは、`test-client window --title TEXT` で題名を、`--app-id TEXT` でapp_idを付けられます。標準入力へ `title TEXT` の行を送ると、題名を変えます。
-- 題名に出す文字の選び方と、外形の計算は、`crates/seinas-frontend` の単体試験(`src/decoration.rs`)で確かめています。文字を描く部分は、`crates/seinas-text` の試験(`tests/draw.rs`)で確かめています。
+  テスト用のクライアントは、`test-client window --title TEXT` で題名を、`--app-id TEXT` でapp_idを付けられます。標準入力へ `title TEXT` の行を送ると、題名を変えます。
+- 題名に出す文字の選び方と、外形の計算は、`crates/seinas-frontend` のユニットテスト(`src/decoration.rs`)で確かめています。文字を描く部分は、`crates/seinas-text` のテスト(`tests/draw.rs`)で確かめています。
 - 応答なしは、`crates/seinas-frontend` のユニットテスト(`src/ping.rs` の期限と印の付け外し、`src/decoration.rs` の閉じるボタンの色)と、`crates/seinas-standalone/tests/not_responding.rs`(ping に答えないクライアントに印が付き、もう一度押すと切れて、ほかのクライアントと Seinas が動き続けること、pong を返すクライアントには印が付かず切れないこと、遅れた pong で印が外れること、ふつうのクライアントが今までどおり閉じること)で確かめています。見た目は、正解データ(`crates/seinas-frontend/tests/golden.rs` の C11)と比べます。テスト用のクライアントは、`--ignore-ping` で ping に答えず(標準入力の `pong` で、遅れて答える)、`--ignore-close` で close に応じずに pong は返します。
-- 動かす・閉じるの決まり(動き始めの遊び、画面の外の限り、番号の扱い、閉じるボタンの当たりと取り消し、奥のウィンドウのボタン、クライアントから頼まれる移動)は、`crates/seinas-frontend` の単体試験(`src/interaction.rs`、`src/decoration.rs`、`src/stack.rs`)で確かめています。
-- 実際に画面の上で動くこと、閉じるように頼む知らせがクライアントに届くことは、`crates/seinas-standalone/tests/move_close.rs` が、ピクセルと、試験用のクライアントの出力で確かめます。ポインターの知らせは、試験のための入力の口から送ります。
-  試験用のクライアントは、`--pointer` でポインターの知らせを書き出し、`--move-on-press` で移動を頼み、`--ignore-close` で閉じる頼みに応じなくなります。
-- layer surface と使える範囲は、`crates/seinas-standalone/tests/layers.rs` が確かめます(ふだんのソケットに layer-shell が見えないこと、exclusive zone で使える範囲が狭まり、元に戻ること、configure の大きさ、ドラッグの限り、top の layer surface の上でのボタンがウィンドウを raise しないこと)。layer surface は、試験用のクライアント(`test-client layer`)で出します。
+- 動かす・閉じるの決まり(動き始めの遊び、画面の外の限り、番号の扱い、閉じるボタンの当たりと取り消し、奥のウィンドウのボタン、クライアントから頼まれる移動)は、`crates/seinas-frontend` のユニットテスト(`src/interaction.rs`、`src/decoration.rs`、`src/stack.rs`)で確かめています。
+- 実際に画面の上で動くこと、閉じるように頼む知らせがクライアントに届くことは、`crates/seinas-standalone/tests/move_close.rs` が、ピクセルと、テスト用のクライアントの出力で確かめます。ポインターの知らせは、テスト用の入力インターフェースから送ります。
+  テスト用のクライアントは、`--pointer` でポインターの知らせを書き出し、`--move-on-press` で移動を頼み、`--ignore-close` で閉じる頼みに応じなくなります。
+- layer surface と使える範囲は、`crates/seinas-standalone/tests/layers.rs` が確かめます(ふだんのソケットに layer-shell が見えないこと、exclusive zone で使える範囲が狭まり、元に戻ること、configure の大きさ、ドラッグの限り、top の layer surface の上でのボタンがウィンドウを raise しないこと)。layer surface は、テスト用のクライアント(`test-client layer`)で出します。
 - 層の重なりの描画は、正解データ(`crates/seinas-standalone/tests/golden_layers.rs`)と比べます(`docs/golden.md`)。
 - ウィンドウの一覧と操作は、`crates/seinas-standalone/tests/foreign_toplevels.rs` が、テスト用のクライアント(`test-client toplevels`)の出力とピクセルで確かめます(ふだんのソケットに 2 つの global が見えないこと、一覧の内容と変化、bind する前からあるウィンドウ、wl_output を後から bind したときの output_enter、activate で raise されること、close の頼み、最大化などの頼みで何も変わらないこと、負の rectangle のエラー、stop)。
 - サイズ変更の境界のヒット(4 辺と 4 角)、辺・角ごとの大きさと位置の計算、最小・最大の大きさ、上の辺の限りは、`crates/seinas-frontend` のユニットテスト(`src/resize.rs`)で、ポインターの操作(境界の上でのカーソルの形、押した・動かした・離したときの configure、サイズ変更できないウィンドウ、クライアントからの頼み)は、`src/interaction.rs` のユニットテストで確かめています。
@@ -365,7 +365,7 @@ zeyes-minは従わず、いつも320x240で描きます(外形は320x264)。
 - Alt+Tab は、`crates/seinas-standalone/tests/switch_windows.rs` が、ピクセルとテスト用のクライアントの出力で確かめます(進む順と、決めた後の順、逆の順、Esc での取り消し、最小化しているウィンドウ、ウィンドウが 0 と 1 のとき、候補が閉じたとき、どのクライアントにも Alt と Tab が押されたまま残らないこと)。候補の順と進み方は、`crates/seinas-frontend` のユニットテスト(`src/switcher.rs`、`src/stack.rs`、`src/shortcuts.rs`)で確かめています。テスト用のクライアントは、enter のときに押されているキーがあれば、`window: keyboard enter keys 56` のように書き出します。
 - 出力の大きさが変わったときの動きは、`crates/seinas-standalone/tests/output_resize.rs` が、`output WxH` の行で大きさを変えて確かめます(壁紙の再描画、タスクバーの位置、最大化しているウィンドウの大きさ、画面の外に出たウィンドウが戻ること、同じ大きさでは何もしないこと、読めない行)。
 - スロットの計算と、使える範囲が変わったときのウィンドウの移り方は、`crates/seinas-frontend` のユニットテスト(`src/stack.rs`)で確かめています。
-- これらの試験は、`tools/fetch-fonts.sh` が置いたフォントを使います。先に、このスクリプトを実行しておいてください。
+- これらのテストは、`tools/fetch-fonts.sh` が置いたフォントを使います。先に、このスクリプトを実行しておいてください。
 
 ## まだ無いもの
 

@@ -1,4 +1,4 @@
-//! layer-shell(wlr-layer-shell)の受け口を、fake screen のピクセルと、試験用のクライアントの出力で確かめる。
+//! layer-shell(wlr-layer-shell)の受け口を、fake screen のピクセルと、テスト用のクライアントの出力で確かめる。
 //!
 //! 決まり(`docs/window-placement.md`、`docs/adr/0002-shell-components.md`):
 //! - layer-shell の global は、シェルの部品のためのソケット(ふだんのパスに `-shell` を付けたもの)から
@@ -11,7 +11,7 @@ mod common;
 
 use common::{bar_color, wait_for, Compositor, ACTIVE_BAR, BAR, HEIGHT, INACTIVE_BAR, WIDTH};
 
-/// 試験用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
+/// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 /// タスクバーの代わりの layer surface の色(青)と、高さ。

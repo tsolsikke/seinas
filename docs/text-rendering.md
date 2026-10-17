@@ -171,10 +171,10 @@ Seinasは、フォントが読めなくても止まりません。原因は、�
 - 題名を描くと、さらに1.5 MBほど増えます(行を組むための表と、描いた字形の覚え)。
 - 「フォントなし」は、フォントの置き場に何も無い状態で動かした値です。
 
-### 試験
+### テスト
 
 - `crates/seinas-text/tests/draw.rs`:1行を描けること、長い行を切ること、控えのフォントに切り替わること、どのフォントにも無い文字が枠になること、フォントが無い・壊れているときに落ちないこと。
-- `crates/seinas-standalone/tests/title.rs`:題名の帯が、画面に実際に描かれること(`docs/window-placement.md` の「試験」)。
+- `crates/seinas-standalone/tests/title.rs`:題名の帯が、画面に実際に描かれること(`docs/window-placement.md` の「テスト」)。
 - `crates/seinas-text/tests/golden.rs`:決まった文字列の描画結果を、正解データ(golden)と比べる(`docs/golden.md`)。ASCII・かな・漢字・フォールバックに加え、見分けにくい字、円記号とバックスラッシュ、結合濁点、罫線、半角カナ、第 2 水準の漢字を含む。
 
 どれも、`tools/fetch-fonts.sh` が置いたフォントを使います。
