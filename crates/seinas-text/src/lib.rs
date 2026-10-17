@@ -34,9 +34,9 @@ pub const UI_FONT_FAMILY: &str = "BIZ UDPGothic";
 pub const FALLBACK_FONT_FILE: &str = "unifont_jp-18.0.01.otf";
 pub const FALLBACK_FONT_FAMILY: &str = "Unifont-JP";
 
-/// 文字の大きさの既定(画素)。これより小さい大きさは、既定では使わない。
+/// 文字の大きさの既定(ピクセル)。これより小さい大きさは、既定では使わない。
 pub const DEFAULT_SIZE: f32 = 14.0;
-/// 字形のヒンティングを入れる、いちばん小さい大きさ(画素)。これより小さいと、字の形が崩れる
+/// 字形のヒンティングを入れる、いちばん小さい大きさ(ピクセル)。これより小さいと、字の形が崩れる
 /// (12px前後で「8」が「0」に見える)ので、切る。
 pub const HINTING_FROM: f32 = 14.0;
 
@@ -95,7 +95,7 @@ impl fmt::Display for FontProblem {
 
 impl std::error::Error for FontProblem {}
 
-/// 文字を描く先。1画素は4バイトで、並びは B, G, R, X(`seinas-render` の描画結果と同じ)。
+/// 文字を描く先。1ピクセルは4バイトで、並びは B, G, R, X(`seinas-render` の描画結果と同じ)。
 pub struct Canvas<'a> {
     pixels: &'a mut [u8],
     width: i32,
@@ -136,7 +136,7 @@ impl<'a> Canvas<'a> {
 /// 1行の描き方。
 #[derive(Debug, Clone, Copy)]
 pub struct Line {
-    /// 文字の大きさ(画素)。
+    /// 文字の大きさ(ピクセル)。
     pub size: f32,
     /// 文字の色(赤, 緑, 青)。
     pub color: [u8; 3],
@@ -152,7 +152,7 @@ pub struct Line {
 /// 1行を描いた結果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Drawn {
-    /// 描いた文字の幅(画素)。
+    /// 描いた文字の幅(ピクセル)。
     pub width: i32,
     /// 収まらずに、末尾を切ったか。
     pub truncated: bool,
@@ -362,7 +362,7 @@ impl Fonts {
             Metrics::new(line.size, line.height as f32),
         );
         buffer.set_wrap(Wrap::None);
-        // 字形を画素の境目に合わせて置く(小数の位置には置かない)。
+        // 字形をピクセルの境目に合わせて置く(小数の位置には置かない)。
         buffer.set_hinting(Hinting::Enabled);
         let mut attrs = Attrs::new().family(Family::Name(self.family));
         if line.size < HINTING_FROM {
@@ -470,7 +470,7 @@ pub struct FontSetup {
 
 /// どのフォントにも無い文字の代わりに、四角の枠を描く。
 fn draw_missing_box(canvas: &mut Canvas<'_>, x: f32, width: f32, baseline: f32, line: Line) {
-    // 幅は字形の送りに合わせ、高さは大文字の高さくらいにする。字と字の間に、1画素ずつ空きを残す。
+    // 幅は字形の送りに合わせ、高さは大文字の高さくらいにする。字と字の間に、1ピクセルずつ空きを残す。
     let left = line.x + x.round() as i32 + 1;
     let right = left + (width.round() as i32 - 2).max(line.size as i32 / 3);
     let bottom = line.top + baseline.round() as i32;

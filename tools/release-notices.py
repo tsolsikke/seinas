@@ -29,7 +29,7 @@ TARGET = "x86_64-unknown-linux-musl"
 # 最後の要素は、そのライブラリの関数のシンボルの頭(実行ファイルに入っているかを見るのに使う)。
 # Noneなら、いつも入っているものとして扱う。
 C_LIBRARIES = [
-    ("pixman (libpixman-1)", "0.42.2", "MIT", "pixman-0.42.2", "画素の合成", "pixman_"),
+    ("pixman (libpixman-1)", "0.42.2", "MIT", "pixman-0.42.2", "ピクセルの合成", "pixman_"),
     ("libxkbcommon", "1.6.0", "MIT(X11系の表示を含む)", "libxkbcommon-1.6.0", "キーボードの配列", "xkb_"),
     ("musl", "1.2.5", "MIT", "musl-1.2.5", "Cの標準ライブラリ(Rustのmusl向けターゲットに同梱のもの)", None),
 ]

@@ -144,7 +144,7 @@ pub fn font_dir(chosen: Option<PathBuf>) -> PathBuf {
 /// 受け口の作り方の指定。
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// 画面の幅と高さ(画素)。wl_outputで公開する。
+    /// 画面の幅と高さ(ピクセル)。wl_outputで公開する。
     pub width: i32,
     pub height: i32,
     /// 席(wl_seat)とポインターを公開するか。入力を扱わない構成ではfalseにする。
@@ -837,7 +837,7 @@ impl<D: FrontendHost> Frontend<D> {
         self.pings.is_unresponsive(&toplevel.client())
     }
 
-    /// ウィンドウの画面 `surface` のコンテンツの、画面の上の矩形。IME の候補の窓を置くのに使う。ウィンドウで
+    /// ウィンドウの画面 `surface` のコンテンツの、画面の上の矩形。IME の候補ウィンドウを置くのに使う。ウィンドウで
     /// なければ、大きさ 0 の矩形。
     pub fn parent_geometry(&self, surface: &WlSurface) -> Rectangle<i32, Logical> {
         self.windows
@@ -880,8 +880,8 @@ impl<D: FrontendHost> Frontend<D> {
         }
     }
 
-    /// 見せている IME の候補の窓と、画面の上の位置(左上)。親のウィンドウが見えていない(最小化している)ときと、
-    /// 候補の窓がまだ絵を出していないときはNone。
+    /// 見せている IME の候補ウィンドウと、画面の上の位置(左上)。親のウィンドウが見えていない(最小化している)ときと、
+    /// 候補ウィンドウがまだ絵を出していないときはNone。
     ///
     /// 位置は、親のウィンドウのいまのコンテンツの位置に、アプリが伝えたカーソルの矩形を足し、[`popup_location`] で
     /// 決める(ウィンドウを動かしたときも、出力の大きさが変わったときも、描くたびに求め直す)。
@@ -929,7 +929,7 @@ impl<D: FrontendHost> Frontend<D> {
     }
 
     /// 画面の上の点 `point` で、ポインターのイベントを受け取る画面。手前から順に、overlay の layer surface、
-    /// IME の候補の窓、top の layer surface、ウィンドウのコンテンツ、bottom と background の layer surface。
+    /// IME の候補ウィンドウ、top の layer surface、ウィンドウのコンテンツ、bottom と background の layer surface。
     pub fn surface_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
         if let Some(found) = self.layer_under(point, &[Layer::Overlay]) {
             return Some(found);
@@ -975,7 +975,7 @@ impl<D: FrontendHost> Frontend<D> {
         self.switcher_image.as_ref()?.element(renderer)
     }
 
-    /// 点 `point` にある IME の候補の窓と、その左上の位置。
+    /// 点 `point` にある IME の候補ウィンドウと、その左上の位置。
     fn ime_popup_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
         let (surface, location) = self.ime_popup()?;
         let size = with_renderer_surface_state(&surface, |state| state.surface_size())??;
@@ -984,7 +984,7 @@ impl<D: FrontendHost> Frontend<D> {
             .then(|| (surface, location.to_f64()))
     }
 
-    /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay の layer surface、IME の候補の窓、
+    /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay の layer surface、IME の候補ウィンドウ、
     /// top の layer surface、ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
         // 切り替えの一覧は、全部より手前に描く。
@@ -1047,7 +1047,7 @@ impl<D: FrontendHost> Frontend<D> {
                 render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
                     renderer,
                     surface,
-                    // 拡大率は1なので、画面の上の位置と画素の位置は同じ。
+                    // 拡大率は1なので、画面の上の位置とピクセルの位置は同じ。
                     (content.x, content.y),
                     1.0,
                     1.0,
@@ -1131,7 +1131,7 @@ impl<D: FrontendHost> Frontend<D> {
             .layers()
             .map(|layer| layer.wl_surface().clone())
             .collect();
-        // IME の候補の窓は、見せているときだけ。
+        // IME の候補ウィンドウは、見せているときだけ。
         layers.extend(self.ime_popup().map(|(surface, _)| surface));
         // 最小化しているウィンドウには返さない(描いていないので)。
         let windows = self
@@ -2286,7 +2286,7 @@ fn xkb_context_can_be_made() -> bool {
     true
 }
 
-/// 画面(wl_output)を、`width` × `height` 画素の1つの表示モードで作る。[`delegate_frontend!`] が使う。
+/// 画面(wl_output)を、`width` × `height` ピクセルの1つの表示モードで作る。[`delegate_frontend!`] が使う。
 pub fn new_output(width: i32, height: i32) -> Output {
     use smithay::{
         output::{Mode, PhysicalProperties, Scale, Subpixel},

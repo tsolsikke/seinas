@@ -72,7 +72,7 @@ musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-m
 
 ### GNU Unifont JP
 
-- 取得元:GNU の配布元 <https://ftp.gnu.org/gnu/unifont/unifont-18.0.01/>。同じファイルを、もう 1 つの配布元(<https://unifoundry.com/pub/unifont/unifont-18.0.01/font-builds/>)からも取り、SHA-256 が同じであることを確かめました(2026-10-05)。配布元の署名(`.sig`。鍵 95D2E9AB8740D8046387FD151A09227B1F435A33)は、鍵を取ってこられず、確かめていません。
+- 取得元:GNU の配布元 <https://ftp.gnu.org/gnu/unifont/unifont-18.0.01/>。同じファイルを、もう 1 つの配布元(<https://unifoundry.com/pub/unifont/unifont-18.0.01/font-builds/>)からも取り、SHA-256 が同じであることを確かめました(2026-10-05)。配布元の署名(`.sig`。キー 95D2E9AB8740D8046387FD151A09227B1F435A33)は、キーを取ってこられず、確かめていません。
 - バージョン:18.0.01(2026-09-16 に公開。Unicode 18.0.0 に合わせたもの)。フォントの中の名前は `Unifont-JP`。
 - 二重ライセンスの注記:上流は、フォントのファイルを「SIL Open Font License 1.1」と「GNU GPL 2 以降(フォントの埋め込みの例外つき)」の二重ライセンスで出しています。上流の `COPYING` と、フォントの中のライセンスの表記(「Dual license: SIL Open Font License version 1.1, and GNU GPL version 2 or later with the GNU Font Embedding Exception.」)の両方に書かれています(13.0.04 から)。Seinas は、OFL 1.1 を選んで使います。`fonts/unifont-18.0.01/` の 2 つのファイルは、上流のソースの配布物(`unifont-18.0.01.tar.gz`)に入っているもので、二重ライセンスの表示をそのまま残しています。
 - 予約されたフォント名の宣言は、ありません。
@@ -86,7 +86,7 @@ Rustクレートのほかに、次のCのライブラリをリンクします。
 
 | ライブラリ | 版 | ライセンス | 使われ方 | ライセンス文 |
 | --- | --- | --- | --- | --- |
-| pixman(libpixman-1) | 0.42.2 | MIT | 画素の合成 | `c-libraries/pixman-0.42.2/COPYING` |
+| pixman(libpixman-1) | 0.42.2 | MIT | ピクセルの合成 | `c-libraries/pixman-0.42.2/COPYING` |
 | libxkbcommon | 1.6.0 | MIT(X11系の表示を含む) | キーボードの配列。Smithayがリンクの指定を付けるが、使わない実行ファイルには入らない(seinasとseinas-standaloneには入る。seinas-fbdevには入らない) | `c-libraries/libxkbcommon-1.6.0/LICENSE` |
 | musl | 1.2.5 | MIT | Cの標準ライブラリ(Rustのmusl向けターゲットに同梱のもの) | `c-libraries/musl-1.2.5/COPYRIGHT` |
 

@@ -8,7 +8,7 @@ seinas-standalone を fake screen(1280x720)で動かし、次の場面を順に�
   1-desktop.png       壁紙・タスクバー(時計)・日本語のタイトルのウィンドウ 3 つ
   2-maximized.png     最大化したウィンドウ
   3-switcher.png      ウィンドウの切り替えの一覧(Alt+Tab の最中)
-  4-ime.png           IME の変換中の文字(下線つき)と、候補の窓
+  4-ime.png           IME の変換中の文字(下線つき)と、候補ウィンドウ
   5-not-responding.png  応答なしのタイトルと閉じるボタン
 
 設定(壁紙、時計)は一時的な XDG_CONFIG_HOME に置き、~/.config は読まない。子には、印の環境変数
@@ -183,7 +183,7 @@ def main():
         tap(KEY_I)
         text.wait_for("window: preedit あい")
         shot("4-ime.png")
-        # 確定して、IME を終える(候補の窓を消す)。
+        # 確定して、IME を終える(候補ウィンドウを消す)。
         seinas.send("key 28 press")
         seinas.send("key 28 release")
         text.wait_for("window: commit あい")

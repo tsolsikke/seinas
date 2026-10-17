@@ -1,7 +1,7 @@
 # muslでの静的ビルド
 
 seinasとzeyes-minを、`x86_64-unknown-linux-musl` 向けに静的にリンクして作る手順と、できた実行ファイルの記録です。
-ZeikOS側で、像の上限やスタックの大きさを決めるときの材料にします。
+ZeikOS側で、イメージの上限やスタックの大きさを決めるときの材料にします。
 同じ手順でseinas-fbdevも作ります。そちらの記録は `docs/fbdev.md` にあります。
 
 ## 作り方
@@ -57,7 +57,7 @@ pixmanとlibxkbcommonの版は、Ubuntu 24.04に入っている共有ライブ�
 - Rustは、既定のx86-64(SSE2まで)で作ります。`target-cpu` などの指定は付けません。`tools/build-musl.sh` は、外から入った `RUSTFLAGS` を外してからビルドします。
 - Cのライブラリにも、`-march=native` などの指定は付けません。
 - pixman 0.42.2には、AVX2の処理がありません。ソースに `avx` という語が無く、meson の選択肢にも `avx2` がありません。そのため、ビルドの設定でAVX2を切る必要はありません。
-- pixmanが実行時に選ぶのは、MMX、SSE2、SSSE3の3つです。CPUIDの機能の旗だけを見て決め、OSXSAVEやXGETBVは見ません。どれもXMMとMMXのレジスタだけを使うので、OSXSAVEが0でも動きます。
+- pixmanが実行時に選ぶのは、MMX、SSE2、SSSE3の3つです。CPUIDの機能のフラグだけを見て決め、OSXSAVEやXGETBVは見ません。どれもXMMとMMXのレジスタだけを使うので、OSXSAVEが0でも動きます。
 - できた実行ファイルを逆アセンブルして、YMM・ZMMのレジスタを使う命令と `xgetbv` が1つも無いことを確かめています。
 
 pixmanの版を上げるときは、注意が要ります。上げた先の版にAVX2の処理が入っていないかを、同じやり方(ソースと選択肢、できたライブラリの逆アセンブル)で確かめ直してください。入っている場合は、実行時の判定がOSXSAVEとXGETBVを見ているかを確かめ、確かでなければビルドの設定でAVX2を切ってください。
@@ -111,14 +111,14 @@ Program Headers:
 読み取れること:
 
 - どちらも `ET_DYN` の静的PIEです。`PT_INTERP` も `DT_NEEDED` もありません。
-- 置く番地は読み込む側が決めます。起動時に、実行ファイル自身が再配置を行います(`R_X86_64_RELATIVE` だけで、seinasが7734個、zeyes-minが3013個)。そのため、書き込める区画(RW)への書き込みが起動直後に起きます。
+- 置くアドレスは読み込む側が決めます。起動時に、実行ファイル自身が再配置を行います(`R_X86_64_RELATIVE` だけで、seinasが7734個、zeyes-minが3013個)。そのため、書き込めるセグメント(RW)への書き込みが起動直後に起きます。
 - `PT_TLS` があります。スレッドごとに、seinasは0x308バイト(776バイト、16バイト境界)、zeyes-minは0x80バイト(128バイト、8バイト境界)が要ります。
 - `GNU_STACK` はRWで、スタックの実行は求めません。
 - `GNU_RELRO` があります。再配置の後、その範囲を読み取り専用に変えます(`mprotect`)。
 
-メモリーに置いたときの像の大きさ(最後のLOADの終わりまで)は次のとおりです。
+メモリーに置いたときのイメージの大きさ(最後のLOADの終わりまで)は次のとおりです。
 
-| 実行ファイル | 像の大きさ | 読み取り専用 | 実行(R E) | 書き込み(RW) |
+| 実行ファイル | イメージの大きさ | 読み取り専用 | 実行(R E) | 書き込み(RW) |
 | --- | --- | --- | --- | --- |
 | seinas | 0x36a168(約3.42 MiB) | 0x02d7e8 + 0x09ece4 | 0x277516 | 0x0245a8(うちファイルに無い分 0x1e48) |
 | zeyes-min | 0x1034c8(約1.01 MiB) | 0x011d50 + 0x032020 | 0x0ae126 | 0x00e8f0(うちファイルに無い分 0x18b4) |
@@ -166,7 +166,7 @@ seinasは、`target/fonts` のフォント(BIZ UDPゴシックとGNU Unifont JP)
 
 ### 描画バッファ
 
-画素の形式は、どれも `Xrgb8888`(1画素4バイト)です。
+ピクセルの形式は、どれも `Xrgb8888`(1ピクセル4バイト)です。
 
 | バッファ | 大きさ | 持ち主 | 置き場所 |
 | --- | --- | --- | --- |
@@ -180,7 +180,7 @@ seinasは、`target/fonts` のフォント(BIZ UDPゴシックとGNU Unifont JP)
 ## glibc版との違い
 
 - 同じソース、同じ版のpixmanとlibxkbcommonを使っています。
-- musl向けでも、テスト一式(合成結果の画素を比べるテストを含む)が通ります。
+- musl向けでも、テスト一式(合成結果のピクセルを比べるテストを含む)が通ります。
 
 ```bash
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$PWD/target/musl-libs/lib" cargo test --workspace --locked --target x86_64-unknown-linux-musl

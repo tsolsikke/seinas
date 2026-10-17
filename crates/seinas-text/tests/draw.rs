@@ -27,7 +27,7 @@ fn painter() -> TextPainter {
     painter
 }
 
-/// 下地だけの絵に `text` を描く。絵は、行ごとの「下地でない画素か」の並びで返す。
+/// 下地だけの絵に `text` を描く。絵は、行ごとの「下地でないピクセルか」の並びで返す。
 fn draw(painter: &mut TextPainter, text: &str, max_width: i32) -> (Drawn, Vec<Vec<bool>>) {
     let mut pixels = [GROUND[2], GROUND[1], GROUND[0], 0xff].repeat(WIDTH * HEIGHT);
     let drawn = painter.draw_line(
@@ -50,7 +50,7 @@ fn draw(painter: &mut TextPainter, text: &str, max_width: i32) -> (Drawn, Vec<Ve
     (drawn, inked)
 }
 
-/// 下地でない画素がある列の、左の端と右の端。
+/// 下地でないピクセルがある列の、左の端と右の端。
 fn inked_columns(inked: &[Vec<bool>]) -> Option<(usize, usize)> {
     let columns: Vec<usize> = (0..WIDTH)
         .filter(|&x| inked.iter().any(|row| row[x]))
@@ -108,7 +108,7 @@ fn a_character_missing_from_the_ui_font_is_drawn_with_the_fallback_font() {
     // U+2550(罫線)は、BIZ UDPゴシックには無く、GNU Unifont JPにある。
     let (drawn, inked) = draw(&mut painter, "a═b", 180);
     assert_eq!((drawn.fallback_glyphs, drawn.missing_glyphs), (1, 0));
-    // 二重の横線なので、同じ行に、横に続いた画素がある。
+    // 二重の横線なので、同じ行に、横に続いたピクセルがある。
     let longest_run = inked
         .iter()
         .map(|row| {

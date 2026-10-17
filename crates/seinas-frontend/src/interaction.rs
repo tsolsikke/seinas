@@ -15,7 +15,7 @@ use crate::{
 
 /// 左のボタンの番号(Linuxの入力の決まり)。動かす・閉じる操作は、このボタンだけで行う。
 pub const LEFT_BUTTON: u32 = 0x110;
-/// 帯を押してから、これだけ(画素)動くまでは、ウィンドウを動かさない。手前に出すだけのつもりで
+/// 帯を押してから、これだけ(ピクセル)動くまでは、ウィンドウを動かさない。手前に出すだけのつもりで
 /// 押したときに、ずれないようにする。
 pub const DRAG_SLACK: f64 = 4.0;
 /// 最大化しているウィンドウのタイトルバーを押してから、これだけ(ピクセル)動いたら、元の大きさに戻して動かし
@@ -874,7 +874,7 @@ mod tests {
     fn a_window_has_three_parts() {
         let (location, outer) = ((32, 32).into(), OUTER.into());
         let part = |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, at(x, y));
-        // 帯は、上の24画素。その右の端の24画素が、閉じるボタン。
+        // 帯は、上の24ピクセル。その右の端の24ピクセルが、閉じるボタン。
         assert_eq!(part(32.0, 32.0), Some(Part::Bar));
         assert_eq!(part(327.9, 55.9), Some(Part::Bar));
         assert_eq!(part(328.0, 32.0), Some(Part::Button(TitleButton::Close)));
@@ -897,7 +897,7 @@ mod tests {
         assert_eq!(pressed.deliver, Deliver::Nobody);
         assert!(!pressed.redraw, "b is already in front");
 
-        // 4画素に届かない間は、動かない。番号も持ったまま。
+        // 4ピクセルに届かない間は、動かない。番号も持ったまま。
         for (x, y) in [(103.0, 40.0), (100.0, 43.9), (102.0, 42.0)] {
             let moved = world.motion(x, y);
             assert_eq!((moved.redraw, moved.deliver), (false, Deliver::Nobody));
@@ -905,7 +905,7 @@ mod tests {
         }
         assert!(!world.interaction.is_moving());
 
-        // 4画素動くと、動き始める。ウィンドウは、押した点からのずれのぶんだけ動く(遊びのぶんも含む)。
+        // 4ピクセル動くと、動き始める。ウィンドウは、押した点からのずれのぶんだけ動く(遊びのぶんも含む)。
         assert!(world.motion(104.0, 40.0).redraw);
         assert!(world.interaction.is_moving());
         assert_eq!(world.place("b"), ((36, 32), None));
@@ -1143,7 +1143,7 @@ mod tests {
         assert!(world.begin_client_move(b, 100.0, 100.0));
         assert!(world.interaction.is_moving());
         assert_eq!(world.place("b"), ((34, 32), None));
-        // 遊びは無く、1画素でも動く。知らせは、クライアントには渡さない。
+        // 遊びは無く、1ピクセルでも動く。知らせは、クライアントには渡さない。
         let moved = world.motion(101.0, 100.0);
         assert_eq!((moved.redraw, moved.deliver), (true, Deliver::Nobody));
         assert_eq!(world.place("b"), ((33, 32), None));

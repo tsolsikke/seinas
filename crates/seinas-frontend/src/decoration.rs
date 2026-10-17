@@ -12,21 +12,21 @@ use tracing::{info, warn};
 
 use crate::geometry::{Point, Rect, Size};
 
-/// 題名の帯の高さ(画素)。
+/// 題名の帯の高さ(ピクセル)。
 pub const TITLE_BAR_HEIGHT: i32 = 24;
-/// 題名の文字の大きさ(画素)。
+/// 題名の文字の大きさ(ピクセル)。
 pub const TITLE_SIZE: f32 = DEFAULT_SIZE;
-/// 帯の左右の端から、題名までの空き(画素)。
+/// 帯の左右の端から、題名までの空き(ピクセル)。
 pub const TITLE_PADDING: i32 = 8;
 /// タイトルバーのボタンの大きさ(ピクセル)。タイトルバーの右の端から、タイトルバーと同じ高さの正方形で並べる。
 pub const TITLE_BUTTON_SIZE: i32 = TITLE_BAR_HEIGHT;
-/// 閉じるボタンの大きさ(画素)。帯の右の端に、帯と同じ高さの正方形で置く。
+/// 閉じるボタンの大きさ(ピクセル)。帯の右の端に、帯と同じ高さの正方形で置く。
 pub const CLOSE_BUTTON_SIZE: i32 = TITLE_BUTTON_SIZE;
 /// 最小化と最大化の印の大きさ(ピクセル)。ボタンの中央に描く。
 const MARK_SIZE: i32 = 10;
-/// 閉じるボタンの「×」の印の大きさ(画素)。ボタンの中央に描く。
+/// 閉じるボタンの「×」の印の大きさ(ピクセル)。ボタンの中央に描く。
 const CLOSE_MARK_SIZE: i32 = 10;
-/// ウィンドウを動かしても、帯のうち、横にこれだけ(画素)は画面の中に残す。帯をもう一度掴めるようにする。
+/// ウィンドウを動かしても、帯のうち、横にこれだけ(ピクセル)は画面の中に残す。帯をもう一度掴めるようにする。
 /// 左へ出すときは、右の端のボタン(いちばん多いときの 3 つ)の分を足して残す。
 pub const MIN_VISIBLE_BAR: i32 = 48;
 /// タイトルバーのボタンが、いちばん多いとき(最小化、最大化、閉じる)の幅。
@@ -202,7 +202,7 @@ pub fn load_fonts(dir: &Path, config: Option<&Path>) -> TextPainter {
     painter
 }
 
-/// 帯の絵を作る。幅は `width`、高さは [`TITLE_BAR_HEIGHT`]。画素の並びは B, G, R, X。
+/// 帯の絵を作る。幅は `width`、高さは [`TITLE_BAR_HEIGHT`]。ピクセルの並びは B, G, R, X。
 ///
 /// タイトルは左に寄せる。右の端には、`look` のボタンを並べ(右から、閉じる、最大化、最小化)、タイトルは、その手前に
 /// 収める。収まらなければ、末尾を切って「…」を付ける。`look.hot` のボタンは、目立たせて描く。
@@ -358,7 +358,7 @@ fn paint_close_button(pixels: &mut [u8], width: i32, ground: Option<[u8; 3]>, ma
             }
         }
     }
-    // 2本の斜めの線。太さは2画素。
+    // 2本の斜めの線。太さは2ピクセル。
     let inset = (CLOSE_BUTTON_SIZE - CLOSE_MARK_SIZE) / 2;
     for step in 0..CLOSE_MARK_SIZE {
         let y = inset + step;
@@ -489,7 +489,7 @@ mod tests {
         // 隅でも、両方の限りが働く。
         assert_eq!(clamp(-1000, -1000), (-200, 0));
         assert_eq!(clamp(1000, 1000), (592, 456));
-        // 帯が48画素より短いウィンドウは、帯の全体が残る。
+        // 帯が48ピクセルより短いウィンドウは、帯の全体が残る。
         let narrow = clamp_outer_location((-100, 10).into(), 30, screen);
         assert_eq!((narrow.x, narrow.y), (0, 10));
         let narrow = clamp_outer_location((700, 10).into(), 30, screen);

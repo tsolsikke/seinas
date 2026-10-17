@@ -1,6 +1,6 @@
 //! seinas-standaloneの試験で共通に使うもの。
 //!
-//! seinas-standaloneを偽の画面で動かし、その写し(PPM)の画素を見て確かめる。親のWaylandも、画面の
+//! seinas-standaloneを偽の画面で動かし、その写し(PPM)のピクセルを見て確かめる。親のWaylandも、画面の
 //! 装置も要らない。
 
 #![allow(dead_code)]
@@ -198,7 +198,7 @@ pub fn wait_for<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
 pub struct Shot {
     pub width: usize,
     pub height: usize,
-    /// PPMの画素の部分(赤, 緑, 青の順)。
+    /// PPMのピクセルの部分(赤, 緑, 青の順)。
     pub pixels: Vec<u8>,
 }
 
@@ -236,7 +236,7 @@ pub const ZEYES_HEIGHT: usize = 240;
 /// 外形の左上が(`x0`, `y0`)にあるzeyes-minのウィンドウの中身が、全体が見える形で描かれているか。
 /// 中身は、題名の帯の下にある。
 ///
-/// 目のまわりの色は `skin`。ポインターが無いとき、目玉は窓の中央を見る。左の目玉は中身の中の
+/// 目のまわりの色は `skin`。ポインターが無いとき、目玉はウィンドウの中央を見る。左の目玉は中身の中の
 /// (114, 120)、右の目玉は(206, 120)に来る。
 pub fn shows_zeyes_at(shot: &Shot, x0: usize, y0: usize, skin: [u8; 3]) -> bool {
     let at = |x: usize, y: usize| shot.pixel(x0 + x, y0 + BAR + y);
@@ -256,14 +256,14 @@ pub fn shows_zeyes(shot: &Shot) -> bool {
 
 /// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの、題名の帯の色。
 ///
-/// 帯の右の端(閉じるボタンの隅。題名の文字も「×」の印も来ない所)の、上と下の画素を見る。
+/// 帯の右の端(閉じるボタンの隅。題名の文字も「×」の印も来ない所)の、上と下のピクセルを見る。
 /// 色がそろっていなければNone。ポインターが閉じるボタンの上にあるときは、ボタンの地の色になる。
 pub fn bar_color(shot: &Shot, x0: usize, y0: usize, width: usize) -> Option<[u8; 3]> {
     let top = shot.pixel(x0 + width - 2, y0);
     (top == shot.pixel(x0 + width - 2, y0 + BAR - 1)).then_some(top)
 }
 
-/// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの帯の中で、帯の色でない画素(題名の文字)の位置。
+/// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの帯の中で、帯の色でないピクセル(題名の文字)の位置。
 /// 位置は、タイトルバーの左上を原点にした(x, y)。右の端のボタン(最大化と閉じる)は、見ない。
 pub fn title_ink(shot: &Shot, x0: usize, y0: usize, width: usize) -> Vec<(usize, usize)> {
     let Some(bar) = bar_color(shot, x0, y0, width) else {

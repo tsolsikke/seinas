@@ -22,7 +22,7 @@ impl Cosmic {
     fn layout(&mut self, kind: FontKind, px: f32, text: &str) -> Buffer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, (px * 1.5).round()));
         buffer.set_wrap(Wrap::None);
-        // UI用のフォントでは、字形を画素の境目に合わせて置く(小数の位置には置かない)。
+        // UI用のフォントでは、字形をピクセルの境目に合わせて置く(小数の位置には置かない)。
         // 端末用のフォントでは、合わせない。合わせると、字形ごとに幅が切り上げられて(13pxなら半角が
         // 6.5→7px)、半角と全角の幅が1:2でなくなるため。
         buffer.set_hinting(match kind {

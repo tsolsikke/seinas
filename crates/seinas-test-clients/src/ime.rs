@@ -10,9 +10,9 @@
 //!
 //! 引数:
 //!
-//! - `--popup WxH`: 大きさ WxH の候補の窓(input popup surface)を、紫(8000ff)の単色で出す。コンポジタから届いた
+//! - `--popup WxH`: 大きさ WxH の候補ウィンドウ(input popup surface)を、紫(8000ff)の単色で出す。コンポジタから届いた
 //!   カーソルの矩形を `ime: popup rectangle X Y W H` の形で書く。
-//! - `--popup-text`: 候補の窓に、候補(変換中の文字と、そのカタカナ)を白い文字で書く(スクリーンショットのため)。
+//! - `--popup-text`: 候補ウィンドウに、候補(変換中の文字と、そのカタカナ)を白い文字で書く(スクリーンショットのため)。
 //! - `--virtual-keyboard-only`: get_input_method を頼まずに virtual-keyboard を作る(認可の無いクライアントのまね)。
 //!   断られたら `ime: protocol error …` を書いて終わる。
 //! - `--swallow KEY`: evdev の番号 KEY のキーを、文字を出さずに使う(押下も解放も、何も返さない。半角/全角の
@@ -126,7 +126,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     // zwp_input_method_v2.grab_keyboard(新しい番号)
     let grab = wire.new_id();
     wire.send(&message(input_method, 5, &grab.to_le_bytes()))?;
-    // 候補の窓の pool は、出している間、持ち続ける。
+    // 候補ウィンドウの pool は、出している間、持ち続ける。
     let (popup, mut popup_view) = match popup_size {
         Some((width, height)) => {
             let (popup, view) = open_popup(
@@ -504,10 +504,10 @@ fn preedit_requests(input_method: u32, text: &str, serial: u32) -> [Vec<u8>; 2] 
     ]
 }
 
-/// 候補の窓の色(B, G, R, X。紫)。
+/// 候補ウィンドウの色(B, G, R, X。紫)。
 const POPUP_PIXEL: [u8; 4] = [0xff, 0x00, 0x80, 0xff];
 
-/// 候補の窓の絵と、描き直すためのもの。
+/// 候補ウィンドウの絵と、描き直すためのもの。
 struct PopupView {
     surface: u32,
     shm: u32,
@@ -575,7 +575,7 @@ fn commit_surface(
     wire.send(&message(surface, 6, &[]))
 }
 
-/// 候補の窓(input popup surface)を作り、`width` × `height` の紫の単色の絵を出す。返すのは、popup surface の番号と、
+/// 候補ウィンドウ(input popup surface)を作り、`width` × `height` の紫の単色の絵を出す。返すのは、popup surface の番号と、
 /// 描き直すためのもの。`text` なら、候補の文字を描く(フォントを読む)。
 fn open_popup(
     wire: &mut crate::wire::Wire,

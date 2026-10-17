@@ -40,7 +40,7 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 | プロトコル | Smithay 0.7.0 | 備考 |
 | --- | --- | --- |
 | text-input-unstable-v3(`zwp_text_input_v3`) | あり(`wayland::text_input`) | キーボードのフォーカスと一緒に、text-input のフォーカスも動く(`wayland/seat/keyboard.rs`)。global の公開先は絞れない |
-| input-method-unstable-v2(`zwp_input_method_v2`) | あり(`wayland::input_method`) | commit_string、preedit、delete_surrounding、commit の serial、キーボードの grab、候補の窓(`zwp_input_popup_surface_v2`)。公開先を絞れる |
+| input-method-unstable-v2(`zwp_input_method_v2`) | あり(`wayland::input_method`) | commit_string、preedit、delete_surrounding、commit の serial、キーボードの grab、候補ウィンドウ(`zwp_input_popup_surface_v2`)。公開先を絞れる |
 | virtual-keyboard-unstable-v1(`zwp_virtual_keyboard_v1`) | あり(`wayland::virtual_keyboard`) | IME が使わなかったキーを、アプリへ戻すのに使う。公開先を絞れる |
 | キーボード(`wl_keyboard`) | あり(`Seat::add_keyboard`) | keymap は、xkb の名前(rules・model・layout)から作る。文字列から作れるのは、作った後の `set_keymap_from_string` だけ |
 
@@ -64,7 +64,7 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
                    IME(input-method-v2 のクライアント)            アプリ(wl_keyboard)
                      │ commit_string・preedit・delete_surrounding ─→ Seinas ─→ アプリ(text-input-v3)
                      │ 使わなかったキー(virtual-keyboard) ────────→ Seinas ─→ アプリ(wl_keyboard)
-                     │ 候補の窓(input popup surface) ─────────────→ Seinas が、文字を打っている所の近くに置く
+                     │ 候補ウィンドウ(input popup surface) ─────────────→ Seinas が、文字を打っている所の近くに置く
                      ▼
 アプリ(text-input-v3)── 有効・無効、周りの文字、カーソルの矩形、入力の種類 ─→ Seinas ─→ IME
 ```
@@ -105,7 +105,7 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 緊急解除の順番:
 
 1. 先に、その接続の IME の認可と世代を消す(1.6)。この後、その接続の input-method と virtual-keyboard の要求は捨てる。
-2. その後で片付ける:Seinas が keyboard の grab を外し(次のキーから直接の経路)、候補の窓を隠し、接続を切る。切った接続のクリーンアップ(Smithay の部品の destroy)は、Seinas がその場で行わせる。IME の側からは、ただの切断に見える。Seinas は wayland-server の `Client::kill` で接続を閉じるだけで、`wl_display.error` は送らない(wayland-backend 0.3.17 の `src/rs/server_impl/client.rs` 325〜328 行の `kill` は、切断の印を付けて `ClientData::disconnected` に理由を渡すだけ。`wl_display.error` を送るのは 274〜303 行の `post_error` の道だけ)。理由の文は、Seinas のログ(`a client disconnected: ProtocolError { … message: "the input method was released with the emergency key" }`)にだけ出る。IME は、読むと接続の終わり(EOF)、送ると EPIPE になる(2026-10-15 にテスト用の IME で確かめた。何も送っていなければ EOF で終わり、virtual-keyboard でキーを戻そうとしていれば「Broken pipe」で終わる)。
+2. その後で片付ける:Seinas が keyboard の grab を外し(次のキーから直接の経路)、候補ウィンドウを隠し、接続を切る。切った接続のクリーンアップ(Smithay の部品の destroy)は、Seinas がその場で行わせる。IME の側からは、ただの切断に見える。Seinas は wayland-server の `Client::kill` で接続を閉じるだけで、`wl_display.error` は送らない(wayland-backend 0.3.17 の `src/rs/server_impl/client.rs` 325〜328 行の `kill` は、切断の印を付けて `ClientData::disconnected` に理由を渡すだけ。`wl_display.error` を送るのは 274〜303 行の `post_error` の道だけ)。理由の文は、Seinas のログ(`a client disconnected: ProtocolError { … message: "the input method was released with the emergency key" }`)にだけ出る。IME は、読むと接続の終わり(EOF)、送ると EPIPE になる(2026-10-15 にテスト用の IME で確かめた。何も送っていなければ EOF で終わり、virtual-keyboard でキーを戻そうとしていれば「Broken pipe」で終わる)。
 3. IME へ渡したキーは、アプリへ送り直さない(1.3)。それより後の入力は、アプリへ直接届ける。
 4. IME が去った後(接続断のときも同じ)、フォーカスのあるアプリへ `wl_keyboard` の leave と enter を送り直す。IME が virtual-keyboard で押したキー(アプリには押されたまま)は enter に入れない。enter に入るのは、物理のキーボードで今押されていて、IME かアプリへ渡したキーだけ(Seinas が使ったショートカットのキーは入らない)。
 
@@ -128,7 +128,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
 - IME の権限を、シェルの部品の権限と分ける。これは「権限を分けること」で、相手が誰かを確かめる「認証」ではない。
 - IME 専用のソケット:ふだんのソケットのパスの名前に `-ime` を入れたもの(名前に拡張子があれば、その前に入れる。`docs/standalone.md`)(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)を listen する。
   - input-method-v2 と virtual-keyboard の global は、IME のソケットからつないだクライアントにだけ見せる。シェルのソケットとふだんのソケットには見せない。
-  - IME のソケットには、layer-shell と foreign-toplevel を見せない。候補の窓(input popup surface)に要る `wl_compositor`・`wl_shm` などのふつうの global は見せる。
+  - IME のソケットには、layer-shell と foreign-toplevel を見せない。候補ウィンドウ(input popup surface)に要る `wl_compositor`・`wl_shm` などのふつうの global は見せる。
   - ソケットは、ほかのソケットと同じく wayland-server の `ListeningSocket` で作る(ロックファイルで、生きている別のインスタンスのソケットを消さない)。
 - virtual-keyboard(A'):作れるのは、`get_input_method` を受け入れたクライアントだけ。ほかは、virtual-keyboard の `unauthorized` のエラーにする(2.5)。
   - 認可は、接続と seat と、受け入れた IME の世代に結び付ける。受け入れた input method が destroy されたとき、緊急解除で消したときに、認可も消え、それまでに作った virtual-keyboard からの要求も捨てる。新しく `get_input_method` を受け入れたら、世代を 1 つ進める。
@@ -164,10 +164,10 @@ text-input と `wl_keyboard` の leave は、別のもの:
 - 変換中の文字(preedit)は、アプリが、文字を打っている所に描く(text-input-v3 の preedit_string。カーソルの位置も届く)。IME は、アプリの上に描かない(運用者の決定 Q5。2026-10-14)。
 - text-input-v3 を使わないアプリ(zeyes など)では、変換しない。キーは、IME が virtual-keyboard でそのまま戻す(preedit を出す場所が無いため)。
 
-### 1.11 候補の窓を置く
+### 1.11 候補ウィンドウを置く
 
-- IME の候補の窓(input popup surface)は、Seinas が置く。アプリが伝えたカーソルの矩形(`set_cursor_rectangle`)の下に置き、画面の下に入らなければ上に置く。重ね方は、全部のウィンドウより手前(layer surface の top と同じ所)で、ポインターも受け取る(候補を押して選べるように)。
-- 候補の窓を誰が描くかは、Kieli の設計で決める(3 の申し送り)。Seinas は、input popup surface で届いたものを置くだけ。
+- IME の候補ウィンドウ(input popup surface)は、Seinas が置く。アプリが伝えたカーソルの矩形(`set_cursor_rectangle`)の下に置き、画面の下に入らなければ上に置く。重ね方は、全部のウィンドウより手前(layer surface の top と同じ所)で、ポインターも受け取る(候補を押して選べるように)。
+- 候補ウィンドウを誰が描くかは、Kieli の設計で決める(3 の申し送り)。Seinas は、input popup surface で届いたものを置くだけ。
 
 ### 1.12 キーボードと keymap(Seinas の側)
 
@@ -196,8 +196,8 @@ text-input と `wl_keyboard` の leave は、別のもの:
 | IME の権限(誰を IME と認めるか) | ○ | | |
 | キーの意味(ローマ字からかな、変換、切り替え) | | ○ | |
 | 変換中の文字を描く | | | ○(text-input-v3) |
-| 候補の窓を描く | | (申し送り) | |
-| 候補の窓を置く | ○ | | |
+| 候補ウィンドウを描く | | (申し送り) | |
+| 候補ウィンドウを置く | ○ | | |
 | 文字を打っている所(カーソルの矩形、周りの文字)を伝える | 取り次ぐ | 受け取る | ○ |
 | IME の状態の表示 | (申し送り) | (申し送り) | |
 
@@ -257,7 +257,7 @@ Kieli の作り方について、Seinas の側で見えていることを、Kiel
 | 使わなかったキー | virtual-keyboard でアプリへ戻す。押したキーは、離したことも戻す | Kieli の設計 | 押下と解放の組、修飾キーの状態、繰り返しを 1 つの配り方の決まりで扱う |
 | unavailable と、activate・deactivate | `unavailable` を受けたら、そのオブジェクトを捨てる(2.4)。deactivate・activate で、入力文脈の状態を作り直す | Kieli の設計(仕様の動き) | 入力欄ごとに 1 つのセッション。モードと未確定の文字を、プロセス全体の状態に置かない |
 | 変換中の文字 | アプリが text-input-v3 の preedit で描く。text-input-v3 を使わないアプリでは変換しない | 運用者(決定 Q5。2026-10-14) | 維持。統合のテストには、専用の小さな文字入力のアプリを使う |
-| 候補の窓(Q4) | 誰が描くか。最初のバージョン(K5)では要らない | Kieli の設計(かな漢字変換を入れる段階で) | Kieli の入口が popup を描き、Seinas が置く。描画のライブラリは、かな漢字変換に着手するときに決める |
+| 候補ウィンドウ(Q4) | 誰が描くか。最初のバージョン(K5)では要らない | Kieli の設計(かな漢字変換を入れる段階で) | Kieli の入口が popup を描き、Seinas が置く。描画のライブラリは、かな漢字変換に着手するときに決める |
 | IME の状態の表示(Q6) | 状態(あ/A)をタスクバーの右へ届ける方法(K8) | Kieli の設計 | Kieli → Seinas → シェルの部品の経路。input-method-v2 だけでは足りないので、別に合意する拡張が要る。状態の正本は Kieli、表示はシェル。通信の実装は、タスクバーとの統合のときまで決めない |
 | 切り替えのキー(Q7) | 半角/全角などと、英字配列での組み合わせ。Seinas が使うキー(1.8)は Kieli に届かない | Kieli の設計 | 統合の前に、システムの予約キーと IME の切り替えのキーの担当を決め、設定のぶつかりを検出する。virtual-keyboard で戻ったキーを、また IME へ回さない |
 | keymap(Q8) | grab で届いた keymap(既定は jp106)の使い方。ZeikOS では、grab で届いた fd をそのまま戻すと使えないので、memfd に書き直して送る(`docs/zeikos-requirements.md`) | Kieli の設計 | 入口が keymap と修飾キーを解釈し、core には論理的な入力を渡す。ローマ字の表は core、物理的な配列の解釈は入口。memfd は ZeikOS での作り方で、Wayland の必須ではない |
@@ -314,13 +314,13 @@ K6 のとおり、2 つを別々に判定する。
 - text-input-v3 と input-method-v2 の取り次ぎ(commit_string、preedit、delete_surrounding、done の serial)。
 - キーボードのフォーカスに text-input のフォーカスが付いてくること、IME の有効・無効(activate・deactivate)。
 - IME のキーボードの grab(grab している間のキーと修飾キーを IME へ送り、keymap と繰り返しの設定も送る)。
-- 候補の窓の role と、カーソルの矩形を IME へ伝えること(`InputMethodHandler::parent_geometry` で、アプリのウィンドウの位置を Seinas が教える)。
+- 候補ウィンドウの role と、カーソルの矩形を IME へ伝えること(`InputMethodHandler::parent_geometry` で、アプリのウィンドウの位置を Seinas が教える)。
 - virtual-keyboard(公開先を絞れる)。
 
 足りないもの・Seinas が書くもの:
 
 - `Seat::add_keyboard` は、xkb の名前から keymap を作るので、xkeyboard-config のファイル(Linux では `/usr/share/X11/xkb`)が要る。ZeikOS には無い。案:(a)ZeikOS に、要る分だけのファイル(evdev の rules、`jp` と `us` の symbols など)を置く、(b)Smithay に、keymap の文字列から keyboard を作る口を足す(上流に提案するか、小さなパッチ)。実装の最初に(a)の大きさを測って決める。
-- 候補の窓の描画(ウィンドウより手前の層)、置く位置の計算(画面の端での上下の入れ替え)、ポインターのヒット。
+- 候補ウィンドウの描画(ウィンドウより手前の層)、置く位置の計算(画面の端での上下の入れ替え)、ポインターのヒット。
 - 注意:Smithay 0.7.0 の `add_instance` の不具合(下)は、Seinas の側で IME を 1 つに限る形で避ける(2 つ目の IME に、Smithay の取り次ぎを使わせない)。
 - IME を 1 つに限ること。Smithay 0.7.0 では、2 つ目の IME が `get_input_method` をすると、前からある IME の方へ `unavailable` を送り、新しい方には何も送らない(新しい方は覚えられず、宙に浮く。`input_method_handle.rs` の `add_instance`。ソースで確かめた)。プロトコルでは、新しい方へ送るもの。また、2 つ目の IME も 1 つ目と同じ keyboard の grab の入れ物を指すので、2 つ目が grab を取って手放すと、1 つ目の grab まで外れる。決定(2026-10-12):2 つ目からの `get_input_method` を、Smithay の Dispatch の前に、Seinas が書いた Dispatch で受けて断る(Seinas の側の入れ物でオブジェクトを作り、`unavailable` を送り、その後の要求は捨てる)。2 つ目の要求が Smithay の部品に届かないので、どちらの不具合も起きない。Smithay は直さない(このリポジトリの中で Smithay のバージョンを上げない)。
 - ショートカットの filter と、キーボードのフォーカスの決まり。
@@ -333,7 +333,7 @@ WSL には、text-input-v3 や input-method-v2 を使うアプリと IME(foot、
 1. 入れ子の Seinas に、キーボードを入れる(親の `wl_keyboard` から)。`test-client window --keyboard` が、届いたキーを書き出す。
 2. テスト用の IME(`test-client ime`):シェルのソケットへつなぎ、input-method-v2 で keyboard を grab し、小さな表(`a` → 「あ」など)で preedit と commit_string を送り、ほかのキーは virtual-keyboard で戻す。
 3. テスト用のアプリ(`test-client window --text-input`):text-input-v3 を有効にし、届いた preedit・commit_string・enter・leave を書き出す。
-4. 同じ組み合わせを、seinas-standalone の fake screen とテスト用の入力インターフェース(`key` の行を足す)で動かし、CI のテストにする(キー → IME → アプリの文字、IME が無いときの直接の道、IME が去ったときに直接の道へ戻ること、候補の窓の位置)。
+4. 同じ組み合わせを、seinas-standalone の fake screen とテスト用の入力インターフェース(`key` の行を足す)で動かし、CI のテストにする(キー → IME → アプリの文字、IME が無いときの直接の道、IME が去ったときに直接の道へ戻ること、候補ウィンドウの位置)。
 5. 運用者が良ければ、foot(text-input-v3)と fcitx5(input-method-v2)を入れて、ほかの実装とも話せることを確かめる(任意)。
 6. Kieli の最初のバージョンができた後に、統合として、テスト用の IME の代わりに Kieli をつなぐ(4 の「Seinas との統合」の判定)。
 
@@ -351,7 +351,7 @@ WSL には、text-input-v3 や input-method-v2 を使うアプリと IME(foot、
 | 順 | 内容 | 見込み |
 | --- | --- | --- |
 | 1 | seat のキーボード(keymap は `jp`)、キーボードのフォーカス(activated のウィンドウ)、入れ子の親からのキー、テスト用の入力インターフェースの `key`、テスト用のクライアントの `--keyboard` | 約 400 行 |
-| 2 | text-input-v3・input-method-v2・virtual-keyboard の global(公開先の絞り込み)、IME を 1 つに限ること、ショートカットの filter、候補の窓の描画・置く位置・ポインター | 約 400 行 |
+| 2 | text-input-v3・input-method-v2・virtual-keyboard の global(公開先の絞り込み)、IME を 1 つに限ること、ショートカットの filter、候補ウィンドウの描画・置く位置・ポインター | 約 400 行 |
 | 3 | テスト用の IME とテスト用のアプリ(ソケットへ直接書くもの)と、経路の全体のテスト | 約 500 行 |
 | 4 | ZeikOS のキーボードの装置から読むバックエンド(装置ができてから) | 約 200 行 |
 | 5 | IME の権限(1.6:IME のソケット、virtual-keyboard の認可)と、復旧(1.5:接続断、緊急解除) | 3 SP と 4 SP の見込み(2026-10-15) |

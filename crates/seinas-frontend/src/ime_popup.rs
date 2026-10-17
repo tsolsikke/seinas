@@ -1,14 +1,14 @@
-//! IME の候補の窓(input popup surface)を置く位置の決まり(ADR 0004 の 1.11)。
+//! IME の候補ウィンドウ(input popup surface)を置く位置の決まり(ADR 0004 の 1.11)。
 //!
 //! ADR 0001 の決まりで、Smithay の型を使わない。
 
 use crate::geometry::{Point, Rect, Size};
 
-/// 大きさ `size` の候補の窓を、画面の上のカーソルの矩形 `cursor` の近くに置く位置(左上)。
+/// 大きさ `size` の候補ウィンドウを、画面の上のカーソルの矩形 `cursor` の近くに置く位置(左上)。
 ///
 /// - カーソルの矩形の下に、左の端をそろえて置く。
 /// - 画面の下の端からはみ出すなら、カーソルの矩形の上に置く。
-/// - それでも画面(大きさ `output`)からはみ出す分は、画面の中へ寄せる(右の端、左の端、上の端)。候補の窓が画面
+/// - それでも画面(大きさ `output`)からはみ出す分は、画面の中へ寄せる(右の端、左の端、上の端)。候補ウィンドウが画面
 ///   より大きければ、左上をそろえる。
 pub fn popup_location(output: Size, cursor: Rect, size: Size) -> Point {
     let below = cursor.loc.y + cursor.size.h;

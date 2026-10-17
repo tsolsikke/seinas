@@ -1,6 +1,6 @@
 [package]
 name = "seinas-text"
-description = "Seinasが自分で描く文字(題名など)。フォントをファイルから読み、1行の文字を画素にする。Waylandにも、描画の裏側にも依存しない。"
+description = "Seinasが自分で描く文字(題名など)。フォントをファイルから読み、1行の文字をピクセルにする。Waylandにも、描画の裏側にも依存しない。"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

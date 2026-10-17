@@ -1,4 +1,4 @@
-//! ウィンドウの上に、題名の帯が描かれることを、画素で確かめる。
+//! ウィンドウの上に、題名の帯が描かれることを、ピクセルで確かめる。
 //!
 //! 決まり(`docs/window-placement.md`):
 //! - 帯は、ウィンドウの中身の上に付く。高さは24で、幅は中身と同じ。
@@ -38,19 +38,19 @@ fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
 /// タイトルに使える範囲の右の端。右の端のボタン(最大化と閉じる)と、その手前の空きを除く。
 const TITLE_END: usize = WINDOW_WIDTH - BUTTONS - TITLE_PADDING;
 
-/// 題名の文字の画素が、置かれてよい範囲(左の空きから、閉じるボタンの手前の空きまで)に収まっているか。
+/// 題名の文字のピクセルが、置かれてよい範囲(左の空きから、閉じるボタンの手前の空きまで)に収まっているか。
 fn ink_stays_inside(ink: &[(usize, usize)]) -> bool {
     ink.iter()
         .all(|&(x, _)| (TITLE_PADDING..TITLE_END).contains(&x))
 }
 
-/// 文字の画素の位置を、いちばん左の列を0にそろえる(置かれた位置によらず、形を比べるため)。
+/// 文字のピクセルの位置を、いちばん左の列を0にそろえる(置かれた位置によらず、形を比べるため)。
 fn shape(ink: &[(usize, usize)]) -> Vec<(usize, usize)> {
     let left = ink.iter().map(|&(x, _)| x).min().unwrap_or(0);
     ink.iter().map(|&(x, y)| (x - left, y)).collect()
 }
 
-/// 左上のウィンドウの帯に、文字の画素が `enough` 個以上出るまで待ち、その位置を返す。
+/// 左上のウィンドウの帯に、文字のピクセルが `enough` 個以上出るまで待ち、その位置を返す。
 fn wait_for_title(seinas: &Compositor, what: &str, enough: usize) -> Vec<(usize, usize)> {
     let shot = seinas.wait_for_shot(what, |shot| {
         shows_window(shot, 0, 0, ACTIVE_BAR) && title_ink(shot, 0, 0, WINDOW_WIDTH).len() >= enough
@@ -63,7 +63,7 @@ fn the_title_is_drawn_on_a_bar_above_the_window() {
     let mut seinas = Compositor::start("ta");
     let mut client = seinas.connect_test_client(&["window", "--title", "zeyes"]);
 
-    // 帯があり、題名の位置に文字の画素がある。
+    // 帯があり、題名の位置に文字のピクセルがある。
     let ink = wait_for_title(&seinas, "the title bar with a title", 30);
     assert!(ink_stays_inside(&ink));
     // 左に寄せてある。「zeyes」は短いので、帯の右の半分には何も無い。
@@ -159,7 +159,7 @@ fn a_long_title_is_cut_to_fit_the_bar() {
     let right = ink.iter().map(|&(x, _)| x).max().unwrap();
     assert!(right > TITLE_END - 16, "{right}");
 
-    // 切った印の「…」で終わる。印は、横に並んだ小さな点なので、右の端の画素は、2〜3行にしか無い。
+    // 切った印の「…」で終わる。印は、横に並んだ小さな点なので、右の端のピクセルは、2〜3行にしか無い。
     let mut rows: Vec<usize> = ink
         .iter()
         .filter(|&&(x, _)| x + 6 > right)

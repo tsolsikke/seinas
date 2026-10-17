@@ -7,7 +7,7 @@ use seinas_render::{FrameView, PixelFormat};
 
 use crate::FbError;
 
-/// 1つの色が、1画素の中で占める位置(Linuxの `fb_bitfield` と同じ意味)。
+/// 1つの色が、1ピクセルの中で占める位置(Linuxの `fb_bitfield` と同じ意味)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Bitfield {
     /// 下から数えた、始まりのビット。
@@ -19,13 +19,13 @@ pub struct Bitfield {
 /// 画面の情報のうち、絵を写すのに要るもの。装置から読んだ値を、そのまま入れる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenInfo {
-    /// 見えている範囲の幅と高さ(画素)。
+    /// 見えている範囲の幅と高さ(ピクセル)。
     pub width: u32,
     pub height: u32,
-    /// 見えている範囲の左上が、画面の領域のどこにあるか(画素)。
+    /// 見えている範囲の左上が、画面の領域のどこにあるか(ピクセル)。
     pub x_offset: u32,
     pub y_offset: u32,
-    /// 1画素のビット数。
+    /// 1ピクセルのビット数。
     pub bits_per_pixel: u32,
     /// 1行のバイト数。
     pub line_length: u32,
@@ -42,9 +42,9 @@ pub struct Layout {
     width: usize,
     height: usize,
     line_length: usize,
-    /// 見えている範囲の左上の画素が、画面の領域の何バイト目から始まるか。
+    /// 見えている範囲の左上のピクセルが、画面の領域の何バイト目から始まるか。
     start: usize,
-    /// 1画素(4バイト)の中での、赤・緑・青のバイトの位置。
+    /// 1ピクセル(4バイト)の中での、赤・緑・青のバイトの位置。
     red: usize,
     green: usize,
     blue: usize,
@@ -114,12 +114,12 @@ impl Layout {
         })
     }
 
-    /// 見えている範囲の幅(画素)。
+    /// 見えている範囲の幅(ピクセル)。
     pub fn width(&self) -> usize {
         self.width
     }
 
-    /// 見えている範囲の高さ(画素)。
+    /// 見えている範囲の高さ(ピクセル)。
     pub fn height(&self) -> usize {
         self.height
     }
@@ -174,7 +174,7 @@ impl Layout {
     }
 }
 
-/// 色の位置を、1画素の中のバイトの位置(0〜3)に直す。8ビットで、バイトの境目にそろったものだけを受ける。
+/// 色の位置を、1ピクセルの中のバイトの位置(0〜3)に直す。8ビットで、バイトの境目にそろったものだけを受ける。
 fn byte_position(channel: &'static str, field: Bitfield) -> Result<usize, FbError> {
     if field.length != 8 || !field.offset.is_multiple_of(8) || field.offset > 24 {
         return Err(FbError::UnsupportedChannel {
@@ -229,7 +229,7 @@ mod tests {
         layout.blit(&view, screen)
     }
 
-    /// 偽の画面の(x, y)の画素を、(赤, 緑, 青)で読む。
+    /// 偽の画面の(x, y)のピクセルを、(赤, 緑, 青)で読む。
     fn rgb(info: &ScreenInfo, screen: &[u8], x: u32, y: u32) -> [u8; 3] {
         let at = ((info.y_offset + y) * info.line_length + (info.x_offset + x) * 4) as usize;
         let pixel = u32::from_le_bytes(screen[at..at + 4].try_into().unwrap());
@@ -322,7 +322,7 @@ mod tests {
         let mut screen = vec![0x55u8; (info.line_length * (HEIGHT + 5)) as usize];
         paint_to(&info, &mut screen).unwrap();
         assert_picture(&info, &screen);
-        // 見えている範囲より上の行と、左の2画素には触れない。
+        // 見えている範囲より上の行と、左の2ピクセルには触れない。
         let line = info.line_length as usize;
         assert!(screen[..3 * line].iter().all(|&b| b == 0x55));
         assert!(screen[3 * line..3 * line + 8].iter().all(|&b| b == 0x55));

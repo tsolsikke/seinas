@@ -23,7 +23,7 @@ fn thread_names() -> Vec<String> {
     names
 }
 
-/// いまのSIGBUSの受け口(関数の番地と旗)。
+/// いまのSIGBUSの受け口(関数のアドレスとフラグ)。
 fn sigbus_action() -> (usize, i32) {
     // SAFETY: 新しい設定を渡さず(null)、いまの設定を読むだけである。
     unsafe {

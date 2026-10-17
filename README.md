@@ -12,7 +12,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-standalone` | 親のWaylandを使わない構成のコンポジタ。Waylandの受け口と、fbdevの裏側を組み合わせる |
 | `crates/seinas-frontend` | Waylandの受け口(Smithay)。クライアントの要求を受け、描く要素を並べる |
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
-| `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウの題名など)。フォントをファイルから読み、1行の文字を画素にする |
+| `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウの題名など)。フォントをファイルから読み、1行の文字をピクセルにする |
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
 | `crates/seinas-test-clients` | テスト用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いたイベントを書き出したりする。テスト用の IME と、text-input-v3 を使うアプリもある |
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
@@ -24,7 +24,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/window-placement.md` | ウィンドウの重ね方と置き方の決まり |
 | `docs/demo-c1s3.md` | C1S3 の機能を、入れ子の構成で 1 回の起動でまとめて確かめる手順(`tools/demo-c1s3.sh` とチェックリスト) |
 | `docs/config.md` | 設定のファイルの一覧と、`seinas.conf`(ウィンドウの切り替えのキー)の書き方、届いたキーの確かめ方(`--log-keys`) |
-| `docs/ime.md` | IME の道(見せる global、キーの道、IME の復旧(接続断と緊急解除)、文字の受け渡し、フォーカス、候補の窓、IME を 1 つに限ること)と、テスト用の IME での試し方 |
+| `docs/ime.md` | IME の道(見せる global、キーの道、IME の復旧(接続断と緊急解除)、文字の受け渡し、フォーカス、候補ウィンドウ、IME を 1 つに限ること)と、テスト用の IME での試し方 |
 | `docs/taskbar.md` | タスクバーの見た目、ボタンの働き、時計の決まりと、ZeikOS の上で動かすときの前提 |
 | `docs/wallpaper.md` | 壁紙の使い方(設定のファイル、置き方)、画像の大きさの上限と、ZeikOS の上で動かすときの前提 |
 | `docs/shrink-test.md` | 共有メモリーを縮めてくるクライアントの試験の、動かし方と期待する結果 |
@@ -32,7 +32,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/musl-static.md` | muslでの静的ビルドの手順と、できた実行ファイルの記録 |
 | `docs/release.md` | seinas-fbdevをGitHubのreleaseとして配る手順 |
 | `docs/m3-syscalls.md` | ZeikOS の M3 の準備として、seinas-standalone と zeyes-min を strace した記録 |
-| `docs/zeikos-requirements.md` | ZeikOS で Seinas を動かすのに要るもの(syscall と旗、fd、置くファイル、スレッド、プロセスの起こし方)と、ZeikOS の今の対応の突き合わせ |
+| `docs/zeikos-requirements.md` | ZeikOS で Seinas を動かすのに要るもの(syscall とフラグ、fd、置くファイル、スレッド、プロセスの起こし方)と、ZeikOS の今の対応の突き合わせ |
 | `docs/adr/0001-replaceable-boundaries.md` | ADR: 外部ライブラリを、後で置き換えられる境界で使う決まりと、今の境界の棚卸し |
 | `docs/adr/0002-shell-components.md` | ADR: タスクバー・メニュー・デスクトップを、コンポジタの外の別のプログラムにする(layer-shell、foreign-toplevel、シェルのソケット) |
 | `docs/adr/0003-font-selection.md` | ADR: 利用者が選んだフォントで描けるようにする(置き場、一覧、役ごとの選び方、設定のファイル、mmap での読み込み) |
@@ -137,7 +137,7 @@ tools/build-musl.sh
 
 - 入れ子の構成では、出力(画面)の大きさを、親のウィンドウの大きさに合わせます。始めは800x600で、下限は320x240、上限はありません(`docs/window-placement.md` の「出力の大きさが変わったとき」)。
 - クライアントへ渡す入力は、ポインターとキーボードです(入れ子では、親の keymap をそのまま使います)。
-- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補の窓を置く位置、IME が去ったときと緊急解除(既定は Alt+Shift+F12)のときの直接の道)はあります(`docs/ime.md`)。時間切れで IME が応答しないと見なす形は、2026-10-15 に取り消して外しました(ADR 0004)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、IME のためのソケットからつなぎます。
+- IME の道(アプリの text-input-v3 と、IME の input-method-v2・virtual-keyboard の取り次ぎ、候補ウィンドウを置く位置、IME が去ったときと緊急解除(既定は Alt+Shift+F12)のときの直接の道)はあります(`docs/ime.md`)。時間切れで IME が応答しないと見なす形は、2026-10-15 に取り消して外しました(ADR 0004)。IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME(`test-client ime`)です。IME は同時に 1 つだけで、IME のためのソケットからつなぎます。
 - クライアントのウィンドウは、決まった位置に少しずつずらして重ねます(`docs/window-placement.md`)。クリックで raise し、タイトルバーをドラッグして動かし、閉じるボタンで閉じられます。縁と角のドラッグで大きさを変えられます。タイトルバーのボタンとダブルクリックで最大化でき、タスクバーがあれば最小化もできます(`docs/window-placement.md`)。全画面はできません。
 
 ## ライセンス

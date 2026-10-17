@@ -75,7 +75,7 @@ fn wait_for_log(seinas: &Compositor, text: &str) {
 #[test]
 fn keys_go_through_the_ime_and_come_back_to_the_window() {
     let mut seinas = Compositor::start_with_input("ia");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let ime = connect_ime(&seinas, &[]);
     tap(&mut seinas, KEY_X);
     assert_eq!(next_ime_key(&ime, "x to the IME"), "ime: key 45 pressed");
@@ -121,7 +121,7 @@ const SHELL_GLOBALS: [&str; 3] = [
 fn the_input_method_globals_are_only_on_the_ime_socket() {
     let seinas = Compositor::start_with_input("ib");
     // IME のソケットには、input-method と virtual-keyboard があり、シェルの部品のもの(layer-shell と
-    // foreign-toplevel)は無い。候補の窓に要る wl_compositor などは、ある。
+    // foreign-toplevel)は無い。候補ウィンドウに要る wl_compositor などは、ある。
     let on_ime = globals(&seinas.connect_ime_client(&["globals"]));
     for global in IME_GLOBALS
         .iter()
@@ -170,7 +170,7 @@ fn a_virtual_keyboard_needs_the_accepted_input_method() {
 
     // 受け入れた IME の virtual-keyboard は使える。input method を destroy すると認可が消え、同じ
     // virtual-keyboard から送ったキーは捨てる。
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     ime.send_line(&format!("vk-press {KEY_Y}"));
     ime.send_line(&format!("vk-release {KEY_Y}"));
@@ -200,7 +200,7 @@ fn a_virtual_keyboard_needs_the_accepted_input_method() {
 #[test]
 fn a_second_input_method_on_the_same_connection_keeps_the_first() {
     let mut seinas = Compositor::start_with_input("iu");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     ime.send_line("again");
     ime.wait_for_line("ime: second unavailable");
@@ -350,7 +350,7 @@ fn alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press
 #[test]
 fn keys_go_straight_to_the_window_after_the_ime_leaves() {
     let mut seinas = Compositor::start_with_input("id");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     ime.send_line("quit");
     wait_for_log(&seinas, "the input method left");
@@ -364,7 +364,7 @@ fn keys_go_straight_to_the_window_after_the_ime_leaves() {
 #[test]
 fn keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard() {
     let mut seinas = Compositor::start_with_input("ie");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     ime.send_line("release");
     ime.wait_for_line("ime: released");
@@ -380,7 +380,7 @@ fn keys_go_straight_to_the_window_after_the_ime_releases_the_keyboard() {
 #[test]
 fn a_second_ime_is_refused_and_the_first_keeps_working() {
     let mut seinas = Compositor::start_with_input("if");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let first = connect_ime(&seinas, &[]);
     // 2 つ目は、get_input_method と grab_keyboard を送った後に unavailable を受けて終わる。
     let mut second = seinas.connect_ime_client(&["ime"]);
@@ -478,7 +478,7 @@ fn open_text_window(seinas: &Compositor, title: &str) -> TestClient {
 #[test]
 fn preedit_and_commit_reach_the_window() {
     let mut seinas = Compositor::start_with_input("ig");
-    let window = open_text_window(&seinas, "窓");
+    let window = open_text_window(&seinas, "ウィンドウ");
     // IME がつながると、フォーカスのあるウィンドウの text-input に enter が届き、ウィンドウが有効にすると、
     // IME に activate が届く。
     let _ime = connect_ime_to_window(&seinas);
@@ -515,7 +515,7 @@ fn preedit_and_commit_reach_the_window() {
 fn a_window_opened_after_the_ime_gets_the_text_input() {
     let mut seinas = Compositor::start_with_input("ih");
     let ime = connect_ime(&seinas, &[]);
-    let window = open_text_window(&seinas, "窓");
+    let window = open_text_window(&seinas, "ウィンドウ");
     assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
     wait_for_activate(&ime, "activate");
     tap(&mut seinas, KEY_A);
@@ -583,7 +583,7 @@ fn focus_changes_move_the_text_input_and_the_activation() {
 /// 修飾キー(左の Shift)。
 const KEY_LEFT_SHIFT: u32 = 42;
 
-/// テスト用のウィンドウの色(橙)と、テスト用の IME の候補の窓の色(紫)。
+/// テスト用のウィンドウの色(橙)と、テスト用の IME の候補ウィンドウの色(紫)。
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 const PURPLE: [u8; 3] = [0x80, 0x00, 0xff];
 
@@ -596,7 +596,7 @@ fn open_text_window_with(seinas: &Compositor, args: &[&str]) -> TestClient {
     window
 }
 
-/// 候補の窓(40x30)が、左上 (x, y) に出ているか。
+/// 候補ウィンドウ(40x30)が、左上 (x, y) に出ているか。
 fn popup_at(shot: &Shot, x: usize, y: usize) -> bool {
     shot.pixel(x, y) == PURPLE
         && shot.pixel(x + 39, y + 29) == PURPLE
@@ -657,7 +657,7 @@ fn the_candidate_window_hides_when_the_focus_leaves() {
     let first = open_text_window_with(&seinas, &[]);
     let ime = connect_ime_to_window_with(&seinas, &["--popup", "40x30"]);
     seinas.wait_for_screen("the candidate window", |shot| popup_at(shot, 10, 60));
-    // 2 つ目のウィンドウ(外枠は (32, 32))にフォーカスが移ると、IME は deactivate になり、候補の窓は消える。
+    // 2 つ目のウィンドウ(外枠は (32, 32))にフォーカスが移ると、IME は deactivate になり、候補ウィンドウは消える。
     // (10, 60) は 2 つ目に隠れない所なので、1 つ目のコンテンツが見える。
     let _second = seinas.connect_test_client(&["window", "--keyboard"]);
     ime.wait_for_line("ime: deactivate");
@@ -735,8 +735,13 @@ fn next_reentered_keys(window: &TestClient) -> Vec<u32> {
 #[test]
 fn a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit() {
     let mut seinas = Compositor::start_with_input("iv");
-    let window =
-        seinas.connect_test_client(&["window", "--text-input", "--keyboard", "--title", "窓"]);
+    let window = seinas.connect_test_client(&[
+        "window",
+        "--text-input",
+        "--keyboard",
+        "--title",
+        "ウィンドウ",
+    ]);
     window.wait_for_line("window: drawn");
     let mut ime = connect_ime_to_window(&seinas);
     assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
@@ -775,8 +780,13 @@ fn a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit() {
 #[test]
 fn the_release_key_closes_the_ime_and_keys_go_straight_to_the_window() {
     let mut seinas = Compositor::start_with_input("iw");
-    let window =
-        seinas.connect_test_client(&["window", "--text-input", "--keyboard", "--title", "窓"]);
+    let window = seinas.connect_test_client(&[
+        "window",
+        "--text-input",
+        "--keyboard",
+        "--title",
+        "ウィンドウ",
+    ]);
     window.wait_for_line("window: drawn");
     let mut ime = connect_ime_to_window(&seinas);
     assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
@@ -855,8 +865,13 @@ fn an_ime_that_swallows_a_key_is_not_bypassed() {
     // 半角/全角のように、文字を出さずにキーを使う IME。返事が無くても、直接の道にはしない。
     const KEY_ZENKAKU_HANKAKU: u32 = 41;
     let mut seinas = Compositor::start_with_input("ix");
-    let window =
-        seinas.connect_test_client(&["window", "--text-input", "--keyboard", "--title", "窓"]);
+    let window = seinas.connect_test_client(&[
+        "window",
+        "--text-input",
+        "--keyboard",
+        "--title",
+        "ウィンドウ",
+    ]);
     window.wait_for_line("window: drawn");
     let ime = connect_ime_to_window_with(&seinas, &["--swallow", "41"]);
     assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
@@ -890,7 +905,7 @@ fn an_ime_that_swallows_a_key_is_not_bypassed() {
 #[test]
 fn a_key_held_on_the_keyboard_and_through_the_ime_is_not_left_pressed() {
     let mut seinas = Compositor::start_with_input("iy");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let _ime = connect_ime(&seinas, &[]);
     // x を押したまま。IME が virtual-keyboard で押したことを戻すので、ウィンドウには押されている。
     key(&mut seinas, KEY_X, true);
@@ -913,7 +928,7 @@ fn a_key_held_on_the_keyboard_and_through_the_ime_is_not_left_pressed() {
 #[test]
 fn a_key_pressed_only_through_the_ime_is_not_left_pressed() {
     let mut seinas = Compositor::start_with_input("iz");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     // x を押して離す。IME は押したことを戻した後、離したことをためる(ウィンドウには押されたまま)。
     key(&mut seinas, KEY_X, true);
@@ -937,7 +952,7 @@ fn a_key_pressed_only_through_the_ime_is_not_left_pressed() {
 #[test]
 fn the_release_key_works_once_while_it_is_held() {
     let mut seinas = Compositor::start_with_input("ja");
-    let window = open_text_window(&seinas, "窓");
+    let window = open_text_window(&seinas, "ウィンドウ");
     let mut first = connect_ime_to_window(&seinas);
     press_release_key(&mut seinas);
     let _ = first.process.0.wait();
@@ -979,7 +994,7 @@ fn the_release_key_works_once_while_it_is_held() {
 #[test]
 fn a_virtual_keyboard_key_does_not_release_the_ime() {
     let mut seinas = Compositor::start_with_input("jb");
-    let window = open_window(&seinas, "窓");
+    let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     // IME が virtual-keyboard で Alt+Shift(Shift = 1、Mod1 = 8)と F12 を送っても、Seinas のショートカットには
     // ならない(virtual-keyboard のキーは、フォーカスのあるクライアントへ直に届く)。
@@ -1002,7 +1017,7 @@ fn a_virtual_keyboard_key_does_not_release_the_ime() {
 #[test]
 fn a_new_ime_connection_continues_in_the_same_field() {
     let mut seinas = Compositor::start_with_input("jc");
-    let window = open_text_window(&seinas, "窓");
+    let window = open_text_window(&seinas, "ウィンドウ");
     let mut first = connect_ime_to_window(&seinas);
     assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
     tap(&mut seinas, KEY_A);

@@ -45,7 +45,7 @@ impl Screen {
         })
     }
 
-    /// 画面の幅と高さ(画素)。
+    /// 画面の幅と高さ(ピクセル)。
     pub fn size(&self) -> (i32, i32) {
         let layout = match self {
             Screen::Device { device, .. } => device.layout(),

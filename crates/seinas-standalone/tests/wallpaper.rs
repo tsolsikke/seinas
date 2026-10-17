@@ -54,7 +54,7 @@ fn without_a_config_the_screen_looks_the_same() {
     seinas.wait_for_screen("the window over the wallpaper", |shot| {
         shot.pixel(10, BAR + 10) == ORANGE
     });
-    // 窓の外は、コンポジタの背景と同じ色。
+    // ウィンドウの外は、コンポジタの背景と同じ色。
     let shot = seinas.shot();
     for (x, y) in [
         (0, HEIGHT - 1),

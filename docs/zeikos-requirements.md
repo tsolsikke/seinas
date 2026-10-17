@@ -6,17 +6,17 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 - ZeikOS の側は、隣の zeikos のリポジトリの main(9666a4cce94c6e886d3c83b3b46ed99bd3f727fb)のソースを読んで判断しました。ビルドも実行もしていません。根拠は、ファイルと関数(と行)で書きます。断りの無いファイルは `kernel/src/syscall.rs` です。syscall の番号から関数への表は `dispatch()`(771〜1128 行)で、表に無い番号は `-ENOSYS` を返します(1123 行)。
 - 下の「まとまり」の欄は、ZeikOS の側の機能のまとまりの名前です。どの課題に当たるかは、Jira を正とします(下の「まとまりごとの一覧」)。
 
-状態の書き方:**有る**(要る形で動く)、**一部**(要る旗や場合の一部が無い。足りないものを備考に書く)、**無い**(番号が無いか、要る形がすべて断られる)、**不明**。
+状態の書き方:**有る**(要る形で動く)、**一部**(要るフラグや場合の一部が無い。足りないものを備考に書く)、**無い**(番号が無いか、要る形がすべて断られる)、**不明**。
 
 ## 構成と、ZeikOS の上での役目
 
 | 構成 | 役目 | ZeikOS の上で |
 | --- | --- | --- |
 | seinas-standalone | コンポジタ(親の Wayland を持たない構成。fbdev か fake screen へ描く) | M3 で動かす本体 |
-| seinas | コンポジタ(入れ子の構成。親の Wayland のクライアントとして窓を出す) | 親の Wayland が無いので、ZeikOS では動かさない見込み。比べるために載せる |
+| seinas | コンポジタ(入れ子の構成。親の Wayland のクライアントとしてウィンドウを出す) | 親の Wayland が無いので、ZeikOS では動かさない見込み。比べるために載せる |
 | seinas-taskbar | タスクバー(シェルの部品。layer-shell と foreign-toplevel のクライアント) | コンポジタと同時に動かす |
 | seinas-wallpaper | 壁紙(シェルの部品。layer-shell のクライアント) | コンポジタと同時に動かす(下の「壁紙」) |
-| zeyes-min | 試しのクライアント(xdg_toplevel の窓を 1 つ出す) | コンポジタと同時に動かす |
+| zeyes-min | 試しのクライアント(xdg_toplevel のウィンドウを 1 つ出す) | コンポジタと同時に動かす |
 
 ## 要るものと、ZeikOS の対応
 
@@ -24,14 +24,14 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 ### 起動とメモリー
 
-| 要るもの(syscall と旗) | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
+| 要るもの(syscall とフラグ) | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
 | 静的 PIE の読み込み(execve に当たるもの)、arch_prctl(ARCH_SET_FS)、brk、exit_group | S N T Z | 有る | `SYS_SPAWN`(`spawn_from_ring3` 3624 行)、`sys_arch_prctl_body` 5891 行、`sys_brk` 4469 行 | execve の番号は無く、ZeikOS だけの spawn で読み込む。実行ファイルは 16 MiB まで、ユーザーのスタックは 16 KiB | — |
 | set_tid_address | S N T Z | 一部 | `sys_set_tid_address` 5534 行 | アドレスを覚えるだけで、終わるときの消去と futex の WAKE はしない(スレッドを使うときに要る) | スレッド |
-| mmap(PROT_NONE・PROT_READ\|PROT_WRITE、MAP_PRIVATE\|MAP_ANONYMOUS、MAP_STACK、MAP_FIXED)、munmap・mprotect(無名のもの) | S N T Z | 有る | `mmap_from_ring3` 2939 行 → `mmap_anonymous_from_ring3` 2312 行、`munmap_from_ring3` 2464 行、`mprotect_from_ring3` 2528 行 | 1 回 16 MiB まで、マップは 64 個まで。ページは先に割り当てる。知らない旗は断らない | — |
+| mmap(PROT_NONE・PROT_READ\|PROT_WRITE、MAP_PRIVATE\|MAP_ANONYMOUS、MAP_STACK、MAP_FIXED)、munmap・mprotect(無名のもの) | S N T Z | 有る | `mmap_from_ring3` 2939 行 → `mmap_anonymous_from_ring3` 2312 行、`munmap_from_ring3` 2464 行、`mprotect_from_ring3` 2528 行 | 1 回 16 MiB まで、マップは 64 個まで。ページは先に割り当てる。知らないフラグは断らない | — |
 | ファイルの mmap(PROT_READ、MAP_SHARED。フォントと xkb のファイル) | S N T | 無い | 2993 行の `shm_of(fd)` が、memfd と画面のほかは EBADF | フォントは、mmap できなければヒープへ読む(Seinas の側で対応済み。プロセスごとに約 14 MB 増える)。xkbcommon も、mmap できないときは読み込みに切り替わる作り(ZeikOS の上では未確認)。zeikos の `docs/deferred-decisions.md` 323 行で後回し | 新しい課題の候補 |
 | poll(events=0、timeout 0。Rust の起動のとき) | S N T Z | 有る | `poll_from_ring3` 1857 行(1901 行) | — | — |
-| getrandom(GRND_INSECURE と、旗 0) | S N T | 有る | `sys_getrandom` 5659 行 | 1 回 256 バイトまで | getrandom の旗 0(旗 0 は動く形になっている) |
+| getrandom(GRND_INSECURE と、フラグ 0) | S N T | 有る | `sys_getrandom` 5659 行 | 1 回 256 バイトまで | getrandom のフラグ 0(フラグ 0 は動く形になっている) |
 | clock_gettime(CLOCK_MONOTONIC) | S N T Z | 有る | `sys_clock_gettime` 5126 行 | 分解能 10 ms。vDSO は無い(AT_SYSINFO_EHDR を置かない。`kernel/src/abi/linux/initial_stack.rs` 75 行)ので、musl は syscall で呼ぶ | — |
 | clock_gettime(CLOCK_REALTIME。タスクバーの時計) | T | 無い | `sys_clock_gettime` 5132 行(MONOTONIC のほかは EINVAL) | 取れないとき、タスクバーは「--:--」を出して動き続ける | 新しい課題の候補 |
 
@@ -39,8 +39,8 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
-| memfd_create(MFD_CLOEXEC\|MFD_ALLOW_SEALING) | S N T Z | 有る | `memfd_create_from_ring3` 2893 行 | 名前と旗は読まない | — |
-| ftruncate(memfd。pool の大きさ。SCTK は伸ばす) | N T Z | 一部 | `ftruncate_from_ring3` 2910 行、`kernel/src/shm.rs` の `set_size` | 1 回だけ(2 回目は EINVAL)、32 KiB まで。zeyes-min の pool は 614,400 バイト、タスクバーは 256,000 バイト、800x600 の窓は 1.9 MB で、どれも越える | 新しい課題の候補 |
+| memfd_create(MFD_CLOEXEC\|MFD_ALLOW_SEALING) | S N T Z | 有る | `memfd_create_from_ring3` 2893 行 | 名前とフラグは読まない | — |
+| ftruncate(memfd。pool の大きさ。SCTK は伸ばす) | N T Z | 一部 | `ftruncate_from_ring3` 2910 行、`kernel/src/shm.rs` の `set_size` | 1 回だけ(2 回目は EINVAL)、32 KiB まで。zeyes-min の pool は 614,400 バイト、タスクバーは 256,000 バイト、800x600 のウィンドウは 1.9 MB で、どれも越える | 新しい課題の候補 |
 | 2 つのプロセスの間の MAP_SHARED(PROT_READ\|PROT_WRITE、memfd) | S N T Z | 一部 | 2993〜3067 行、`kernel/src/shm.rs`(ADR-0065) | 共有は動く。memfd はシステム全体で 2 つまで(`MAX_SHM`、`shm.rs` 41 行)、1 つ 8 ページ(`MAX_SHM_PAGES`、45 行)。クライアントごとに 1 つ以上と、コンポジタの keymap の分が要る | 新しい課題の候補 |
 | munmap・mprotect(shm のマップ) | S N T Z | 一部 | `munmap_from_ring3` 2464 行(shm・画面は EINVAL) | コンポジタは、クライアントが pool を手放すと munmap する | 新しい課題の候補 |
 | fcntl(F_ADD_SEALS。F_SEAL_SEAL\|F_SEAL_SHRINK と、keymap の F_SEAL_SEAL\|F_SEAL_SHRINK\|F_SEAL_GROW\|F_SEAL_WRITE) | S N T Z | 一部 | `sys_fcntl` 5789 行 | 0 を返すが、封は覚えず、効かない。Seinas が動くのには困らない | — |
@@ -61,12 +61,12 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
-| socket(AF_UNIX、SOCK_STREAM\|SOCK_CLOEXEC) | S N T Z | 一部 | `socket_from_ring3` 1399 行(1403 行) | SOCK_STREAM だけを受け、SOCK_CLOEXEC・SOCK_NONBLOCK が付くと EINVAL。wayland-rs はいつも SOCK_CLOEXEC を付けるので、今は失敗する | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
+| socket(AF_UNIX、SOCK_STREAM\|SOCK_CLOEXEC) | S N T Z | 一部 | `socket_from_ring3` 1399 行(1403 行) | SOCK_STREAM だけを受け、SOCK_CLOEXEC・SOCK_NONBLOCK が付くと EINVAL。wayland-rs はいつも SOCK_CLOEXEC を付けるので、今は失敗する | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
 | bind(ファイルシステムの上のパス)、ソケットのパスの stat | S N | 一部 | `bind_from_ring3` 2004 行、`read_socket_name` 1349 行 | 名前はカーネルの表に入るだけで、ファイルシステムに inode を作らない(stat で見えない)。名前は 31 バイトまで | flock とパスへの bind |
 | listen(backlog -1) | S N | 有る | `listen_from_ring3` 2043 行 | backlog は見ない | — |
-| accept4(SOCK_CLOEXEC)と、待っている接続が無いときの EAGAIN、ioctl(FIONBIO) | S N | 無い | 288 番が無い(accept は `accept_from_ring3` 2065 行で、いつも待つ)、`sys_ioctl` 6253 行(端末のほかは ENOTTY) | wayland-server は non-blocking の accept4 を使い、EAGAIN を「もう無い」という意味に使う | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
+| accept4(SOCK_CLOEXEC)と、待っている接続が無いときの EAGAIN、ioctl(FIONBIO) | S N | 無い | 288 番が無い(accept は `accept_from_ring3` 2065 行で、いつも待つ)、`sys_ioctl` 6253 行(端末のほかは ENOTTY) | wayland-server は non-blocking の accept4 を使い、EAGAIN を「もう無い」という意味に使う | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
 | connect | N T Z | 有る | `connect_from_ring3` 2122 行 | — | — |
-| sendto・sendmsg(MSG_DONTWAIT\|MSG_NOSIGNAL)、recvmsg(MSG_DONTWAIT\|MSG_CMSG_CLOEXEC)、SCM_RIGHTS での memfd の受け渡し | S N T Z | 一部 | `sendmsg_from_ring3` 3201 行、`recvmsg_from_ring3` 3251 行、`read_msghdr` 3112 行、`write_to_socket` 2235 行 | 旗を読まず、いつも待つ(recvmsg は旗の引数を読まない。送る側も、いっぱいなら待つ)。iovlen は 1、fd は 1 通に 1 つで memfd だけ | AF_UNIX ソケットの旗・accept4・SCM_RIGHTS |
+| sendto・sendmsg(MSG_DONTWAIT\|MSG_NOSIGNAL)、recvmsg(MSG_DONTWAIT\|MSG_CMSG_CLOEXEC)、SCM_RIGHTS での memfd の受け渡し | S N T Z | 一部 | `sendmsg_from_ring3` 3201 行、`recvmsg_from_ring3` 3251 行、`read_msghdr` 3112 行、`write_to_socket` 2235 行 | フラグを読まず、いつも待つ(recvmsg はフラグの引数を読まない。送る側も、いっぱいなら待つ)。iovlen は 1、fd は 1 通に 1 つで memfd だけ | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
 | 相手が切ったとき recvmsg が 0 を返すこと | S N T Z | 有る | `read_from_socket` 2168 行 | — | — |
 | ソケットの数:コンポジタは listen を 3 つ(ふだんのソケットと、シェルの部品のソケットと、IME のソケット)、接続はクライアントの数だけ | S N | 一部 | `kernel/src/socket.rs` 45・48 行(`MAX_LISTENERS`=1、`MAX_CONNECTIONS`=2。システム全体で、受け付け待ちも含む) | コンポジタ・タスクバー・クライアントの 3 本でも、listen 3、接続 2 が要る(シェルの部品と IME が増えれば、その数だけ増える) | 新しい課題の候補 |
 
@@ -126,7 +126,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | AF_UNIX の listen(ふだん・シェルの部品) | 2 | 2 | — | — |
 | AF_UNIX の接続 | クライアントの数(この例で 3) | 親へ 1 + 子の数 | 1 | 1 |
 | ロックファイル(`<ソケット>.lock`。開いたまま) | 2 | 2 | — | — |
-| memfd(keymap と、クライアントから受け取った pool) | 1 + pool の数(IME がつながると、virtual-keyboard の keymap の 1 と、候補の窓の pool が増える) | keymap 2 + 自分の pool 1 | pool 1 | pool 1 |
+| memfd(keymap と、クライアントから受け取った pool) | 1 + pool の数(IME がつながると、virtual-keyboard の keymap の 1 と、候補ウィンドウの pool が増える) | keymap 2 + 自分の pool 1 | pool 1 | pool 1 |
 | epoll | 3(calloop、wayland-backend、その複製) | 3 | 1 | 1 |
 | eventfd | 1 | 1 | 1 | 1 |
 | timerfd | 1 | 1 | 1 | 1 |
@@ -176,11 +176,11 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 | まとまり | 当てはまる「無い」「一部」 |
 | --- | --- |
 | epoll・eventfd・timerfd・ppoll | epoll(入れ子と EPOLLONESHOT を含む)、eventfd2、timerfd、ppoll(と poll の POLLIN\|POLLERR) |
-| AF_UNIX ソケットの旗・accept4・SCM_RIGHTS | socket の SOCK_CLOEXEC、accept4 と EAGAIN、FIONBIO、MSG_DONTWAIT・MSG_NOSIGNAL・MSG_CMSG_CLOEXEC、SCM_RIGHTS の制限(1 通に 1 つ、memfd だけ) |
+| AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS | socket の SOCK_CLOEXEC、accept4 と EAGAIN、FIONBIO、MSG_DONTWAIT・MSG_NOSIGNAL・MSG_CMSG_CLOEXEC、SCM_RIGHTS の制限(1 通に 1 つ、memfd だけ) |
 | futex の WAKE | futex の WAKE(いまは 0 を返すだけ。スレッドを使うまでは足りる) |
 | flock とパスへの bind | flock、ロックファイルの O_RDWR\|O_CREAT\|O_TRUNC、ファイルシステムの上のパスへの bind(inode を作り、stat で見えるようにする) |
 | 4 MiB を越えるファイル | 4 MiB を越えるファイル(フォント 3 本) |
-| getrandom の旗 0 | getrandom の旗 0(読んだ限りでは、もう動く形。確かめて閉じられるかを ZeikOS の側で見てもらう) |
+| getrandom のフラグ 0 | getrandom のフラグ 0(読んだ限りでは、もう動く形。確かめて閉じられるかを ZeikOS の側で見てもらう) |
 | スレッド | clone(スレッド)、futex の WAIT、prctl(PR_SET_NAME)、gettid、set_tid_address の終わるときの消去 |
 
 ### 新しい課題の候補(上のまとまりに入らないもの)
@@ -204,4 +204,4 @@ seinas-wallpaper(`docs/wallpaper.md`)が要るものは、zeyes-min と同じ形
 
 ## IME
 
-IME の道(`docs/ime.md`)で、コンポジタに増えるものは、上の表の「一時ファイル」と「クライアントから受け取った keymap の fd の mmap」の 2 行です。syscall の種類は増えません(41 種類のまま)。fd は、IME がつながると 3 つ増えます(IME の接続、候補の窓の pool、virtual-keyboard の keymap の memfd)。IME は、シェルの部品と同じく、コンポジタの外のプログラムで、IME のためのソケット(`WAYLAND_DISPLAY=<名前>-ime`)へつなぎます。IME のソケットを足したので、コンポジタの fd は、IME がつながる前から 2 つ多くなります(listen のソケットとロックファイル)。ZeikOS のソケットの名前には、所有者と権限の検査が無いので、どのプロセスも IME のソケットにつなげます(`docs/ime.md` の「見せる global」)。プロセスは 1 本増えます。記録は `docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。
+IME の道(`docs/ime.md`)で、コンポジタに増えるものは、上の表の「一時ファイル」と「クライアントから受け取った keymap の fd の mmap」の 2 行です。syscall の種類は増えません(41 種類のまま)。fd は、IME がつながると 3 つ増えます(IME の接続、候補ウィンドウの pool、virtual-keyboard の keymap の memfd)。IME は、シェルの部品と同じく、コンポジタの外のプログラムで、IME のためのソケット(`WAYLAND_DISPLAY=<名前>-ime`)へつなぎます。IME のソケットを足したので、コンポジタの fd は、IME がつながる前から 2 つ多くなります(listen のソケットとロックファイル)。ZeikOS のソケットの名前には、所有者と権限の検査が無いので、どのプロセスも IME のソケットにつなげます(`docs/ime.md` の「見せる global」)。プロセスは 1 本増えます。記録は `docs/m3-syscalls.md` の「変更ごとの差分の記録」にあります。

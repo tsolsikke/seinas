@@ -14,5 +14,5 @@ path = "src/main.rs"
 [dependencies]
 # Waylandのライブラリは使わない(不正な要求を作るため、ソケットへ直接書く)。libcは、memfdとfdの受け渡しに使う。
 libc = { workspace = true }
-# --show-text のウィンドウと、--popup の IME の候補の窓に、文字を描く。
+# --show-text のウィンドウと、--popup の IME の候補ウィンドウに、文字を描く。
 seinas-text = { path = "../seinas-text" }

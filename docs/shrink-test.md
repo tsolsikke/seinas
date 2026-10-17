@@ -80,13 +80,13 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 `crates/seinas-standalone/tests/shrink.rs` が、上の流れを偽の画面で確かめます。`cargo test` で動き、CIでも動きます。
 
 1. seinas-standaloneを偽の画面で起動し、zeyes-minをつなぐ。
-2. `test-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、画素で確かめる。
+2. `test-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、ピクセルで確かめる。
 3. 1行送って、縮めさせる。
 4. 標準出力の残りの3行と、終了コードが0であることを確かめる。
-5. 紫のウィンドウ(後からつなぐので、zeyes-minの手前に、右下へずれて出る)が消え、zeyes-minのウィンドウの全体が見えていることを、画素で確かめる。seinas-standaloneとzeyes-minが動いていることを確かめる。
+5. 紫のウィンドウ(後からつなぐので、zeyes-minの手前に、右下へずれて出る)が消え、zeyes-minのウィンドウの全体が見えていることを、ピクセルで確かめる。seinas-standaloneとzeyes-minが動いていることを確かめる。
 6. zeyes-minを止めて、新しいzeyes-minをつなぎ、描かれることを確かめる。
 
-順序は、クライアントの出力と画面の画素を待って進めるので、時間のゆらぎでは落ちません。待つ時間の上限は、段階ごとに60秒です。
+順序は、クライアントの出力と画面のピクセルを待って進めるので、時間のゆらぎでは落ちません。待つ時間の上限は、段階ごとに60秒です。
 
 ## 別のOSで動かすときに見る点
 
@@ -95,7 +95,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 | 働き | 使われる所 |
 | --- | --- |
 | 縮められた共有メモリーを読んだときに、シグナル(SIGBUS)で知らせる | 手順4 |
-| `sigaction` で `SA_SIGINFO` の受け口を置き、失敗した番地(`si_addr`)を受け取る | 手順5 |
+| `sigaction` で `SA_SIGINFO` の受け口を置き、失敗したアドレス(`si_addr`)を受け取る | 手順5 |
 | 受け口の中から、`mmap`(`MAP_FIXED`、`MAP_PRIVATE`、`MAP_ANONYMOUS`)で、その範囲を差し替える | 手順5 |
 | 受け口から戻った後、読み出しを続ける | 手順5 |
 

@@ -71,7 +71,7 @@ impl TitleBar {
     ) -> Option<MemoryRenderBufferRenderElement<PixmanRenderer>> {
         MemoryRenderBufferRenderElement::from_buffer(
             renderer,
-            // 拡大率は1なので、画面の上の位置と画素の位置は同じ。
+            // 拡大率は1なので、画面の上の位置とピクセルの位置は同じ。
             (location.x as f64, location.y as f64),
             &self.buffer,
             None,

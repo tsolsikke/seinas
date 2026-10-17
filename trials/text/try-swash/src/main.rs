@@ -17,7 +17,7 @@ use text_trial_common::{hinting_requested, load_fonts, rss_kb, run, Canvas, Engi
 struct Swash {
     ui: Vec<u8>,
     mono: Vec<u8>,
-    /// フォントごとの、覚えの鍵。同じ鍵を使い続けると、swashがフォントごとの下ごしらえ(ヒンティングの
+    /// フォントごとの、キャッシュのキー。同じキーを使い続けると、swashがフォントごとの下ごしらえ(ヒンティングの
     /// 準備など)を覚えておいてくれる。
     keys: [CacheKey; 2],
     shape: ShapeContext,
@@ -109,7 +109,7 @@ impl Engine for Swash {
                     offset: 0,
                     key: font_key,
                 };
-                // ヒンティング(小さい字を画素の格子に合わせる処理)は、引数で切り替える。
+                // ヒンティング(小さい字をピクセルの格子に合わせる処理)は、引数で切り替える。
                 let mut scaler = self.scale.builder(font).size(px).hint(self.hint).build();
                 let image = Render::new(&[Source::Outline])
                     .format(Format::Alpha)
@@ -118,7 +118,7 @@ impl Engine for Swash {
                 self.cache.insert(key, image);
             }
             if let Some(image) = &self.cache[&key] {
-                // 字形は、画素の境目に合わせて置く(小数の位置には置かない)。
+                // 字形は、ピクセルの境目に合わせて置く(小数の位置には置かない)。
                 let left = (x + glyph.x).round() as i32 + image.placement.left;
                 let top = (baseline - glyph.y).round() as i32 - image.placement.top;
                 canvas.blend_mask(

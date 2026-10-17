@@ -147,7 +147,7 @@ impl Fbdev {
             });
         }
 
-        // SAFETY: 番地は任せ(null)、開いているfdの先頭から `len` バイトを共有で対応づける。
+        // SAFETY: アドレスは任せ(null)、開いているfdの先頭から `len` バイトを共有で対応づける。
         // 失敗は MAP_FAILED で返るので、下で確かめる。
         let map = unsafe {
             libc::mmap(

@@ -15,12 +15,12 @@ pub const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 pub const BLUE: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 pub const YELLOW: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 
-/// 枠の太さ(画素)。
+/// 枠の太さ(ピクセル)。
 pub fn frame_thickness(width: i32, height: i32) -> i32 {
     (width.min(height) / 150).max(1)
 }
 
-/// 四隅の印の1辺(画素)。
+/// 四隅の印の1辺(ピクセル)。
 pub fn mark_size(width: i32, height: i32) -> i32 {
     (width.min(height) / 10).max(2)
 }
@@ -50,7 +50,7 @@ mod tests {
     use super::*;
     use seinas_render::{FrameView, Painter};
 
-    /// (x, y)の画素を(赤, 緑, 青)で読む。
+    /// (x, y)のピクセルを(赤, 緑, 青)で読む。
     fn rgb(view: &FrameView<'_>, x: i32, y: i32) -> [u8; 3] {
         let row = view.row(y as usize);
         let at = x as usize * 4;
@@ -65,7 +65,7 @@ mod tests {
         let white = [0xff, 0xff, 0xff];
         let background = [0x19, 0x1e, 0x28];
 
-        // 枠は、四辺の端の画素まで届く。
+        // 枠は、四辺の端のピクセルまで届く。
         for (x, y) in [
             (0, 0),
             (width - 1, 0),

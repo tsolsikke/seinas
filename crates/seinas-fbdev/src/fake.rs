@@ -19,7 +19,7 @@ pub struct FakeScreen {
 }
 
 impl FakeScreen {
-    /// `width` × `height` 画素の偽の画面を作る。中身は0(黒)で始まる。
+    /// `width` × `height` ピクセルの偽の画面を作る。中身は0(黒)で始まる。
     pub fn new(width: u32, height: u32) -> Result<Self, FbError> {
         let info = ScreenInfo {
             width,

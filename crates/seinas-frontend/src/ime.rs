@@ -15,7 +15,7 @@
 //!   入れ物([`RefusedInputMethod`])で作って、すぐ `unavailable` を送る。その後の要求は、何もせずに捨てる。
 //! - IME が去ったこと、keyboard の grab を手放したことをログに出す。IME が去ったら、フォーカスのあるアプリへ
 //!   `wl_keyboard` の leave と enter を送り直す(IME が virtual-keyboard で押したキーを、押されたまま残さない)。
-//! - 緊急解除([`release_ime`]):Seinas のショートカットで、IME の認可を消し、grab を外し、候補の窓を隠して、
+//! - 緊急解除([`release_ime`]):Seinas のショートカットで、IME の認可を消し、grab を外し、候補ウィンドウを隠して、
 //!   接続を切る(ADR 0004 の 1.5)。切った接続のクリーンアップ(Smithay の部品の destroy)が済むまで、次の IME は
 //!   受け入れない(Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため)。
 //! - virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーの
@@ -33,7 +33,7 @@
 //!
 //! 2 つ目の要求が Smithay の部品に一度も届かなければ、どちらも起きない。
 //!
-//! 候補の窓(input popup surface)は、見せるときと隠すときに Smithay が呼ぶ([`popup_shown`]、[`popup_hidden`])。置く
+//! 候補ウィンドウ(input popup surface)は、見せるときと隠すときに Smithay が呼ぶ([`popup_shown`]、[`popup_hidden`])。置く
 //! 位置は、描くときに、親のウィンドウのいまの位置と、カーソルの矩形と、画面の大きさから求める(`ime_popup.rs`)。
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -90,7 +90,7 @@ pub struct ImeState {
     /// 緊急解除で接続を切った IME のクライアント。バックエンドが、すぐにクリーンアップさせる
     /// ([`crate::reap_dead_clients`])。
     pub(crate) to_reap: Option<Client>,
-    /// 見せている候補の窓。IME が有効で、親(フォーカスのあるウィンドウ)があるときだけ。
+    /// 見せている候補ウィンドウ。IME が有効で、親(フォーカスのあるウィンドウ)があるときだけ。
     pub popup: Option<PopupSurface>,
     /// virtual-keyboard で「押した」を渡したキー(evdev の番号)と、そのときのキーボードのフォーカス。フォーカスが
     /// 変わったら空にする(前のクライアントには leave が届き、押したキーは離したことになる)。
@@ -284,7 +284,7 @@ fn ime_grab<D: FrontendHost>(keyboard: &KeyboardHandle<D>) -> Option<InputMethod
 /// 緊急解除(ADR 0004 の 1.5)。IME がつないでいれば、次の順に行い、trueを返す。
 ///
 /// 1. その接続の認可を消す(この後、その接続の input-method と virtual-keyboard の要求は捨てる)。
-/// 2. keyboard の grab を外し(次のキーから直接の道)、候補の窓を隠し、接続を切る。
+/// 2. keyboard の grab を外し(次のキーから直接の道)、候補ウィンドウを隠し、接続を切る。
 ///
 /// IME へ渡したキーは、アプリへ送り直さない。切った接続のクリーンアップ(Smithay の部品の destroy と、
 /// IME が去った後の `wl_keyboard` の leave と enter)は、バックエンドが [`crate::reap_dead_clients`] で、すぐ行わせる。
@@ -367,7 +367,7 @@ fn refresh_keyboard_focus<D: FrontendHost>(state: &mut D) {
     }
 }
 
-/// 候補の窓を見せる(Smithay の `InputMethodHandler::new_popup`)。[`delegate_frontend!`] が使う。
+/// 候補ウィンドウを見せる(Smithay の `InputMethodHandler::new_popup`)。[`delegate_frontend!`] が使う。
 ///
 /// [`delegate_frontend!`]: crate::delegate_frontend
 pub fn popup_shown<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
@@ -375,7 +375,7 @@ pub fn popup_shown<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
     state.redraw_needed();
 }
 
-/// 候補の窓を隠す(Smithay の `InputMethodHandler::dismiss_popup`)。[`delegate_frontend!`] が使う。
+/// 候補ウィンドウを隠す(Smithay の `InputMethodHandler::dismiss_popup`)。[`delegate_frontend!`] が使う。
 ///
 /// [`delegate_frontend!`]: crate::delegate_frontend
 pub fn popup_hidden<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
@@ -709,7 +709,7 @@ where
         _dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
-        // 新しいオブジェクトは作らないといけないので、同じ入れ物で作る(キーも候補の窓も、届かないし出ない)。
+        // 新しいオブジェクトは作らないといけないので、同じ入れ物で作る(キーも候補ウィンドウも、届かないし出ない)。
         match request {
             zwp_input_method_v2::Request::GrabKeyboard { keyboard } => {
                 data_init.init(keyboard, RefusedInputMethod);

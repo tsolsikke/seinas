@@ -54,7 +54,7 @@
 //! - `window: resized WxH`: `--follow-size` で、新しい大きさの絵を commit したとき。
 //! - `window: pointer enter X Y`、`window: pointer leave`、`window: pointer motion X Y`、
 //!   `window: pointer button 0x110 pressed`(または `released`): ポインターの知らせ(`--pointer` を付けたとき)。
-//!   位置は、中身の左上を原点にした画素。
+//!   位置は、中身の左上を原点にしたピクセル。
 //! - `window: close`: 閉じるように頼まれたとき(xdg_toplevel.close)。`--ignore-close` が無ければ、
 //!   これを書いて終わる。
 

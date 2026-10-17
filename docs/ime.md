@@ -12,7 +12,7 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 
 IME の権限は、シェルの部品の権限と分けています(ADR 0004 の 1.6)。これは権限を分けることで、相手が誰かを確かめる認証ではありません。
 
-- IME のためのソケットは、ふだんのソケットのパスの名前に `-ime` を入れたもの(名前に拡張子があれば、その前に入れる。`docs/standalone.md`)です(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)。シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard を見せません。IME のソケットには、layer-shell と foreign-toplevel を見せません(候補の窓に要る `wl_compositor`・`wl_shm` などは見せる)。
+- IME のためのソケットは、ふだんのソケットのパスの名前に `-ime` を入れたもの(名前に拡張子があれば、その前に入れる。`docs/standalone.md`)です(入れ子は `seinas-0-ime`。seinas-standalone は `--ime-socket PATH` で変えられる)。シェルの部品のソケットとふだんのソケットには、input-method と virtual-keyboard を見せません。IME のソケットには、layer-shell と foreign-toplevel を見せません(候補ウィンドウに要る `wl_compositor`・`wl_shm` などは見せる)。
 - virtual-keyboard を作れるのは、`get_input_method` を受け入れたクライアントだけです。ほかは、virtual-keyboard の `unauthorized` のエラーで接続を切ります(ログに `a virtual keyboard was refused`)。認可は、接続と、受け入れた IME の世代に結び付けます。受け入れた input method が destroy されたら認可も消え、それまでに作った virtual-keyboard から届いたキーは捨てます。同じ接続からの 2 つ目の `get_input_method` を断っても、1 つ目の認可は消しません。
   - 限界:virtual-keyboard を作ったときの世代は、そのオブジェクトの最初の要求で決めます(Smithay が作るオブジェクトの番号は、作る要求の時点では分からないため)。前の世代で作って要求を送っていないものと、今の世代で作ったものが両方待っているときは、見分けられないので、待っているものを全部捨てます(安全側)。要求を送らずに待てるのは 1 つのクライアントで 8 個までで、越えると `unauthorized` のエラー(ログに `a virtual keyboard was refused (too many wait for their first request)`)になります(ADR 0004 の 1.6)。
 - 守れないこと:IME のソケットにつなげるプロセスは、どれも IME になれます。先につないで、IME の枠(同時に 1 つ)を取ることも防げません。
@@ -58,7 +58,7 @@ Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas �
 緊急解除の順番:
 
 1. その接続の認可を消します。この後、その接続の input-method と virtual-keyboard の要求は捨てます。
-2. keyboard の grab を外し(次のキーから直接の道)、候補の窓を隠し、接続を切ります。切った接続のクリーンアップは、その場で行わせます(バックエンドの `reap_dead_clients`)。
+2. keyboard の grab を外し(次のキーから直接の道)、候補ウィンドウを隠し、接続を切ります。切った接続のクリーンアップは、その場で行わせます(バックエンドの `reap_dead_clients`)。
 3. IME へ渡したキーは、アプリへ送り直しません。
 
 IME が去った後(接続断でも緊急解除でも)は、次の順に届きます。text-input の leave と `wl_keyboard` の leave は、別のものです。
@@ -93,21 +93,21 @@ IME が去った後(接続断でも緊急解除でも)は、次の順に届き�
 
 IME がつながったときも、フォーカスのあるクライアントに text-input の enter が届きます。フォーカスのあるウィンドウが無くなったとき(全部を最小化した、最後のウィンドウを閉じた)は、IME に deactivate と done が届きます。
 
-## 候補の窓
+## 候補ウィンドウ
 
-IME の候補の窓(input popup surface)は、Seinas が置きます(ADR 0004 の 1.11)。
+IME の候補ウィンドウ(input popup surface)は、Seinas が置きます(ADR 0004 の 1.11)。
 
 - 見せるのは、IME が有効で、親(text-input のフォーカスのあるウィンドウ)があるときだけです。フォーカスが移って IME が deactivate になると隠し、新しいウィンドウで activate になると、そのウィンドウを親にして見せます。
 - 置く位置は、親のウィンドウのコンテンツの左上に、アプリが伝えたカーソルの矩形(`set_cursor_rectangle`)を足した所の下で、左の端をカーソルにそろえます。画面の下の端からはみ出すなら、カーソルの矩形の上に置きます。それでもはみ出す分は、画面の中へ寄せます(右の端、左の端、上の端)。
 - 位置は、描くたびに求め直します。ウィンドウを動かしたとき、カーソルの矩形が変わったとき、出力の大きさが変わったときも、画面の中に収まります。
-- 重ね方は、overlay の layer surface の下、top の layer surface とウィンドウの上です。ポインターのイベントも、同じ順で候補の窓が受けます(候補を押して選べるように)。
+- 重ね方は、overlay の layer surface の下、top の layer surface とウィンドウの上です。ポインターのイベントも、同じ順で候補ウィンドウが受けます(候補を押して選べるように)。
 - 親のウィンドウが最小化しているときは、描きません。
 
 ## IME は同時に 1 つ
 
 IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を断ります。
 
-- 断り方:2 つ目の要求は、Smithay の部品へ渡さずに Seinas が受け、Seinas の側の入れ物でオブジェクトを作って、すぐ `unavailable` を送ります。その後の要求(grab_keyboard、候補の窓など)も、Seinas の側で受けて捨てます。ログには `an input method was refused (another input method is running)` を出します。
+- 断り方:2 つ目の要求は、Smithay の部品へ渡さずに Seinas が受け、Seinas の側の入れ物でオブジェクトを作って、すぐ `unavailable` を送ります。その後の要求(grab_keyboard、候補ウィンドウなど)も、Seinas の側で受けて捨てます。ログには `an input method was refused (another input method is running)` を出します。
 - 理由:Smithay 0.7.0 の 2 つの不具合を避けるためです。
   - `InputMethodHandle::add_instance` は、2 つ目が来ると、前からある IME の方へ `unavailable` を送り、新しい方には何も送りません。
   - 2 つ目の IME も、1 つ目と同じ keyboard の grab の入れ物を指します。2 つ目が grab を取ってから手放すと、1 つ目の grab まで外れます。1 つ目の IME は、知らされないまま grab を失います(キーが届かなくなる)。コンポジタは落ちません。Smithay だけでは、入れ物の grab のオブジェクトと seat の keyboard の grab は、いつも一緒に付き、一緒に外れるためです。
@@ -154,10 +154,10 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `the_old_cleanup_does_not_remove_the_grab_of_a_new_ime` | 古い世代の grab が残っている間は新しい IME を断り、release の後につないだ IME の grab は、古い接続が切れても外れない |
 | `a_second_release_before_the_cleanup_says_so` | 緊急解除の後、クリーンアップの前にもう一度押すと、「no input method is running」ではなく、クリーンアップの途中であることをログに書く |
 | `a_new_ime_connection_continues_in_the_same_field` | 古い IME が去った後、新しい接続の IME がつながると、同じウィンドウの同じ欄に enter が届き、クリックし直さずに続けて打てる |
-| `the_candidate_window_follows_the_cursor_inside_the_output` | 候補の窓(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |
+| `the_candidate_window_follows_the_cursor_inside_the_output` | 候補ウィンドウ(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |
 | `the_candidate_window_goes_above_the_cursor_at_the_bottom_edge` | 下に入らないときは、カーソルの矩形の上に出る |
 | `the_candidate_window_stays_inside_a_resized_output` | 出力の高さを縮めると、下から上へ移る |
-| `the_candidate_window_hides_when_the_focus_leaves` | フォーカスが text-input を使わないウィンドウへ移ると、候補の窓が消える |
+| `the_candidate_window_hides_when_the_focus_leaves` | フォーカスが text-input を使わないウィンドウへ移ると、候補ウィンドウが消える |
 | `focus_changes_move_the_text_input_and_the_activation` | Alt+Tab・最小化・閉じるで、leave・enter と deactivate・activate が届き、変換中の文字が新しいフォーカスのウィンドウに届く |
 
 ### テスト用の IME
@@ -172,7 +172,7 @@ WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime
 - IME が有効(activate を受けた)なら、`a`・`i`・`u` を変換中の文字の「あ」「い」「う」にし、変換中の文字があるときの Enter で確定します。
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
-- `--popup WxH` を付けると、その大きさの候補の窓を、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
+- `--popup WxH` を付けると、その大きさの候補ウィンドウを、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
 - `--swallow KEY` を付けると、evdev の番号 KEY のキーを、文字を出さずに使います(押下も解放も、何も返さない。半角/全角のように、IME の状態だけを変えるキーのまね)。
 - 標準入力の `hold` で、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard のキーと修飾キー)をためはじめ、`send` で、ためた順に送ります(遅れて届く返事のまね)。
 - 標準入力の `commit-string TEXT`・`delete-surrounding BEFORE AFTER` は、その要求だけを送り、commit は送りません(commit の前に切れる IME のまね)。
@@ -191,16 +191,16 @@ WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input
 
 ### 入れ子の構成で試す手順(運用者の方へ)
 
-入れ子の構成(WSLg の中の `seinas`)では、キーを親の窓から打つので、CI ではなく手で確かめます。IME には、テスト用の IME を使います(fcitx5 などを入れる必要はありません)。
+入れ子の構成(WSLg の中の `seinas`)では、キーを親のウィンドウから打つので、CI ではなく手で確かめます。IME には、テスト用の IME を使います(fcitx5 などを入れる必要はありません)。
 
 1. ビルドする:`cargo build --workspace --locked` と `tools/fetch-fonts.sh`。
 2. 端末 1 で、入れ子の Seinas を起動する:`target/debug/seinas`。ふだんのソケットは `seinas-0`、シェルの部品のためのソケットは `seinas-0-shell`、IME のためのソケットは `seinas-0-ime` です(どれも `XDG_RUNTIME_DIR` の下)。
 3. 端末 2 で、テスト用のアプリを出す:`WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input --title あ`。
 4. 端末 3 で、テスト用の IME をつなぐ:`WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime --popup 40x30`。端末 3 に `ime: ready` と `ime: activate` が出ます。
-5. Seinas の窓をクリックしてキーボードのフォーカスを渡し、`a`、`i`、Enter を打つ。端末 2 に `window: preedit あ`、`window: preedit あい`、`window: commit あい` が出て、Seinas の窓の中、アプリのウィンドウのカーソルの矩形(コンテンツの左上から 10, 20)の下に、紫の候補の窓が出ていることを見る。
+5. Seinas のウィンドウをクリックしてキーボードのフォーカスを渡し、`a`、`i`、Enter を打つ。端末 2 に `window: preedit あ`、`window: preedit あい`、`window: commit あい` が出て、Seinas のウィンドウの中、アプリのウィンドウのカーソルの矩形(コンテンツの左上から 10, 20)の下に、紫の候補ウィンドウが出ていることを見る。
 6. `x` を打つ。端末 3 に `ime: key 45 pressed`、端末 2 に `window: key 45 pressed` が出る(IME が戻したキー)。
-7. Alt+Tab を試すなら、端末 2 と同じものをもう 1 つ出してから、Seinas の窓の中で Alt+Tab を打つ。切り替えたウィンドウに `window: text-input enter` が出て、候補の窓がそのウィンドウへ移る。
+7. Alt+Tab を試すなら、端末 2 と同じものをもう 1 つ出してから、Seinas のウィンドウの中で Alt+Tab を打つ。切り替えたウィンドウに `window: text-input enter` が出て、候補ウィンドウがそのウィンドウへ移る。
 8. 端末 3 で `quit` を打ち、IME を終える。端末 1 のログに `the input method left` が出て、`x` が端末 2 に直接届く(端末 3 には出ない)。
-9. Seinas の窓の大きさを、親の側で小さくする。候補の窓が、Seinas の窓の中に収まったままであることを見る(手順 4 と 5 をもう一度行ってから)。
+9. Seinas のウィンドウの大きさを、親の側で小さくする。候補ウィンドウが、Seinas のウィンドウの中に収まったままであることを見る(手順 4 と 5 をもう一度行ってから)。
 
 うまくいかないとき:端末 3 で `the compositor does not offer zwp_input_method_manager_v2` と出たら、`WAYLAND_DISPLAY` が `seinas-0-ime` になっているかを確かめてください(ふだんのソケットとシェルの部品のソケットからは見えません)。

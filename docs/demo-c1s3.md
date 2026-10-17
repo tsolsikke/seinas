@@ -14,7 +14,7 @@ tools/demo-c1s3.sh
   - 青「キーボード」:キーボードとポインターのイベントを書く(`window-keyboard.log`)。
   - 赤「応答なし(ping に答えない)」:ping に答えず、閉じるように頼まれても終わらない(`window-unresponsive.log`)。
   - 橙「文字入力(text-input)」:text-input-v3 を使い、届いた変換中の文字と確定した文字を書く(`window-text.log`)。
-  - テスト用の IME:`a`・`i`・`u` を「あ」「い」「う」に、Enter で確定する。候補の窓は紫の四角(`ime.log`)。
+  - テスト用の IME:`a`・`i`・`u` を「あ」「い」「う」に、Enter で確定する。候補ウィンドウは紫の四角(`ime.log`)。
 - 設定は一時的な `XDG_CONFIG_HOME` に置きます。`~/.config` は読まず、書き換えません。
   - フォント:タイトルとタスクバーの文字を BIZ UDゴシック にする(既定は BIZ UDPゴシック)。
   - 壁紙:テスト用の小さな画像(48x32)を中央に置き、余白を緑(`2f6f4f`)にする。
@@ -30,7 +30,7 @@ tools/demo-c1s3.sh
 
 | 操作 | 期待する見え方・ログ |
 | --- | --- |
-| 起動したまま見る | Seinas の窓の中に、3 つのウィンドウが少しずつずれて重なる。それぞれにタイトルバー(タイトル、最小化・最大化・閉じるのボタン)。いちばん手前(橙)のタイトルバーだけが青く、ほかは灰色 |
+| 起動したまま見る | Seinas のウィンドウの中に、3 つのウィンドウが少しずつずれて重なる。それぞれにタイトルバー(タイトル、最小化・最大化・閉じるのボタン)。いちばん手前(橙)のタイトルバーだけが青く、ほかは灰色 |
 | 画面の下を見る | タスクバーに、3 つのウィンドウのボタンと時計。手前のウィンドウのボタンが明るい |
 | 灰色のウィンドウ(青)のタイトルバーをクリック | そのウィンドウが手前に来て、タイトルバーが青くなる。タスクバーの明るいボタンも移る |
 | タスクバーのボタンをクリック | activated でないウィンドウなら手前に来る。activated のウィンドウなら最小化する(もう一度押すと戻る) |
@@ -51,7 +51,7 @@ tools/demo-c1s3.sh
 | 操作 | 期待する見え方・ログ |
 | --- | --- |
 | 最大化したウィンドウのタイトルバーを押し、少し(8 ピクセル以上)下へドラッグ | 元の大きさに戻り、ポインターがタイトルバーの同じ割合の所にあるまま動く |
-| ウィンドウのタイトルバーをドラッグして、ポインターを Seinas の窓の上端に触れさせる | 使える範囲の内側に、青い枠(最大化の予告)が出る。上端から離すと消える |
+| ウィンドウのタイトルバーをドラッグして、ポインターを Seinas のウィンドウの上端に触れさせる | 使える範囲の内側に、青い枠(最大化の予告)が出る。上端から離すと消える |
 | 枠が出たまま離す | ウィンドウが最大化する |
 
 ### 4. キーボードとフォーカス
@@ -106,18 +106,18 @@ tools/demo-c1s3.sh
 
 | 操作 | 期待する見え方・ログ |
 | --- | --- |
-| Seinas の窓の縁をマウスでドラッグして、大きくする | 壁紙が新しい大きさで描き直され(`wallpaper.log` に `drew` の行が増える)、タスクバーが新しい下の端に移る。最大化しているウィンドウは、新しい大きさに合う。`seinas.log` に `output: 幅x高さ` |
+| Seinas のウィンドウの縁をマウスでドラッグして、大きくする | 壁紙が新しい大きさで描き直され(`wallpaper.log` に `drew` の行が増える)、タスクバーが新しい下の端に移る。最大化しているウィンドウは、新しい大きさに合う。`seinas.log` に `output: 幅x高さ` |
 | 小さくする | 画面の外に出たウィンドウは、タイトルバーが届く所へ戻る。320x240 より小さくはならない |
 
 ### 11. IME
 
 | 操作 | 期待する見え方・ログ |
 | --- | --- |
-| 橙のウィンドウ(文字入力)をクリック | `window-text.log` に `window: text-input enter`。`ime.log` に `ime: activate` と `ime: done`。橙のウィンドウのコンテンツの左上から (10, 36) の所に、紫の四角(候補の窓)が出る |
+| 橙のウィンドウ(文字入力)をクリック | `window-text.log` に `window: text-input enter`。`ime.log` に `ime: activate` と `ime: done`。橙のウィンドウのコンテンツの左上から (10, 36) の所に、紫の四角(候補ウィンドウ)が出る |
 | `a`、`i` を打つ | `window-text.log` に `window: preedit あ`、`window: preedit あい` |
 | Enter を打つ | `window-text.log` に `window: commit あい` |
 | `x` を打つ | `ime.log` に `ime: key 45 pressed`。`window-text.log` に `window: key 45 pressed`(IME が戻したキー) |
-| 橙のウィンドウを最大化して、Seinas の窓を小さくする | 紫の四角が、Seinas の窓の中に収まったまま |
+| 橙のウィンドウを最大化して、Seinas のウィンドウを小さくする | 紫の四角が、Seinas のウィンドウの中に収まったまま |
 | 青のウィンドウをクリック | 紫の四角が消える。`ime.log` に `ime: deactivate`。`window-text.log` に `window: text-input leave` |
 | Alt+F6 で橙のウィンドウへ戻す | `window-text.log` に `window: text-input enter`。紫の四角がまた出る。橙のウィンドウには、IME が戻した「Alt を離した」は届かない(`window-text.log` の、enter の後に `window: key 56 released` が無い) |
 | `a` を打ってから、Alt+Shift+F12(緊急解除)を押す | テスト用の IME が終わる(`ime.log` の終わり)。`seinas.log` に `the input method was released with the emergency key` と `the input method left`。`window-text.log` に `window: text-input leave` と `window: reset preedit`。紫の四角が消える。この後の `x` は、`window-text.log` に `window: key 45 pressed` が直接出る(`ime.log` には出ない)。届かないときは、Windows の側が先に使っている(`DEMO_LOG_KEYS=1` で起こし直し、`seinas.log` の `key:` の行で確かめる) |
@@ -147,8 +147,8 @@ python3 tools/review-shots.py <出力先のディレクトリ>
 | `1-desktop.png` | 壁紙・タスクバー(時計は UTC+09:00)・日本語のタイトルのウィンドウ 3 つ |
 | `2-maximized.png` | 最大化したウィンドウ |
 | `3-switcher.png` | ウィンドウの切り替えの一覧(Alt+Tab の最中) |
-| `4-ime.png` | IME の変換中の文字(下線つき)と、候補の窓(候補の文字つき) |
+| `4-ime.png` | IME の変換中の文字(下線つき)と、候補ウィンドウ(候補の文字つき) |
 | `5-not-responding.png` | 応答なしのタイトルと、暗い赤の閉じるボタン |
 
-- 文字入力のウィンドウは `test-client window --show-text`(確定した文字と変換中の文字を描く)、IME は `test-client ime --popup 150x56 --popup-text`(候補の窓に候補を書く)です。
+- 文字入力のウィンドウは `test-client window --show-text`(確定した文字と変換中の文字を描く)、IME は `test-client ime --popup 150x56 --popup-text`(候補ウィンドウに候補を書く)です。
 - 終わるときに、起こしたものを全部止め、作業用の場所を消し、`tools/check-leftovers.py` で残りが 0 であることを確かめます。画像は、出力先にだけ書きます(リポジトリには入れません)。

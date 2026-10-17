@@ -1,6 +1,6 @@
 //! 文字を描く手段の試しで、どの候補にも共通の部分。
 //!
-//! 同じ文字列を、同じフォントのファイルから、同じ大きさ・同じ色で描かせて、Xrgb8888の画素(pixmanで
+//! 同じ文字列を、同じフォントのファイルから、同じ大きさ・同じ色で描かせて、Xrgb8888のピクセル(pixmanで
 //! 合成できる形)にする。画像(PPM)と、速さ・メモリー・文字の幅の記録を出す。
 
 use std::{
@@ -87,7 +87,7 @@ pub const THEMES: [Theme; 2] = [
     },
 ];
 
-/// 描く先。Xrgb8888の画素(1画素が0x00RRGGBB)。
+/// 描く先。Xrgb8888のピクセル(1ピクセルが0x00RRGGBB)。
 pub struct Canvas {
     pub width: usize,
     pub height: usize,
@@ -119,7 +119,7 @@ impl Canvas {
         self.pixels[at] = mix(16) | mix(8) | mix(0);
     }
 
-    /// 左上が(x, y)、大きさが `width` × `height` の濃さの絵(1画素1バイト)を、色 `color` で重ねる。
+    /// 左上が(x, y)、大きさが `width` × `height` の濃さの絵(1ピクセル1バイト)を、色 `color` で重ねる。
     pub fn blend_mask(
         &mut self,
         x: i32,
@@ -180,7 +180,7 @@ pub trait Engine {
     }
 }
 
-/// 3つ目の引数が `nohint` なら、字形のヒンティング(小さい字を画素の格子に合わせる処理)を切る。
+/// 3つ目の引数が `nohint` なら、字形のヒンティング(小さい字をピクセルの格子に合わせる処理)を切る。
 pub fn hinting_requested() -> bool {
     std::env::args().nth(3).as_deref() != Some("nohint")
 }

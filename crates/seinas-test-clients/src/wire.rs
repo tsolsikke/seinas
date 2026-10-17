@@ -553,7 +553,7 @@ impl Wire {
                 self.say(&format!("wm_capabilities [{}]", names.join(",")));
                 Ok(())
             }
-            // wl_pointer の知らせ。位置は、中身の左上を原点にした画素(端数は切り捨て)。
+            // wl_pointer の知らせ。位置は、中身の左上を原点にしたピクセル(端数は切り捨て)。
             (object, opcode) if Some(object) == self.pointer => {
                 let fixed = |at: usize| event.u32_at(at).unwrap_or(0) as i32 >> 8;
                 match opcode {

@@ -5,7 +5,7 @@
 #     tools/elf-report.sh target/x86_64-unknown-linux-musl/release/seinas ...
 #
 # 書き出すもの: ELFの種類、PT_INTERPと共有ライブラリへの依存の有無、PT_TLSの大きさ、
-# プログラムヘッダー(区画の権限と大きさ)、ファイルの大きさ。
+# プログラムヘッダー(セグメントの権限と大きさ)、ファイルの大きさ。
 set -eu
 export LC_ALL=C
 

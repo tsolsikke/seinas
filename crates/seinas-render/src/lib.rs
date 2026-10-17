@@ -39,16 +39,16 @@ pub fn solid_rect(x: i32, y: i32, width: i32, height: i32, color: [f32; 4]) -> S
     )
 }
 
-/// 描画結果の画素の形式。
+/// 描画結果のピクセルの形式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PixelFormat {
-    /// 1画素は32ビット。メモリー上の並びは B, G, R, X(リトルエンディアンの `0xXXRRGGBB`)。
+    /// 1ピクセルは32ビット。メモリー上の並びは B, G, R, X(リトルエンディアンの `0xXXRRGGBB`)。
     /// Xの8ビットは意味を持たない。wl_shmの `xrgb8888`、pixmanの `x8r8g8b8` と同じ。
     Xrgb8888,
 }
 
 impl PixelFormat {
-    /// 1画素のバイト数。
+    /// 1ピクセルのバイト数。
     pub const fn bytes_per_pixel(self) -> usize {
         match self {
             PixelFormat::Xrgb8888 => 4,
@@ -96,7 +96,7 @@ pub struct Painter {
 }
 
 impl Painter {
-    /// `width` × `height` 画素のキャンバスを持つ `Painter` を作る。
+    /// `width` × `height` ピクセルのキャンバスを持つ `Painter` を作る。
     pub fn new(width: i32, height: i32) -> Result<Self, RenderError> {
         let invalid = RenderError::InvalidSize { width, height };
         if width <= 0 || height <= 0 {
@@ -125,12 +125,12 @@ impl Painter {
         })
     }
 
-    /// キャンバスの幅(画素)。
+    /// キャンバスの幅(ピクセル)。
     pub fn width(&self) -> i32 {
         self.width
     }
 
-    /// キャンバスの高さ(画素)。
+    /// キャンバスの高さ(ピクセル)。
     pub fn height(&self) -> i32 {
         self.height
     }
@@ -205,7 +205,7 @@ impl Painter {
     }
 }
 
-/// 描画結果。[`Painter`] のキャンバスを読むだけの窓で、画素の持ち主は `Painter` のまま。
+/// 描画結果。[`Painter`] のキャンバスを読むだけのビューで、ピクセルの持ち主は `Painter` のまま。
 #[derive(Clone, Copy)]
 pub struct FrameView<'a> {
     width: usize,
@@ -217,12 +217,12 @@ pub struct FrameView<'a> {
 }
 
 impl<'a> FrameView<'a> {
-    /// 幅(画素)。
+    /// 幅(ピクセル)。
     pub fn width(&self) -> usize {
         self.width
     }
 
-    /// 高さ(画素)。
+    /// 高さ(ピクセル)。
     pub fn height(&self) -> usize {
         self.height
     }
@@ -232,7 +232,7 @@ impl<'a> FrameView<'a> {
         self.stride
     }
 
-    /// 画素の形式。
+    /// ピクセルの形式。
     pub fn format(&self) -> PixelFormat {
         self.format
     }
@@ -249,7 +249,7 @@ impl<'a> FrameView<'a> {
         self.width * self.format.bytes_per_pixel()
     }
 
-    /// 上から `y` 行目の画素(`幅 × 4` バイト)。
+    /// 上から `y` 行目のピクセル(`幅 × 4` バイト)。
     ///
     /// # Panics
     ///
