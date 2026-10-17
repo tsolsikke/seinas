@@ -140,15 +140,23 @@ check_issue_keys() {
     fi
 }
 
-# 古い言い方(docs/terminology.md の対応表)は、新しく書いた行に使わない。言葉の一覧は、対応表から
-# tools/old-terms.py が作る。読み方の問題なので、表示するだけにする(同じ字を含む別の言葉に当たることがあるため)。
+# 古い言い方(docs/terminology.md)は、新しく書いた行に使わない。言葉の一覧は、tools/old-terms.py が
+# docs/terminology.md から作る。「使わない語」の表の語に当たったら落とす。対応表の語は、読み方の問題なので
+# 表示するだけにする(同じ字を含む別の言葉に当たることがあるため)。
 check_terms() {
-    hits=$(git diff "$base"...HEAD -U0 | python3 tools/old-terms.py)
-    if [ -n "$hits" ]; then
-        echo "   ・新しく書いた行に、古い言い方かもしれない言葉があります(docs/terminology.md を見て、直すか、そのままでよいかを決める):"
-        echo "$hits" | cut -c1-200 | sed 's/^/   ・  /'
+    status=0
+    hits=$(git diff "$base"...HEAD -U0 | python3 tools/old-terms.py) || status=$?
+    strict=$(echo "$hits" | grep '^使わない語:' || true)
+    loose=$(echo "$hits" | grep -v '^使わない語:' | grep . || true)
+    if [ -n "$strict" ]; then
+        echo "   ・新しく書いた行に、使わない語があります(docs/terminology.md の「使わない語」の表の言葉に直す):"
+        echo "$strict" | cut -c1-200 | sed 's/^使わない語://; s/^/   ・  /'
     fi
-    return 0
+    if [ -n "$loose" ]; then
+        echo "   ・新しく書いた行に、古い言い方かもしれない言葉があります(docs/terminology.md を見て、直すか、そのままでよいかを決める):"
+        echo "$loose" | cut -c1-200 | sed 's/^/   ・  /'
+    fi
+    return $status
 }
 
 # コミットメッセージの形:1 行目が要約、2 行目が空、3 行目が課題のキー、4 行目が空、本文が 2〜5 行。

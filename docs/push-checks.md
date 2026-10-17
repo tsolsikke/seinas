@@ -33,7 +33,7 @@ push の前に行う確かめを、変更の種類に応じた段に分けます
 
 | 段 | 選ぶ変更 | 行う確かめ |
 | --- | --- | --- |
-| docs | 文書だけ(`*.md`、`docs/`、`LICENSE`) | 差分の空白(`git diff --check`)、新しく書いた行の課題のキー、古い言い方(表示するだけ)、コミットメッセージの形 |
+| docs | 文書だけ(`*.md`、`docs/`、`LICENSE`) | 差分の空白(`git diff --check`)、新しく書いた行の課題のキー、古い言い方(「使わない語」の表の語は落とす。対応表の語は表示するだけ)、コミットメッセージの形 |
 | code | コード(上と下のどれにも当たらないもの。`crates/` の多く、`tools/` のほとんど) | 上に加えて、fmt・clippy・ホストのテスト(golden を含む)・テストの後に残ったプロセスの確かめ(`tools/check-leftovers.py`) |
 | visual | 見た目に関わるもの(`seinas-render`・`seinas-text`・`seinas-fbdev` の全体、`seinas-frontend` の `decoration.rs`・`title_bar.rs`・`lib.rs`、`seinas-taskbar` と `seinas-wallpaper` の `lib.rs`、`tests/golden/`・`tests/golden.rs`) | 上に加えて、golden の決まり(既存の正解データの作り直しと `src/` の変更が、同じコミットに無いか) |
 | full | 依存・ビルド(`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`.github/`、`THIRD-PARTY/`、`tools/build-musl.sh` などのビルドと依存の道具) | 上に加えて、third-party の確かめ、依存の検査、musl の静的ビルドとテスト、SHA-256 |

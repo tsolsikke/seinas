@@ -8,7 +8,13 @@
 入っているもの(「実行ファイル」→「バイナリ(実行ファイルでもよい)」など)は、古い言い方として扱わない。動詞は、
 活用しても当たるよう、語幹で探す(「掴む」は「掴」、「待ち受ける」は「待ち受け」)。
 
-見つけた行を「ファイル:行の番号: 言葉: 行」の形で書く。読み方の問題なので、終わりの値はいつも 0(知らせるだけ)。
+見つけた行を「ファイル:行の番号: 言葉: 行」の形で書く。対応表の言葉は読み方の問題なので、知らせるだけにする。
+
+docs/terminology.md の「使わない語」の表の「当たる形」は、新しく書いた行に入ったら止める。その行は、頭に
+「使わない語:」を付けて書き、終わりの値を 1 にする。「除く形」の中に収まる当たりと、すぐ後に「→」が続く当たり
+(言い換えの例)は数えない。
+
+終わりの値:0 は止める当たりが無い、1 は「使わない語」に当たった、2 は使い方の誤り(標準入力が端末のときも)。
 """
 
 import os
@@ -24,7 +30,8 @@ SKIPPED = {"docs/terminology.md", "tools/old-terms.py", "THIRD-PARTY/rust-crates
 
 # 同じ字を含むが、古い言い方ではない言葉。言葉の前後に、この字が続くときは当たりにしない。
 ALLOWED = {
-    "像": ["画像", "想像", "像を結"],
+    "像": ["画像", "想像", "像を結", "写像", "映像", "解像", "実像", "虚像", "肖像", "偶像", "残像", "群像", "鏡像", "全体像"],
+    "写": ["写真", "描写"],
     "版": ["出版", "版権"],
     "帯": ["帯域", "時間帯", "所帯"],
     "要素": [],
@@ -60,6 +67,9 @@ def terms():
 
 
 def allowed_at(line, word, at):
+    # すぐ後に「→」が続くのは、言い換えの例。
+    if line[at + len(word) : at + len(word) + 1] == "→":
+        return True
     for compound in ALLOWED.get(word, []):
         start = compound.find(word)
         begin = at - start
@@ -68,8 +78,55 @@ def allowed_at(line, word, at):
     return False
 
 
+def strict_terms():
+    """「使わない語」の表の、(当たる形, 除く形の一覧) の並び。"""
+    text = open(TABLE, encoding="utf-8").read()
+    start = text.index("## 使わない語")
+    end = text.index("\n## ", start + 1)
+    found = []
+    for line in text[start:end].splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) != 5 or cells[0] in ("使わない語", "---"):
+            continue
+        excluded = re.findall(r"`([^`]+)`", cells[3])
+        for form in re.findall(r"`([^`]+)`", cells[2]):
+            found.append((form, excluded))
+    return found
+
+
+def strict_hits(line, rules):
+    hits = []
+    for form, excluded in rules:
+        for m in re.finditer(re.escape(form), line):
+            if line[m.end() : m.end() + 1] == "→":
+                continue
+            inside = False
+            for word in excluded:
+                start = word.find(form)
+                begin = m.start() - start
+                if start >= 0 and begin >= 0 and line[begin : begin + len(word)] == word:
+                    inside = True
+            if not inside:
+                hits.append(form)
+                break
+    return hits
+
+
 def main():
+    if any(arg in ("-h", "--help") for arg in sys.argv[1:]):
+        print(__doc__.strip())
+        return 0
+    if sys.argv[1:]:
+        print(f"old-terms.py: 引数は取りません: {' '.join(sys.argv[1:])}(--help で使い方)", file=sys.stderr)
+        return 2
+    if sys.stdin.isatty():
+        print("old-terms.py: 差分を標準入力に渡してください(--help で使い方)", file=sys.stderr)
+        return 2
+    # 差分には、UTF-8 でないファイルの行も入りうる。読めない字は置き換えて、止まらないようにする。
+    sys.stdin.reconfigure(encoding="utf-8", errors="replace")
     words = terms()
+    rules = strict_terms()
+    status = 0
     path = None
     number = 0
     for raw in sys.stdin:
@@ -85,6 +142,10 @@ def main():
             continue
         line = raw[1:]
         if path not in SKIPPED:
+            strict = strict_hits(line, rules)
+            if strict:
+                print(f"使わない語:{path}:{number}: {'・'.join(strict)}: {line.strip()[:160]}")
+                status = 1
             hits = []
             for word in words:
                 for m in re.finditer(re.escape(word), line):
@@ -94,7 +155,8 @@ def main():
             if hits:
                 print(f"{path}:{number}: {'・'.join(hits)}: {line.strip()[:160]}")
         number += 1
+    return status
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
