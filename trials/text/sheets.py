@@ -18,7 +18,7 @@ import sys
 import zlib
 from pathlib import Path
 
-# 上から順に並べる。-nohint は、字形のヒンティングを切ったもの。fontdueは、もともとヒンティングをしない。
+# 上から順に並べる。-nohint は、グリフのヒンティングを切ったもの。fontdueは、もともとヒンティングをしない。
 ENGINES = ["cosmic-text", "cosmic-text-nohint", "swash", "swash-nohint", "fontdue"]
 FONTS = ["udp", "ud"]
 THEMES = ["light", "dark"]

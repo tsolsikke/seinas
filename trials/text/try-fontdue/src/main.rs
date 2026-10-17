@@ -1,6 +1,6 @@
-//! 候補: fontdue。小さな、字形を描くだけのクレート。文字の並べ方(シェーピング)は行わない。
+//! 候補: fontdue。小さな、グリフを描くだけのクレート。文字の並べ方(シェーピング)は行わない。
 //!
-//! ここでは、1文字ずつ字形を求めて、進む幅のぶんだけ右へ進める、いちばん単純な並べ方をしている。
+//! ここでは、1文字ずつグリフを求めて、進む幅のぶんだけ右へ進める、いちばん単純な並べ方をしている。
 
 use std::collections::HashMap;
 
@@ -10,7 +10,7 @@ use text_trial_common::{load_fonts, rss_kb, run, Canvas, Engine, FontKind};
 struct Fontdue {
     ui: Font,
     mono: Font,
-    /// 描いた字形の覚え(フォント、文字、大きさ)。fontdue自身は覚えを持たない。
+    /// 描いたグリフの覚え(フォント、文字、大きさ)。fontdue自身は覚えを持たない。
     cache: HashMap<(FontKind, char, u32), (Metrics, Vec<u8>)>,
 }
 
@@ -46,7 +46,7 @@ impl Engine for Fontdue {
                 self.cache.insert(key, glyph);
             }
             let (metrics, mask) = &self.cache[&key];
-            // fontdueの字形は、左下が原点。ymin は、ベースラインから字形の下の端まで。
+            // fontdueのグリフは、左下が原点。ymin は、ベースラインからグリフの下の端まで。
             let left = pen.round() as i32 + metrics.xmin;
             let top = baseline.round() as i32 - metrics.ymin - metrics.height as i32;
             canvas.blend_mask(left, top, metrics.width, metrics.height, mask, color);

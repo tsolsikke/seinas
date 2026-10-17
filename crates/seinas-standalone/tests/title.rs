@@ -249,7 +249,7 @@ fn without_fonts_the_bar_is_drawn_without_a_title() {
 
 #[test]
 fn a_broken_font_file_does_not_stop_the_compositor() {
-    // 主のフォントの名前で壊れたファイルを置き、控えのフォントは置かない。
+    // プライマリのフォントの名前で壊れたファイルを置き、フォールバックのフォントは置かない。
     let dir = std::env::temp_dir().join(format!("seinas-broken-fonts-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("BIZUDPGothic-Regular.ttf"), b"this is not a font").unwrap();

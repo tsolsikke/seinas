@@ -4,7 +4,7 @@
 //! ファイルに埋め込まず、同梱のフォントの置き場を呼ぶ側が教える。利用者が設定のファイルで選んだフォントは、
 //! 置き場を自分で調べて使う(`fonts` の module。ADR 0003)。フォントのファイルは、mmap で読む。
 //!
-//! - 主のフォント(UI用)に無い文字は、控えのフォントで描く。
+//! - プライマリのフォント(UI用)に無い文字は、フォールバックのフォントで描く。
 //! - 控えにも無い文字は、四角の枠で描く(字が欠けていることが分かるようにする)。
 //! - フォントが読めないときも、失敗にはしない。読めなかった理由を返し、文字は描かないだけにする。
 //!
@@ -27,16 +27,16 @@ pub use glyph_cache::{GlyphCache, GLYPH_CACHE_LIMIT};
 
 use unicode_script::Script;
 
-/// 主のフォント(UI用)のファイルの名前と、その中のフォントの名前。
+/// プライマリのフォント(UI用)のファイルの名前と、その中のフォントの名前。
 pub const UI_FONT_FILE: &str = "BIZUDPGothic-Regular.ttf";
 pub const UI_FONT_FAMILY: &str = "BIZ UDPGothic";
-/// 控えのフォントのファイルの名前と、その中のフォントの名前。
+/// フォールバックのフォントのファイルの名前と、その中のフォントの名前。
 pub const FALLBACK_FONT_FILE: &str = "unifont_jp-18.0.01.otf";
 pub const FALLBACK_FONT_FAMILY: &str = "Unifont-JP";
 
 /// 文字の大きさの既定(ピクセル)。これより小さい大きさは、既定では使わない。
 pub const DEFAULT_SIZE: f32 = 14.0;
-/// 字形のヒンティングを入れる、いちばん小さい大きさ(ピクセル)。これより小さいと、字の形が崩れる
+/// グリフのヒンティングを入れる、いちばん小さい大きさ(ピクセル)。これより小さいと、字の形が崩れる
 /// (12px前後で「8」が「0」に見える)ので、切る。
 pub const HINTING_FROM: f32 = 14.0;
 
@@ -44,15 +44,15 @@ pub const HINTING_FROM: f32 = 14.0;
 const ELLIPSIS: &str = "…";
 /// 1行として扱う文字数の上限。これより後ろは、どうせ収まらないので見ない。
 const MAX_CHARS: usize = 512;
-/// 文字の言語。漢字の字形の選び方などに使われる。
+/// 文字の言語。漢字のグリフの選び方などに使われる。
 const LOCALE: &str = "ja-JP";
 
 /// フォントのファイルの場所。
 #[derive(Debug, Clone)]
 pub struct FontFiles {
-    /// 主のフォント(UI用)。
+    /// プライマリのフォント(UI用)。
     pub ui: PathBuf,
-    /// 控えのフォント。
+    /// フォールバックのフォント。
     pub fallback: PathBuf,
 }
 
@@ -156,13 +156,13 @@ pub struct Drawn {
     pub width: i32,
     /// 収まらずに、末尾を切ったか。
     pub truncated: bool,
-    /// 控えのフォントで描いた字形の数。
+    /// フォールバックのフォントで描いたグリフの数。
     pub fallback_glyphs: usize,
-    /// どのフォントにも無く、四角の枠で描いた字形の数。
+    /// どのフォントにも無く、四角の枠で描いたグリフの数。
     pub missing_glyphs: usize,
 }
 
-/// 主のフォントに無い文字を、どのフォントで探すか。フォールバックのフォントを、順に、どの文字の種類にも使う。
+/// プライマリのフォントに無い文字を、どのフォントで探すか。フォールバックのフォントを、順に、どの文字の種類にも使う。
 struct ListFallback(Vec<&'static str>);
 
 impl Fallback for ListFallback {
@@ -183,7 +183,7 @@ struct Fonts {
     /// グリフの絵を作るもの(覚えは使わない)と、上限のある覚え。
     swash: SwashCache,
     glyphs: GlyphCache,
-    /// 行を組むときに、最初に使うフォントの名前。主のフォントが無ければ、控えのフォント。
+    /// 行をレイアウトするときに、最初に使うフォントの名前。プライマリのフォントが無ければ、フォールバックのフォント。
     family: &'static str,
     /// フォールバックのフォントの名前(順)。
     fallback: Vec<&'static str>,
@@ -198,7 +198,7 @@ pub struct TextPainter {
 impl TextPainter {
     /// フォントを読む。読めないフォントがあっても失敗にはせず、読めなかった理由を一緒に返す。
     ///
-    /// 主のフォントだけが読めないときは、控えのフォントで全部を描く。どちらも読めないときは、
+    /// プライマリのフォントだけが読めないときは、フォールバックのフォントで全部を描く。どちらも読めないときは、
     /// 何も描かない([`TextPainter::can_draw`] がfalseを返す)。
     pub fn load(files: &FontFiles) -> (Self, Vec<FontProblem>) {
         Self::load_faces(
@@ -354,7 +354,7 @@ impl Fonts {
             .map(|face| face.id)
     }
 
-    /// 1行を組む。
+    /// 1行をレイアウトする。
     fn layout(&mut self, text: &str, line: Line) -> Buffer {
         // 行の高さを渡すと、文字はその中で縦の中央に置かれる。
         let mut buffer = Buffer::new(
@@ -362,7 +362,7 @@ impl Fonts {
             Metrics::new(line.size, line.height as f32),
         );
         buffer.set_wrap(Wrap::None);
-        // 字形をピクセルの境目に合わせて置く(小数の位置には置かない)。
+        // グリフをピクセルの境目に合わせて置く(小数の位置には置かない)。
         buffer.set_hinting(Hinting::Enabled);
         let mut attrs = Attrs::new().family(Family::Name(self.family));
         if line.size < HINTING_FROM {
@@ -373,14 +373,14 @@ impl Fonts {
         buffer
     }
 
-    /// 幅に収まるように1行を組む。収まらなければ、末尾を切って「…」を付ける。切ったかどうかも返す。
+    /// 幅に収まるように1行をレイアウトする。収まらなければ、末尾を切って「…」を付ける。切ったかどうかも返す。
     fn fit(&mut self, text: &str, line: Line) -> (Buffer, bool) {
         let max_width = line.max_width as f32;
         let buffer = self.layout(text, line);
         if line_width(&buffer) <= max_width {
             return (buffer, false);
         }
-        // 「…」を足しても収まる所で切る。字形の並びから、切る場所の見当をつける。
+        // 「…」を足しても収まる所で切る。グリフの並びから、切る場所の見当をつける。
         let ellipsis_width = line_width(&self.layout(ELLIPSIS, line));
         let mut keep = buffer
             .layout_runs()
@@ -470,7 +470,7 @@ pub struct FontSetup {
 
 /// どのフォントにも無い文字の代わりに、四角の枠を描く。
 fn draw_missing_box(canvas: &mut Canvas<'_>, x: f32, width: f32, baseline: f32, line: Line) {
-    // 幅は字形の送りに合わせ、高さは大文字の高さくらいにする。字と字の間に、1ピクセルずつ空きを残す。
+    // 幅はグリフの送りに合わせ、高さは大文字の高さくらいにする。字と字の間に、1ピクセルずつ空きを残す。
     let left = line.x + x.round() as i32 + 1;
     let right = left + (width.round() as i32 - 2).max(line.size as i32 / 3);
     let bottom = line.top + baseline.round() as i32;

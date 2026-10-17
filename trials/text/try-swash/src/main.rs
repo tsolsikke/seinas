@@ -1,4 +1,4 @@
-//! 候補: swashだけ。文字の並べ方(シェーピング)と、字形を描くこと(ヒンティング付き)の両方を持つ。
+//! 候補: swashだけ。文字の並べ方(シェーピング)と、グリフを描くこと(ヒンティング付き)の両方を持つ。
 //!
 //! 行の折り返し、フォントの切り替え(控え)、双方向の文字の並べ替えは、自分で書く必要がある。
 //! ここでは、1行を1つのまとまりとして、左から右へ並べている。
@@ -22,13 +22,13 @@ struct Swash {
     keys: [CacheKey; 2],
     shape: ShapeContext,
     scale: ScaleContext,
-    /// 描いた字形の覚え(フォント、字形の番号、大きさ)。
+    /// 描いたグリフの覚え(フォント、グリフの番号、大きさ)。
     cache: HashMap<(FontKind, GlyphId, u32), Option<Image>>,
-    /// 字形のヒンティングを使うか。
+    /// グリフのヒンティングを使うか。
     hint: bool,
 }
 
-/// 並べ終えた1つの字形。
+/// 並べ終えた1つのグリフ。
 struct Placed {
     id: GlyphId,
     x: f32,
@@ -43,7 +43,7 @@ impl Swash {
         }
     }
 
-    /// 文字列を並べる。字形の並びと、全体の幅を返す。
+    /// 文字列を並べる。グリフの並びと、全体の幅を返す。
     fn shape(&mut self, kind: FontKind, px: f32, text: &str) -> (Vec<Placed>, f32) {
         let (data, key) = match kind {
             FontKind::Ui => (&self.ui, self.keys[0]),
@@ -118,7 +118,7 @@ impl Engine for Swash {
                 self.cache.insert(key, image);
             }
             if let Some(image) = &self.cache[&key] {
-                // 字形は、ピクセルの境目に合わせて置く(小数の位置には置かない)。
+                // グリフは、ピクセルの境目に合わせて置く(小数の位置には置かない)。
                 let left = (x + glyph.x).round() as i32 + image.placement.left;
                 let top = (baseline - glyph.y).round() as i32 - image.placement.top;
                 canvas.blend_mask(

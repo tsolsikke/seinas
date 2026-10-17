@@ -174,13 +174,13 @@ pub trait Engine {
     /// 描かずに、文字列の幅(px)だけを求める。
     fn measure(&mut self, font: FontKind, px: f32, text: &str) -> f32;
 
-    /// フォントに字形が無い文字。調べられない候補は、Noneを返す。
+    /// フォントにグリフが無い文字。調べられない候補は、Noneを返す。
     fn missing(&mut self, _font: FontKind, _text: &str) -> Option<Vec<char>> {
         None
     }
 }
 
-/// 3つ目の引数が `nohint` なら、字形のヒンティング(小さい字をピクセルの格子に合わせる処理)を切る。
+/// 3つ目の引数が `nohint` なら、グリフのヒンティング(小さい字をピクセルの格子に合わせる処理)を切る。
 pub fn hinting_requested() -> bool {
     std::env::args().nth(3).as_deref() != Some("nohint")
 }
@@ -309,7 +309,7 @@ pub fn run(engine: &mut dyn Engine, out: &Path, rss_start: u64, rss_after_load: 
     let pages = FontKind::ALL.len() * SIZES.len() * THEMES.len();
     let (rss_after_cold, _) = rss_kb();
 
-    // 2回目以降(字形を覚えた状態)。書き出しはしない。
+    // 2回目以降(グリフを覚えた状態)。書き出しはしない。
     const REPEAT: usize = 20;
     let warm = Instant::now();
     for _ in 0..REPEAT {

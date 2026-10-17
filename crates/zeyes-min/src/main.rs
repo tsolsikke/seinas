@@ -57,7 +57,7 @@ struct Zeyes {
     configured: bool,
     /// frameコールバックを待っている間はtrue。待っている間は描かない。
     frame_pending: bool,
-    /// 描き直しが要るときはtrue。
+    /// 再描画が要るときはtrue。
     dirty: bool,
     exit: bool,
 }
@@ -86,7 +86,7 @@ impl CompositorHandler for Zeyes {
         _: &wl_surface::WlSurface,
         _: u32,
     ) {
-        // 前の絵が表示に使われた合図。描き直しが要るときだけ、次の絵を描く。
+        // 前の絵が表示に使われた合図。再描画が要るときだけ、次の絵を描く。
         self.frame_pending = false;
         if self.dirty {
             self.draw(conn, qh);

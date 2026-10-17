@@ -20,7 +20,7 @@ rm -rf out
 for engine in baseline cosmic swash fontdue; do
     ./target/release/try-$engine "$fonts" out
 done
-# 字形のヒンティングを切った場合も、あわせて出す。
+# グリフのヒンティングを切った場合も、あわせて出す。
 ./target/release/try-cosmic "$fonts" out nohint
 ./target/release/try-swash "$fonts" out nohint
 python3 sheets.py out

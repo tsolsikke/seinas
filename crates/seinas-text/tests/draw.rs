@@ -173,7 +173,7 @@ fn a_broken_ui_font_is_reported_and_the_fallback_font_is_used() {
         matches!(&problems[..], [FontProblem::Unusable { path, .. }] if *path == broken),
         "{problems:?}"
     );
-    // 控えのフォントだけで描く。
+    // フォールバックのフォントだけで描く。
     assert!(painter.can_draw());
     let (drawn, inked) = draw(&mut painter, "zeyes", 180);
     assert_eq!(drawn.missing_glyphs, 0);
@@ -182,7 +182,7 @@ fn a_broken_ui_font_is_reported_and_the_fallback_font_is_used() {
 
 #[test]
 fn a_font_file_of_another_font_is_not_used() {
-    // 控えのフォントのファイルを、主のフォントとして渡す。
+    // フォールバックのフォントのファイルを、プライマリのフォントとして渡す。
     let fonts = FontFiles::in_dir(&font_dir());
     let files = FontFiles {
         ui: fonts.fallback.clone(),

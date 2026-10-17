@@ -103,7 +103,7 @@ fn translucent_pattern() -> Vec<u8> {
 fn main() {
     let mut run = Runner::new(env!("CARGO_MANIFEST_DIR"), "seinas-render");
 
-    // A1: 単色の四角の重なりと、画面の 4 辺での切り取り。先頭がいちばん手前。
+    // A1: 単色の四角の重なりと、画面の 4 辺でのクリッピング。先頭がいちばん手前。
     let a1 = render(64, 48, |_| {
         vec![
             solid(20, 16, 16, 12, [0xff, 0xff, 0xff]),

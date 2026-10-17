@@ -1,5 +1,5 @@
 //! 候補: cosmic-text + swash。文字の並べ方(シェーピング)、行の組み方、フォントの切り替え(控え)、
-//! 字形を描くことと覚えておくことを、まとめて持つ。
+//! グリフを描くことと覚えておくことを、まとめて持つ。
 //!
 //! フォントは、ファイルから読んだ中身を明示的に渡す。システムのフォントの探索(fontconfig)は、
 //! 機能ごと外してある。ロケールも明示的に渡す。
@@ -13,17 +13,17 @@ use text_trial_common::{hinting_requested, load_fonts, rss_kb, run, Canvas, Engi
 struct Cosmic {
     fonts: FontSystem,
     cache: SwashCache,
-    /// 字形のヒンティングを使うか。
+    /// グリフのヒンティングを使うか。
     hint: bool,
 }
 
 impl Cosmic {
-    /// 1行を組む。
+    /// 1行をレイアウトする。
     fn layout(&mut self, kind: FontKind, px: f32, text: &str) -> Buffer {
         let mut buffer = Buffer::new(&mut self.fonts, Metrics::new(px, (px * 1.5).round()));
         buffer.set_wrap(Wrap::None);
-        // UI用のフォントでは、字形をピクセルの境目に合わせて置く(小数の位置には置かない)。
-        // 端末用のフォントでは、合わせない。合わせると、字形ごとに幅が切り上げられて(13pxなら半角が
+        // UI用のフォントでは、グリフをピクセルの境目に合わせて置く(小数の位置には置かない)。
+        // 端末用のフォントでは、合わせない。合わせると、グリフごとに幅が切り上げられて(13pxなら半角が
         // 6.5→7px)、半角と全角の幅が1:2でなくなるため。
         buffer.set_hinting(match kind {
             FontKind::Ui => Hinting::Enabled,
@@ -31,7 +31,7 @@ impl Cosmic {
         });
         let mut attrs = Attrs::new().family(Family::Name(kind.family()));
         if !self.hint {
-            // 字形そのもののヒンティングは、既定で使われる。切るときは、明示する。
+            // グリフそのもののヒンティングは、既定で使われる。切るときは、明示する。
             attrs = attrs.cache_key_flags(CacheKeyFlags::DISABLE_HINTING);
         }
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
@@ -99,7 +99,7 @@ fn main() {
     let mut db = fontdb::Database::new();
     db.load_font_data(ui);
     db.load_font_data(mono);
-    // 4つ目の引数があれば、控えのフォントとして足す。主のフォントに無い文字は、一覧の中のほかの
+    // 4つ目の引数があれば、フォールバックのフォントとして足す。プライマリのフォントに無い文字は、一覧の中のほかの
     // フォントから探される。
     if let Some(path) = std::env::args().nth(4) {
         db.load_font_data(
