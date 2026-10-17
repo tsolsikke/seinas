@@ -25,8 +25,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TABLE = os.path.join(ROOT, "docs", "terminology.md")
 
 # 対応表のこのファイルと、この道具そのものは、古い言い方を書くのが役目なので見ない。依存の一覧
-# (tools/third-party.py が作るもの)も見ない。
-SKIPPED = {"docs/terminology.md", "tools/old-terms.py", "THIRD-PARTY/rust-crates.md"}
+# (tools/third-party.py が作るもの)と、言い換えのコミットの件名をそのまま載せる .git-blame-ignore-revs も見ない。
+SKIPPED = {"docs/terminology.md", "tools/old-terms.py", "THIRD-PARTY/rust-crates.md", ".git-blame-ignore-revs"}
 
 # 同じ字を含むが、古い言い方ではない言葉。言葉の前後に、この字が続くときは当たりにしない。
 ALLOWED = {

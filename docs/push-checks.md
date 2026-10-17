@@ -64,6 +64,17 @@ tools/ci-wait.sh
 - HEAD の run を探して、終わるまで待ちます。成功したらジョブごとの結果を出し、落ちたら終わりの値 1 と、記録の見方(`gh run view <run> --log-failed`)を出します。
 - 落ちたらすぐ直します。直せないときは revert して push し、CI が戻ったことを確かめてから報告します。
 
+## git blame と言い換えのコミット
+
+IT 用語を言い換えただけのコミット(行の意味は変えていないもの)は、`.git-blame-ignore-revs` に載せてあります。手元の `git blame` で飛ばすには、次の設定を入れます(入れるのは運用者)。
+
+```bash
+git config blame.ignoreRevsFile .git-blame-ignore-revs
+```
+
+- 載せたコミットより前のコミットは、作り直しません(SHA が変わり、載せた行が効かなくなるため)。
+- 古い言い方の確かめ(`tools/old-terms.py`)は、このファイルを見ません(言い換える前の件名を、そのまま載せているため)。
+
 ## テストの後に残るプロセス
 
 テスト(seinas-standalone の結合テストと golden)は、コンポジタとクライアントを子のプロセスとして起こします。同じホストで ZeikOS の確かめ(QEMU)も動くので、テストの後に子を残しません。
