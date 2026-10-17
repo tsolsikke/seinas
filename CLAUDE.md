@@ -19,4 +19,3 @@
    判定・起動・ログのように、普通に使われている日本語の IT 用語は、そのまま使います。git の push は「push」と書きます。
    使わない語の一覧は、zeikos のリポジトリの `docs/terminology.md` の「使わない語」の表を見てください(zeikos は
    読むだけ)。Seinas の側の対応表は `docs/terminology.md` にあり、`tools/old-terms.py` が新しく書いた行を確かめます。
-   既にある行は、一括では書き換えません(触った行から直します)。
