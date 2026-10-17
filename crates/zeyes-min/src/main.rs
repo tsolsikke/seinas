@@ -6,7 +6,7 @@
 //! 目のまわり(肌)の色は、引数 `--skin RRGGBB` か、環境変数 `ZEYES_SKIN` で変えられる(16進の6けた。
 //! 引数が優先)。既定は緑(`6ab05c`)。ウィンドウを見分けたいときに使う。
 //!
-//! ウィンドウの題名は「zeyes」。引数 `--title TEXT` で変えられる。
+//! ウィンドウのタイトルは「zeyes」。引数 `--title TEXT` で変えられる。
 
 use std::{error::Error, process::ExitCode};
 
@@ -359,7 +359,7 @@ fn parse_color(text: &str) -> Option<u32> {
     (digits.len() == 6).then(|| u32::from_str_radix(digits, 16).ok())?
 }
 
-/// ウィンドウの題名の既定。
+/// ウィンドウのタイトルの既定。
 const DEFAULT_TITLE: &str = "zeyes";
 
 /// 起動のときの指定。
@@ -367,7 +367,7 @@ const DEFAULT_TITLE: &str = "zeyes";
 struct Options {
     /// 目のまわりの色。
     skin: u32,
-    /// ウィンドウの題名。
+    /// ウィンドウのタイトル。
     title: String,
 }
 

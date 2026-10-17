@@ -349,7 +349,7 @@ impl PointerHandler for Seinas {
                 },
                 Axis { .. } => continue,
             };
-            // 手前に出す、動かす、閉じるの操作と、子へ渡す相手は、受け口が決める。
+            // raise する、動かす、閉じるの操作と、子へ渡す相手は、受け口が決める。
             let time = self.start.elapsed().as_millis() as u32;
             pointer_input(self, input, time);
         }

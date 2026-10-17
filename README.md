@@ -12,7 +12,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-standalone` | 親のWaylandを使わない構成のコンポジタ。Waylandの受け口と、fbdevの裏側を組み合わせる |
 | `crates/seinas-frontend` | Waylandの受け口(Smithay)。クライアントの要求を受け、描く要素を並べる |
 | `crates/seinas-render` | 共通の描画。pixmanで1枚の絵に合成する。Waylandの受け口には依存しない |
-| `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウの題名など)。フォントをファイルから読み、1行の文字をピクセルにする |
+| `crates/seinas-text` | Seinasが自分で描く文字(ウィンドウのタイトルなど)。フォントをファイルから読み、1行の文字をピクセルにする |
 | `crates/seinas-fbdev` | fbdev(`/dev/fb0`)へ出す裏側。共通の描画だけを使い、Waylandのソケットは開かない |
 | `crates/seinas-test-clients` | テスト用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いたイベントを書き出したりする。テスト用の IME と、text-input-v3 を使うアプリもある |
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
@@ -58,7 +58,7 @@ sudo apt install libpixman-1-dev libxkbcommon-dev
 
 ## フォント
 
-ウィンドウの題名を描くのに、フォントのファイルを使います。フォントは、リポジトリにも実行ファイルにも入れていません。
+ウィンドウのタイトルを描くのに、フォントのファイルを使います。フォントは、リポジトリにも実行ファイルにも入れていません。
 次のスクリプトで、決まった版を `target/fonts/` に取得します(SHA-256を確かめます)。テストも、このフォントを使います。
 
 ```bash
@@ -66,7 +66,7 @@ tools/fetch-fonts.sh
 ```
 
 フォントの置き場は、引数 `--fonts DIR` か、環境変数 `SEINAS_FONTS` で変えられます。指定が無ければ、`target/fonts`(作業中のディレクトリから見た位置)を見ます。
-フォントが読めなくても、Seinasは動きます(題名の文字が出ないだけです)。くわしくは `docs/text-rendering.md` にあります。
+フォントが読めなくても、Seinasは動きます(タイトルの文字が出ないだけです)。くわしくは `docs/text-rendering.md` にあります。
 
 ## ビルドとテスト
 
@@ -115,8 +115,8 @@ WAYLAND_DISPLAY=seinas-0 cargo run --locked -p seinas-test-clients --bin test-cl
 WAYLAND_DISPLAY=seinas-0-ime cargo run --locked -p seinas-test-clients --bin test-client -- ime --popup 40x30
 ```
 
-クライアントのウィンドウの上には、Seinasが題名の帯を描きます。zeyes-minの題名は「zeyes」で、`--title TEXT` で変えられます。
-帯を掴んで動かすと、ウィンドウが動きます。帯の右の端の「×」を押すと、閉じます。
+クライアントのウィンドウの上には、Seinasがタイトルバーを描きます。zeyes-minのタイトルは「zeyes」で、`--title TEXT` で変えられます。
+タイトルバーを grab して動かすと、ウィンドウが動きます。タイトルバーの右の端の「×」を押すと、閉じます。
 
 ウィンドウの切り替えは、Alt+Tab です。入れ子では Windows が Alt+Tab を先に使うので、Alt+F6(前へは Alt+Shift+F6)も使えます。キーは `~/.config/seinas/seinas.conf` で変えられ、届いたキーは `--log-keys` で確かめられます(`docs/config.md`)。
 

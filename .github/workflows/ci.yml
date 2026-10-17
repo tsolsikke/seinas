@@ -29,7 +29,7 @@ jobs:
         with:
           path: target/fonts
           key: fonts-${{ hashFiles('tools/fetch-fonts.sh') }}
-      - name: フォントを取得する(題名を描くテストが使う)
+      - name: フォントを取得する(タイトルを描くテストが使う)
         run: tools/fetch-fonts.sh
       - name: 既定のフォントの収録と、端末用のフォントの幅
         run: python3 tools/font-coverage.py

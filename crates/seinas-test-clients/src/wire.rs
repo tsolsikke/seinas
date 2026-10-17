@@ -39,7 +39,7 @@ const FIRST_FREE: u32 = 12;
 /// ウィンドウを作るときの指定。
 #[derive(Default)]
 pub struct WindowSetup {
-    /// 題名(xdg_toplevel.set_title)。Noneなら付けない。
+    /// タイトル(xdg_toplevel.set_title)。Noneなら付けない。
     pub title: Option<String>,
     /// app_id(xdg_toplevel.set_app_id)。Noneなら付けない。
     pub app_id: Option<String>,
@@ -429,7 +429,7 @@ impl Wire {
         Ok((buffer, pool_file))
     }
 
-    /// 題名を付ける(xdg_toplevel.set_title)。commitすると、コンポジタに伝わる。
+    /// タイトルを付ける(xdg_toplevel.set_title)。commitすると、コンポジタに伝わる。
     pub fn set_title(&mut self, title: &str) -> Result<(), String> {
         self.send(&message(TOPLEVEL, 2, &string(title)))
     }
@@ -553,7 +553,7 @@ impl Wire {
                 self.say(&format!("wm_capabilities [{}]", names.join(",")));
                 Ok(())
             }
-            // wl_pointer の知らせ。位置は、中身の左上を原点にしたピクセル(端数は切り捨て)。
+            // wl_pointer の知らせ。位置は、コンテンツの左上を原点にしたピクセル(端数は切り捨て)。
             (object, opcode) if Some(object) == self.pointer => {
                 let fixed = |at: usize| event.u32_at(at).unwrap_or(0) as i32 >> 8;
                 match opcode {
@@ -762,7 +762,7 @@ pub fn open_window(
     open_window_with(wire, width, height, pixel, &WindowSetup::default())
 }
 
-/// [`open_window`] と同じだが、題名などを `setup` で指定する。
+/// [`open_window`] と同じだが、タイトルなどを `setup` で指定する。
 ///
 /// 飾りの描き方を尋ねるときは、どちらの側で描くとも頼まず、コンポジタの答えを聞くだけにする。
 pub fn open_window_with(

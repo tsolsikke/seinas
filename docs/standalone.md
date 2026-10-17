@@ -9,7 +9,7 @@ Waylandの受け口で受けたクライアントの画面を、共通の描画�
 | --- | --- | --- |
 | `seinas-frontend` | Waylandの受け口(Smithay) | 使う |
 | `seinas-render` | 共通の描画 | 使う |
-| `seinas-text` | 文字を描く(ウィンドウの題名)。受け口が使う | 使う |
+| `seinas-text` | 文字を描く(ウィンドウのタイトル)。受け口が使う | 使う |
 | `seinas-fbdev`(ライブラリ) | fbdevの裏側と、偽の画面 | 使う |
 | `seinas`(入れ子の裏側。SCTK、wayland-client) | 親のWaylandへ出す | 使わない |
 
@@ -50,7 +50,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`text-rendering.md` の「利用者が選んだフォント」) |
 | `--shell-socket PATH` | シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-shell` を入れたもの(名前に拡張子があれば、その前に入れる。`/tmp/seinas.sock` なら `/tmp/seinas-shell.sock`、`/tmp/wl` なら `/tmp/wl-shell`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。ここからつないだクライアントにだけ、layer-shell とウィンドウの一覧(foreign-toplevel)を見せる |
 | `--ime-socket PATH` | IME のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-ime` を入れたもの(`--shell-socket` と同じ形。`/tmp/seinas.sock` なら `/tmp/seinas-ime.sock`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、input-method と virtual-keyboard を見せる(`ime.md`)。3 つのソケットのロックファイルがぶつかる指定(`--socket /tmp/a.sock --shell-socket /tmp/a.other` など、拡張子の前が同じもの)は、`would share the lock file` のエラーで終わる。パスを指定しないソケット(`XDG_RUNTIME_DIR` の下の `seinas-0` など)も比べる |
-| `--fonts DIR` | フォントの置き場(ウィンドウの題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(題名の文字が出ないだけ) |
+| `--fonts DIR` | フォントの置き場(ウィンドウのタイトルを描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(タイトルの文字が出ないだけ) |
 
 | `--test-input` | テスト用の入力インターフェースを開く(下の「テスト用の入力インターフェース」)。ふだんの起動では、付けない |
 | `--ping-timeout MS` | 閉じるように頼んだクライアントの pong を待つ時間(ミリ秒。既定は 5000)。過ぎたら応答なしにする(`window-placement.md` の「応答なし」)。テストで短くするためのもの |
@@ -69,7 +69,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | wl_compositor、wl_subcompositor | 画面(サーフェス) |
 | wl_shm | 共有メモリーのバッファ |
 | xdg_wm_base | ウィンドウ |
-| zxdg_decoration_manager_v1 | 飾り(題名の帯)を描く側の知らせ。いつも、サーバーの側で描くと答える |
+| zxdg_decoration_manager_v1 | 飾り(タイトルバー)を描く側の知らせ。いつも、サーバーの側で描くと答える |
 | zwlr_layer_shell_v1 | layer surface(タスクバーなどのシェルの部品)。シェルの部品のためのソケットからつないだクライアントにだけ見せる(`window-placement.md`) |
 | zwlr_foreign_toplevel_manager_v1、ext_foreign_toplevel_list_v1 | ウィンドウの一覧と操作(タスクバーなどが使う)。シェルの部品のためのソケットからつないだクライアントにだけ見せる(`window-placement.md`) |
 | wl_output | 画面の大きさ。表示モードは1つで、幅と高さは画面と同じ |
@@ -144,8 +144,8 @@ fbdevには、垂直同期の知らせがありません。そこで、次のよ
 
 ## 今の制限
 
-- 入力の装置は扱いません。そのため、ふだんの起動では、ウィンドウを手前に出す・動かす・閉じる操作ができません(テスト用の入力インターフェースからは、できます)。
-- クライアントのウィンドウは、上に題名の帯を付け、決まった位置に少しずつずらして重ねます(`window-placement.md`)。
+- 入力の装置は扱いません。そのため、ふだんの起動では、ウィンドウを raise する・動かす・閉じる操作ができません(テスト用の入力インターフェースからは、できます)。
+- クライアントのウィンドウは、上にタイトルバーを付け、決まった位置に少しずつずらして重ねます(`window-placement.md`)。
 - 止めるには、シグナルで終わらせます。終わるときの後片付け(画面を元に戻す、ソケットとロックファイルを消す)はしていません。次に起動したときは、残ったロックファイルを取り直して、そのまま動きます。
 - 実際の装置(`/dev/fb0`)では、まだ動かしていません。
 
@@ -154,14 +154,14 @@ fbdevには、垂直同期の知らせがありません。そこで、次のよ
 `crates/seinas-standalone/tests/with_client.rs` が、次を確かめます。親のWaylandも画面の装置も要らないので、CIで動きます。
 
 1. 偽の画面(640x480)で起動すると、背景が1枚出て、ソケットで待ち受ける。
-2. zeyes-minをつなぐと、そのウィンドウが画面の左上に描かれる(題名の帯の下に、中身が来る)。ポインターは無いままです。
+2. zeyes-minをつなぐと、そのウィンドウが画面の左上に描かれる(タイトルバーの下に、コンテンツが来る)。ポインターは無いままです。
 3. zeyes-minを強制終了すると、ウィンドウが消えて背景に戻り、後始末のスレッドが1本できる。
 4. もう一度つなぐと、同じように描かれる。スレッドは増えない。
 
 描かれたかどうかは、決まった位置のピクセルの色で見ます(目のまわりの緑、白目、目の縁、瞳、ウィンドウの外の背景)。
 待つ時間の上限は、段階ごとに60秒です。条件がそろい次第、すぐ先へ進みます。
 
-題名の帯は `crates/seinas-standalone/tests/title.rs` が、動かす・閉じるの操作は `crates/seinas-standalone/tests/move_close.rs` が、同じやり方で確かめます(中身は `window-placement.md` の「テスト」)。
+タイトルバーは `crates/seinas-standalone/tests/title.rs` が、動かす・閉じるの操作は `crates/seinas-standalone/tests/move_close.rs` が、同じやり方で確かめます(中身は `window-placement.md` の「テスト」)。
 テストは、`tools/fetch-fonts.sh` が置いたフォントを使います。
 
 ## 使うシステムコール
@@ -249,7 +249,7 @@ M3では、クライアントも別のプロセスとして動きます。musl�
 
 ## muslでの静的ビルドの記録
 
-`tools/build-musl.sh` は、seinas-standaloneも静的PIEとして作ります。`tools/elf-report.sh` の出力です(2026-10-05。題名の帯と、動かす・閉じるの操作を組み込んだ後)。
+`tools/build-musl.sh` は、seinas-standaloneも静的PIEとして作ります。`tools/elf-report.sh` の出力です(2026-10-05。タイトルバーと、動かす・閉じるの操作を組み込んだ後)。
 
 ```
 == seinas-standalone
@@ -283,7 +283,7 @@ Program Headers:
 | 時点 | 実行ファイル | stripしたとき |
 | --- | --- | --- |
 | 文字を描く部分を組み込む前 | 3,952,864 | 3,017,424 |
-| 題名の帯を組み込んだ後 | 7,227,488 | 5,675,920 |
+| タイトルバーを組み込んだ後 | 7,227,488 | 5,675,920 |
 | 動かす・閉じるの操作と、テスト用の入力インターフェースを組み込んだ後 | 7,610,096 | 5,942,576 |
 
 文字を描く部分で増えたぶんの中身は、`text-rendering.md` にあります。

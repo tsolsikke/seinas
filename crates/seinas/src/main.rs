@@ -16,9 +16,9 @@
 //!   layer-shell を見せる(`docs/adr/0002-shell-components.md`)。
 //! - IME のためのソケットは `seinas-0-ime`。ここからつないだクライアントにだけ、input-method と virtual-keyboard を
 //!   見せる(`docs/adr/0004-ime-keyboard-path.md` の 1.6)。
-//! - `SEINAS_FONTS`: フォントの置き場(題名を描くのに使う)。引数 `--fonts DIR` でも指定できる。どちらも
+//! - `SEINAS_FONTS`: フォントの置き場(タイトルを描くのに使う)。引数 `--fonts DIR` でも指定できる。どちらも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
-//!   (題名の文字が出ないだけ)。
+//!   (タイトルの文字が出ないだけ)。
 //!
 //! 引数:`--fonts DIR`、`--font-config PATH`(フォントの設定)、`--config PATH`(Seinas の設定。ウィンドウの切り替えの
 //! キーなど。無ければ `$XDG_CONFIG_HOME/seinas/seinas.conf`)、`--log-keys`(届いたキーをログに出す)。

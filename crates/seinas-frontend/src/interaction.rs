@@ -15,7 +15,7 @@ use crate::{
 
 /// 左のボタンの番号(Linuxの入力の決まり)。動かす・閉じる操作は、このボタンだけで行う。
 pub const LEFT_BUTTON: u32 = 0x110;
-/// 帯を押してから、これだけ(ピクセル)動くまでは、ウィンドウを動かさない。手前に出すだけのつもりで
+/// タイトルバーを押してから、これだけ(ピクセル)動くまでは、ウィンドウを動かさない。raise するだけのつもりで
 /// 押したときに、ずれないようにする。
 pub const DRAG_SLACK: f64 = 4.0;
 /// 最大化しているウィンドウのタイトルバーを押してから、これだけ(ピクセル)動いたら、元の大きさに戻して動かし
@@ -32,7 +32,7 @@ pub const DOUBLE_CLICK_MS: u32 = 500;
 /// ウィンドウの中の部分。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
-    /// クライアントが描く中身。
+    /// クライアントが描くコンテンツ。
     Content,
     /// タイトルバー(ボタンを除く)。
     Bar,
@@ -139,9 +139,9 @@ pub enum Command {
 /// ボタンを押している間の状態。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Grab {
-    /// 何も掴んでいない。
+    /// 何も grab していない。
     None,
-    /// 帯を掴んでいる。
+    /// タイトルバーを grab している。
     Bar {
         window: WindowId,
         /// 押した点と、そのときのウィンドウの位置。
@@ -168,7 +168,7 @@ enum Grab {
         /// 最後に configure で伝えた、コンテンツの大きさ。
         size: Size,
     },
-    /// 中身(か、何も無い所)を押している。ポインターの知らせは、クライアントへ渡す。
+    /// コンテンツ(か、何も無い所)を押している。ポインターの知らせは、クライアントへ渡す。
     Client {
         /// 押されているボタンの数。
         buttons: u32,
@@ -178,7 +178,7 @@ enum Grab {
 /// ポインターの知らせを、だれに渡すか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Deliver {
-    /// ポインターの下にあるウィンドウの中身へ、いつもどおり渡す。
+    /// ポインターの下にあるウィンドウのコンテンツへ、いつもどおり渡す。
     ToClient,
     /// だれにも渡さない(Seinasが自分で使った)。
     Nobody,
@@ -189,7 +189,7 @@ pub enum Deliver {
 pub struct Outcome {
     /// 画面を描き直す必要があるか。
     pub redraw: bool,
-    /// 重なる順が変わったか(選ばれているウィンドウが変わったかもしれない)。
+    /// 重なる順が変わったか(activated なウィンドウが変わったかもしれない)。
     pub raised: bool,
     /// ウィンドウに対してすること(閉じるように頼む、最小化、最大化と元に戻す)。
     pub command: Option<(WindowId, Command)>,
@@ -387,7 +387,7 @@ impl Interaction {
                         ))
                     })
                 else {
-                    // 掴んでいたウィンドウが去った。ボタンを離すまで、何もしない。
+                    // grab していたウィンドウが去った。ボタンを離すまで、何もしない。
                     return outcome;
                 };
                 let (dx, dy) = (point.x - press.x, point.y - press.y);
@@ -473,7 +473,7 @@ impl Interaction {
         }
     }
 
-    /// ポインターが画面の外へ出た。押しているボタンは、離すまで掴んだままにする。
+    /// ポインターが画面の外へ出た。押しているボタンは、離すまで grab したままにする。
     pub fn leave(&mut self) -> Outcome {
         let mut outcome = Outcome::new(Deliver::Nobody);
         self.hover_edges = None;
@@ -508,7 +508,7 @@ impl Interaction {
             self.grab = Grab::Client { buttons: 1 };
             return Outcome::new(Deliver::ToClient);
         };
-        // どのボタンでも、どの部分でも、押したウィンドウを手前に出す。
+        // どのボタンでも、どの部分でも、押したウィンドウを raise する。
         let raised = stack.raise(index);
         let was_hot = self.hot_button(window);
         let mut command = None;
@@ -569,7 +569,7 @@ impl Interaction {
                 };
                 Deliver::Nobody
             }
-            // 帯の上の、左でないボタンは、手前に出すだけ。
+            // タイトルバーの上の、左でないボタンは、raise するだけ。
             Target::Part(Part::Bar | Part::Button(_)) => Deliver::Nobody,
         };
         self.hover = None;
@@ -762,7 +762,7 @@ mod tests {
     use super::*;
 
     const SCREEN: (i32, i32) = (640, 480);
-    /// テストのウィンドウの外形の大きさ(どれも同じ)。帯が24、中身が320x240。
+    /// テストのウィンドウの外枠の大きさ(どれも同じ)。タイトルバーが24、コンテンツが320x240。
     const OUTER: (i32, i32) = (320, 264);
     const RIGHT_BUTTON: u32 = 0x111;
 
@@ -791,7 +791,7 @@ mod tests {
         (x, y).into()
     }
 
-    /// 並びと、操作の状態。知らせを1つずつ送って、結果を見る。
+    /// スタックと、操作の状態。知らせを1つずつ送って、結果を見る。
     struct World {
         stack: Stack<&'static str>,
         interaction: Interaction,
@@ -800,7 +800,7 @@ mod tests {
     }
 
     impl World {
-        /// a(番号0、左上)、b(番号1、(32, 32))の順につないだ並び。手前はb。
+        /// a(番号0、左上)、b(番号1、(32, 32))の順につないだスタック。手前はb。
         fn two() -> Self {
             let mut stack = Stack::default();
             stack.add("a", Rect::from_size(SCREEN.into()));
@@ -859,7 +859,7 @@ mod tests {
                 .id
         }
 
-        /// 名前が `name` のウィンドウの位置と、置き場所の番号。
+        /// 名前が `name` のウィンドウの位置と、スロット番号。
         fn place(&self, name: &str) -> ((i32, i32), Option<usize>) {
             let entry = self.stack.get(self.id(name)).unwrap();
             ((entry.location.x, entry.location.y), entry.slot)
@@ -874,12 +874,12 @@ mod tests {
     fn a_window_has_three_parts() {
         let (location, outer) = ((32, 32).into(), OUTER.into());
         let part = |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, at(x, y));
-        // 帯は、上の24ピクセル。その右の端の24ピクセルが、閉じるボタン。
+        // タイトルバーは、上の24ピクセル。その右の端の24ピクセルが、閉じるボタン。
         assert_eq!(part(32.0, 32.0), Some(Part::Bar));
         assert_eq!(part(327.9, 55.9), Some(Part::Bar));
         assert_eq!(part(328.0, 32.0), Some(Part::Button(TitleButton::Close)));
         assert_eq!(part(351.9, 55.9), Some(Part::Button(TitleButton::Close)));
-        // その下が中身。
+        // その下がコンテンツ。
         assert_eq!(part(32.0, 56.0), Some(Part::Content));
         assert_eq!(part(351.0, 56.0), Some(Part::Content));
         assert_eq!(part(351.9, 295.9), Some(Part::Content));
@@ -892,7 +892,7 @@ mod tests {
     #[test]
     fn dragging_the_bar_moves_the_window_after_a_slack_of_four_pixels() {
         let mut world = World::two();
-        // bの帯(閉じるボタンでない所)を、左のボタンで押す。クライアントには渡さない。
+        // bのタイトルバー(閉じるボタンでない所)を、左のボタンで押す。クライアントには渡さない。
         let pressed = world.press(100.0, 40.0, LEFT_BUTTON);
         assert_eq!(pressed.deliver, Deliver::Nobody);
         assert!(!pressed.redraw, "b is already in front");
@@ -905,7 +905,7 @@ mod tests {
         }
         assert!(!world.interaction.is_moving());
 
-        // 4ピクセル動くと、動き始める。ウィンドウは、押した点からのずれのぶんだけ動く(遊びのぶんも含む)。
+        // 4ピクセル動くと、動き始める。ウィンドウは、押した点からのずれのぶんだけ動く(しきい値のぶんも含む)。
         assert!(world.motion(104.0, 40.0).redraw);
         assert!(world.interaction.is_moving());
         assert_eq!(world.place("b"), ((36, 32), None));
@@ -941,7 +941,7 @@ mod tests {
     #[test]
     fn pressing_the_bar_of_a_window_behind_raises_it_and_starts_a_drag() {
         let mut world = World::two();
-        // aの帯は、bの上にのぞいている。
+        // aのタイトルバーは、bの上にのぞいている。
         let pressed = world.press(100.0, 10.0, LEFT_BUTTON);
         assert!(pressed.raised && pressed.redraw);
         assert_eq!(world.order(), ["a", "b"]);
@@ -958,10 +958,10 @@ mod tests {
     fn a_dragged_window_stays_reachable() {
         let mut world = World::two();
         world.press(100.0, 40.0, LEFT_BUTTON);
-        // 上へ: 帯の上の端は、画面の上の端で止まる。
+        // 上へ: タイトルバーの上の端は、画面の上の端で止まる。
         world.motion(100.0, -200.0);
         assert_eq!(world.place("b").0, (32, 0));
-        // 下へ: 帯の全体が残る。
+        // 下へ: タイトルバーの全体が残る。
         world.motion(100.0, 2000.0);
         assert_eq!(world.place("b").0, (32, 456));
         // 左へ: タイトルバーの右の 120 ピクセル(48 と、ボタン 3 つ分の 72)が残る。右へ: 左の 48 ピクセルが残る。
@@ -996,7 +996,7 @@ mod tests {
     fn the_close_button_works_when_released_on_it() {
         let mut world = World::two();
         let b = world.id("b");
-        // bの閉じるボタン(帯の右の端)。
+        // bの閉じるボタン(タイトルバーの右の端)。
         let pressed = world.press(340.0, 40.0, LEFT_BUTTON);
         assert_eq!((pressed.deliver, pressed.close()), (Deliver::Nobody, None));
         assert!(world.interaction.close_button_is_hot(b));
@@ -1069,7 +1069,7 @@ mod tests {
         assert!(!world.interaction.close_button_is_hot(a));
         assert!(!world.interaction.leave().redraw);
 
-        // 帯を掴んで動かしている間は、どのボタンも目立たせない。
+        // タイトルバーを grab して動かしている間は、どのボタンも目立たせない。
         world.press(100.0, 40.0, LEFT_BUTTON);
         world.motion(310.0, 10.0);
         assert!(!world.interaction.close_button_is_hot(a));
@@ -1079,7 +1079,7 @@ mod tests {
     #[test]
     fn the_content_gets_the_pointer_and_the_bar_does_not() {
         let mut world = World::two();
-        // 中身の上でのボタンは、クライアントへ渡す。押したまま外へ出ても、離すまでは渡し続ける。
+        // コンテンツの上でのボタンは、クライアントへ渡す。押したまま外へ出ても、離すまでは渡し続ける。
         assert_eq!(
             world.press(100.0, 100.0, LEFT_BUTTON).deliver,
             Deliver::ToClient
@@ -1099,7 +1099,7 @@ mod tests {
         world.press(100.0, 100.0, LEFT_BUTTON);
         world.press(100.0, 100.0, RIGHT_BUTTON);
         world.release(100.0, 100.0, LEFT_BUTTON);
-        // まだ右を押しているので、帯の上で左を押しても、掴まない。
+        // まだ右を押しているので、タイトルバーの上で左を押しても、grab しない。
         assert_eq!(
             world.press(100.0, 40.0, LEFT_BUTTON).deliver,
             Deliver::ToClient
@@ -1112,7 +1112,7 @@ mod tests {
         );
         world.release(100.0, 40.0, LEFT_BUTTON);
 
-        // 中身を押すと、奥のウィンドウも手前に出る。
+        // コンテンツを押すと、奥のウィンドウも raise される。
         let pressed = world.press(10.0, 200.0, LEFT_BUTTON);
         assert!(pressed.raised);
         assert_eq!(pressed.deliver, Deliver::ToClient);
@@ -1130,20 +1130,20 @@ mod tests {
         let b = world.id("b");
         // 何も押していないときの頼みは、受けない。
         assert!(!world.begin_client_move(b, 100.0, 100.0));
-        // 帯を掴んでいるときの頼みも、受けない。
+        // タイトルバーを grab しているときの頼みも、受けない。
         world.press(100.0, 40.0, LEFT_BUTTON);
         assert!(!world.begin_client_move(b, 100.0, 40.0));
         world.release(100.0, 40.0, LEFT_BUTTON);
         assert_eq!(world.place("b"), ((32, 32), Some(1)));
 
-        // 中身を押している間の頼みは、受ける。頼みが届くまでの間に動いたぶんは、受けたときに動く。
+        // コンテンツを押している間の頼みは、受ける。頼みが届くまでの間に動いたぶんは、受けたときに動く。
         world.press(100.0, 100.0, LEFT_BUTTON);
         world.motion(102.0, 100.0);
         assert_eq!(world.place("b"), ((32, 32), Some(1)));
         assert!(world.begin_client_move(b, 100.0, 100.0));
         assert!(world.interaction.is_moving());
         assert_eq!(world.place("b"), ((34, 32), None));
-        // 遊びは無く、1ピクセルでも動く。知らせは、クライアントには渡さない。
+        // しきい値は無く、1ピクセルでも動く。知らせは、クライアントには渡さない。
         let moved = world.motion(101.0, 100.0);
         assert_eq!((moved.redraw, moved.deliver), (true, Deliver::Nobody));
         assert_eq!(world.place("b"), ((33, 32), None));

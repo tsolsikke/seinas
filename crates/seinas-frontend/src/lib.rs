@@ -151,7 +151,7 @@ pub struct Config {
     pub pointer: bool,
     /// seat にキーボードを足すときの keymap。キーボードを扱わない構成ではNone。
     pub keyboard: Option<KeyboardConfig>,
-    /// フォントの置き場。題名を描くのに使う。読めなくても動く(題名の文字が出ないだけ)。
+    /// フォントの置き場。タイトルを描くのに使う。読めなくても動く(タイトルの文字が出ないだけ)。
     pub font_dir: PathBuf,
     /// フォントの設定のファイル(`--font-config`)。Noneなら、既定の場所(ADR 0003)。
     pub font_config: Option<PathBuf>,
@@ -251,12 +251,12 @@ pub struct Frontend<D: SeatHandler> {
     /// 使える範囲(画面から、layer surface の exclusive zone を除いた矩形)。layer surface が変わったときに
     /// 求め直す。
     pub usable: Rect,
-    /// ウィンドウの並び。先頭がいちばん手前で、それだけが「選ばれている(activated)」。
-    /// 置き場所は、題名の帯を含めた外形の左上。
+    /// ウィンドウのスタック。先頭がいちばん手前で、それだけが「activated」。
+    /// スロットは、タイトルバーを含めた外枠の左上。
     pub windows: Stack<ToplevelSurface>,
-    /// 題名を描くもの。
+    /// タイトルを描くもの。
     pub text: TextPainter,
-    /// 作った題名の帯の絵。ウィンドウ(の画面)ごとに覚えておく。
+    /// 作ったタイトルバーの絵。ウィンドウ(の画面)ごとに覚えておく。
     pub title_bars: HashMap<ObjectId, TitleBar>,
     /// ポインターでの操作(動かす、閉じる、サイズ変更)の状態。
     pub interaction: Interaction,
@@ -321,9 +321,9 @@ impl<D: FrontendHost> Frontend<D> {
         }
     }
 
-    /// 新しいウィンドウを、いちばん手前に加える。置き場所は、使える範囲の中で、前のものからずらして決める。
+    /// 新しいウィンドウを、いちばん手前に加える。スロットは、使える範囲の中で、前のものからずらして決める。
     ///
-    /// 新しいウィンドウが「選ばれている」ものになり、前のものからは外れる。新しいウィンドウへの
+    /// 新しいウィンドウが activated なものになり、前のものからは外れる。新しいウィンドウへの
     /// 最初のconfigureは、呼ぶ側が送る。
     pub fn add_window(&mut self, toplevel: ToplevelSurface) {
         self.windows.add(toplevel, self.usable);
@@ -437,9 +437,9 @@ impl<D: FrontendHost> Frontend<D> {
         true
     }
 
-    /// 去ったウィンドウを、並びから外す。その下にあったものが見えるようになる。
+    /// 去ったウィンドウを、スタックから外す。その下にあったものが見えるようになる。
     ///
-    /// 去ったのがいちばん手前なら、その下にあったものが「選ばれている」ものになる。
+    /// 去ったのがいちばん手前なら、その下にあったものが activated なものになる。
     pub fn remove_window(&mut self, toplevel: &ToplevelSurface) {
         if let Some(window) = self
             .windows
@@ -904,7 +904,7 @@ impl<D: FrontendHost> Frontend<D> {
         Some((popup.wl_surface().clone(), location))
     }
 
-    /// 画面の上の点 `point` にある、いちばん手前のウィンドウの中身。その画面と、中身の左上の位置を返す。
+    /// 画面の上の点 `point` にある、いちばん手前のウィンドウのコンテンツ。その画面と、コンテンツの左上の位置を返す。
     ///
     /// 点がタイトルバーの上にあるときは、Noneを返す(タイトルバーはSeinasのもので、クライアントには渡さない)。
     pub fn window_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
@@ -1017,7 +1017,7 @@ impl<D: FrontendHost> Frontend<D> {
         // 最小化しているウィンドウは描かない(Alt+Tab の候補として見せているものは描く)。
         for (window, active) in self.windows.iter_shown() {
             let surface = window.item.wl_surface();
-            // まだ絵を出していないウィンドウには、帯も付けない。
+            // まだ絵を出していないウィンドウには、タイトルバーも付けない。
             if let Some(content) = content_size(&window.item) {
                 let text = toplevel_title(&window.item);
                 let look = TitleLook {
@@ -1178,8 +1178,8 @@ pub enum PointerInput {
 
 /// ポインターの知らせを処理する。`time` は、起動からの時間(ミリ秒)。
 ///
-/// 押した所のウィンドウを手前に出し、題名の帯と閉じるボタンの上での操作(動かす、閉じる)はSeinasが
-/// 自分で行い、それ以外は、ポインターの下にあるウィンドウの中身へ渡す。席(wl_seat)を公開して
+/// 押した所のウィンドウを raise し、タイトルバーと閉じるボタンの上での操作(動かす、閉じる)はSeinasが
+/// 自分で行い、それ以外は、ポインターの下にあるウィンドウのコンテンツへ渡す。席(wl_seat)を公開して
 /// いない構成では、何もしない。
 pub fn pointer_input<D>(state: &mut D, input: PointerInput, time: u32)
 where
@@ -1766,7 +1766,7 @@ fn toplevel_names(toplevel: &ToplevelSurface) -> (String, String) {
     })
 }
 
-/// 題名の帯に出す文字。クライアントが付けた題名、無ければapp_id、それも無ければ空。
+/// タイトルバーに出す文字。クライアントが付けたタイトル、無ければapp_id、それも無ければ空。
 fn toplevel_title(toplevel: &ToplevelSurface) -> String {
     with_states(toplevel.wl_surface(), |states| {
         let data = states
@@ -1909,19 +1909,19 @@ macro_rules! delegate_frontend {
             }
             fn new_toplevel(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 let frontend = $crate::FrontendHost::frontend_mut(self);
-                // 中身に使える大きさ(画面から、題名の帯のぶんを引いたもの)を伝える。
+                // コンテンツに使える大きさ(画面から、タイトルバーのぶんを引いたもの)を伝える。
                 let size = $crate::content_size_for(frontend.usable.size);
                 let size = $crate::smithay::utils::Size::from((size.w, size.h));
                 frontend.output.enter(surface.wl_surface());
                 surface.with_pending_state(|state| {
                     state.size = Some(size);
                 });
-                // 並びに加えると、このウィンドウが「選ばれている」ものになる。その状態も、最初の
+                // スタックに加えると、このウィンドウが activated なものになる。その状態も、最初の
                 // configureで一緒に伝える。
                 frontend.add_window(surface.clone());
                 surface.send_configure();
                 $crate::log_new_toplevel();
-                // 前に手前だったウィンドウの帯の色が変わる。
+                // 前に手前だったウィンドウのタイトルバーの色が変わる。
                 $crate::changed(self);
             }
             fn move_request(
@@ -1993,7 +1993,7 @@ macro_rules! delegate_frontend {
                 toplevel: $crate::smithay::wayland::shell::xdg::ToplevelSurface,
                 _mode: $crate::smithay::reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode,
             ) {
-                // クライアントが自分で描きたいと言っても、帯はSeinasが描く。
+                // クライアントが自分で描きたいと言っても、タイトルバーはSeinasが描く。
                 $crate::FrontendHost::frontend(self).decorate_on_server_side(&toplevel);
             }
             fn unset_mode(&mut self, toplevel: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {

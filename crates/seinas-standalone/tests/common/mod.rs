@@ -33,14 +33,14 @@ pub const SKIN: [u8; 3] = [0x6a, 0xb0, 0x5c];
 pub const SCLERA: [u8; 3] = [0xff, 0xff, 0xff];
 pub const OUTLINE: [u8; 3] = [0x10, 0x10, 0x10];
 pub const PUPIL: [u8; 3] = [0x14, 0x0e, 0x0a];
-/// 題名の帯。選ばれているウィンドウのものと、そうでないもの。
+/// タイトルバー。activated なウィンドウのものと、そうでないもの。
 pub const ACTIVE_BAR: [u8; 3] = [0x2f, 0x6f, 0xb5];
 pub const INACTIVE_BAR: [u8; 3] = [0x4a, 0x50, 0x5c];
-/// 題名の帯の高さ。ウィンドウの中身は、この下に置かれる。
+/// タイトルバーの高さ。ウィンドウのコンテンツは、この下に置かれる。
 pub const BAR: usize = 24;
-/// 帯の左右の端から、題名までの空き。
+/// タイトルバーの左右の端から、タイトルまでの空き。
 pub const TITLE_PADDING: usize = 8;
-/// 閉じるボタンの大きさ。帯の右の端に、正方形で置かれる。
+/// 閉じるボタンの大きさ。タイトルバーの右の端に、正方形で置かれる。
 pub const CLOSE_BUTTON: usize = 24;
 /// タイトルバーの右の端のボタンの幅(シェルの部品が無いときの、最大化と閉じるの 2 つ)。
 pub const BUTTONS: usize = 2 * CLOSE_BUTTON;
@@ -233,10 +233,10 @@ impl Shot {
 pub const ZEYES_WIDTH: usize = 320;
 pub const ZEYES_HEIGHT: usize = 240;
 
-/// 外形の左上が(`x0`, `y0`)にあるzeyes-minのウィンドウの中身が、全体が見える形で描かれているか。
-/// 中身は、題名の帯の下にある。
+/// 外枠の左上が(`x0`, `y0`)にあるzeyes-minのウィンドウのコンテンツが、全体が見える形で描かれているか。
+/// コンテンツは、タイトルバーの下にある。
 ///
-/// 目のまわりの色は `skin`。ポインターが無いとき、目玉はウィンドウの中央を見る。左の目玉は中身の中の
+/// 目のまわりの色は `skin`。ポインターが無いとき、目玉はウィンドウの中央を見る。左の目玉はコンテンツの中の
 /// (114, 120)、右の目玉は(206, 120)に来る。
 pub fn shows_zeyes_at(shot: &Shot, x0: usize, y0: usize, skin: [u8; 3]) -> bool {
     let at = |x: usize, y: usize| shot.pixel(x0 + x, y0 + BAR + y);
@@ -254,16 +254,16 @@ pub fn shows_zeyes(shot: &Shot) -> bool {
     shows_zeyes_at(shot, 0, 0, SKIN) && shot.pixel(WIDTH - 1, HEIGHT - 1) == BACKGROUND
 }
 
-/// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの、題名の帯の色。
+/// 外枠の左上が(`x0`, `y0`)、幅が `width` のウィンドウの、タイトルバーの色。
 ///
-/// 帯の右の端(閉じるボタンの隅。題名の文字も「×」の印も来ない所)の、上と下のピクセルを見る。
+/// タイトルバーの右の端(閉じるボタンの隅。タイトルの文字も「×」の印も来ない所)の、上と下のピクセルを見る。
 /// 色がそろっていなければNone。ポインターが閉じるボタンの上にあるときは、ボタンの地の色になる。
 pub fn bar_color(shot: &Shot, x0: usize, y0: usize, width: usize) -> Option<[u8; 3]> {
     let top = shot.pixel(x0 + width - 2, y0);
     (top == shot.pixel(x0 + width - 2, y0 + BAR - 1)).then_some(top)
 }
 
-/// 外形の左上が(`x0`, `y0`)、幅が `width` のウィンドウの帯の中で、帯の色でないピクセル(題名の文字)の位置。
+/// 外枠の左上が(`x0`, `y0`)、幅が `width` のウィンドウのタイトルバーの中で、タイトルバーの色でないピクセル(タイトルの文字)の位置。
 /// 位置は、タイトルバーの左上を原点にした(x, y)。右の端のボタン(最大化と閉じる)は、見ない。
 pub fn title_ink(shot: &Shot, x0: usize, y0: usize, width: usize) -> Vec<(usize, usize)> {
     let Some(bar) = bar_color(shot, x0, y0, width) else {

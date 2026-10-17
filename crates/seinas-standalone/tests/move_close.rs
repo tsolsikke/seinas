@@ -1,15 +1,15 @@
-//! ウィンドウを、題名の帯のドラッグで動かせること、閉じるボタンで閉じられることを、ピクセルで確かめる。
+//! ウィンドウを、タイトルバーのドラッグで動かせること、閉じるボタンで閉じられることを、ピクセルで確かめる。
 //!
 //! 決まり(`docs/window-placement.md`):
-//! - 帯を左のボタンで掴んで動かすと、ウィンドウが付いてくる。押してから4ピクセル動くまでは、動かない。
-//! - 画面の外へは、帯をもう一度掴める範囲までしか出せない。
-//! - 動かしたウィンドウは、置き場所の番号を手放す。
-//! - 閉じるボタン(帯の右の端の24x24)を押して、その上で離すと、クライアントに閉じるように頼む。
+//! - タイトルバーを左のボタンで grab して動かすと、ウィンドウが付いてくる。押してから4ピクセル動くまでは、動かない。
+//! - 画面の外へは、タイトルバーをもう一度 grab できる範囲までしか出せない。
+//! - 動かしたウィンドウは、スロット番号を手放す。
+//! - 閉じるボタン(タイトルバーの右の端の24x24)を押して、その上で離すと、クライアントに閉じるように頼む。
 //!   外へ出して離すと、取り消し。奥のウィンドウのボタンも、見えていれば1回で効く。
 //! - クライアントから頼まれた移動は、そのクライアントの上でボタンが押されている間だけ受ける。
 //!
 //! ポインターの知らせは、seinas-standaloneのテスト用の入力インターフェース(`--test-input`)から送る。
-//! テスト用のクライアント(`test-client window`)のウィンドウは、中身が200x150の橙。
+//! テスト用のクライアント(`test-client window`)のウィンドウは、コンテンツが200x150の橙。
 
 mod common;
 
@@ -18,12 +18,12 @@ use common::{
     HEIGHT, HOT_CLOSE_BUTTON, INACTIVE_BAR, WIDTH,
 };
 
-/// テスト用のクライアントのウィンドウの、中身の大きさと色(橙)。
+/// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const WINDOW_HEIGHT: usize = 150;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 
-/// 外形の左上が(`x0`, `y0`)にあるテスト用のウィンドウが、帯の色 `bar` で、全体が見える形で描かれているか。
+/// 外枠の左上が(`x0`, `y0`)にあるテスト用のウィンドウが、タイトルバーの色 `bar` で、全体が見える形で描かれているか。
 fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
     bar_color(shot, x0, y0, WINDOW_WIDTH) == Some(bar)
         && shot.pixel(x0, y0) == bar
@@ -31,7 +31,7 @@ fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
         && shot.pixel(x0 + WINDOW_WIDTH - 1, y0 + BAR + WINDOW_HEIGHT - 1) == ORANGE
 }
 
-/// 外形の左上が(`x0`, `y0`)にあるウィンドウの、閉じるボタンの中央。
+/// 外枠の左上が(`x0`, `y0`)にあるウィンドウの、閉じるボタンの中央。
 fn close_button(x0: usize, y0: usize) -> (usize, usize) {
     (x0 + WINDOW_WIDTH - CLOSE_BUTTON / 2, y0 + BAR / 2)
 }
@@ -69,16 +69,16 @@ fn dragging_the_title_bar_moves_the_window() {
         shows_window(shot, 0, 0, ACTIVE_BAR)
     });
 
-    // 帯を押して、3ピクセルだけ動かして離す: 動かない(4ピクセルの遊び)。
+    // タイトルバーを押して、3ピクセルだけ動かして離す: 動かない(4ピクセルのしきい値)。
     drag(&mut seinas, (100, 10), (103, 10));
-    // 帯を押して、(50, 50)だけ動かす: ウィンドウも、ちょうど同じだけ動く。上の操作で少しでも
+    // タイトルバーを押して、(50, 50)だけ動かす: ウィンドウも、ちょうど同じだけ動く。上の操作で少しでも
     // ずれていれば、ここで位置が合わなくなる。押す所は、ダブルクリックにならないよう、前の所から離す。
     drag(&mut seinas, (110, 10), (160, 60));
     seinas.wait_for_screen("the window moved by (50, 50)", |shot| {
         shows_window(shot, 50, 50, ACTIVE_BAR) && shot.pixel(2, 2) == BACKGROUND
     });
 
-    // 動かしている途中も、ポインターに付いてくる。遊びを超えた後は、遊びのぶんも含めて動く。
+    // 動かしている途中も、ポインターに付いてくる。しきい値を超えた後は、しきい値のぶんも含めて動く。
     motion(&mut seinas, 150, 60);
     seinas.pointer("press");
     motion(&mut seinas, 153, 60);
@@ -92,15 +92,15 @@ fn dragging_the_title_bar_moves_the_window() {
     });
     seinas.pointer("release");
 
-    // 離した後は、ポインターを動かしても、付いてこない。もう一度掴むと、また動く。
+    // 離した後は、ポインターを動かしても、付いてこない。もう一度 grab すると、また動く。
     motion(&mut seinas, 400, 400);
     drag(&mut seinas, (160, 200), (170, 210));
     seinas.wait_for_screen("the window moved again from where it was left", |shot| {
         shows_window(shot, 160, 200, ACTIVE_BAR)
     });
 
-    // 帯の上で押したボタンは、クライアントには届いていない。中身の上で押すと、届く。
-    // 位置は、中身の左上を原点にしたもの。
+    // タイトルバーの上で押したボタンは、クライアントには届いていない。コンテンツの上で押すと、届く。
+    // 位置は、コンテンツの左上を原点にしたもの。
     click(&mut seinas, 160 + 20, 200 + BAR + 30);
     let mut seen = Vec::new();
     loop {
@@ -130,11 +130,11 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
     seinas.wait_for_screen("the window at the top left", |shot| {
         shows_window(shot, 0, 0, ACTIVE_BAR)
     });
-    // 帯の(100, 10)を掴んだまま、あちこちへ引っ張る。
+    // タイトルバーの(100, 10)を grab したまま、あちこちへ引っ張る。
     motion(&mut seinas, 100, 10);
     seinas.pointer("press");
 
-    // 右下へ: 帯の全体が、画面の下の端に残る。横は、帯の左の48ピクセルが残る。
+    // 右下へ: タイトルバーの全体が、画面の下の端に残る。横は、タイトルバーの左の48ピクセルが残る。
     motion(&mut seinas, 5000, 5000);
     let (left, top) = (WIDTH - 48, HEIGHT - BAR);
     seinas.wait_for_screen("the bar kept at the bottom right", |shot| {
@@ -164,7 +164,7 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
     });
     seinas.pointer("release");
 
-    // 外へ出した後でも、残った帯を掴んで、引き戻せる。
+    // 外へ出した後でも、残ったタイトルバーを grab して、引き戻せる。
     drag(&mut seinas, (300, 110), (-5000, 110));
     seinas.wait_for_screen("the window pushed to the left edge", |shot| {
         shot.pixel(119, 100) == ACTIVE_BAR && shot.pixel(120, 100) == BACKGROUND
@@ -190,18 +190,18 @@ fn a_moved_window_gives_up_its_slot() {
         shows_window(shot, 300, 200, ACTIVE_BAR) && shot.pixel(2, 2) == BACKGROUND
     });
 
-    // 次のウィンドウは、空いた置き場所0(左上)に入る。動かしたウィンドウは、動かした先に残る。
+    // 次のウィンドウは、空いたスロット0(左上)に入る。動かしたウィンドウは、動かした先に残る。
     let second = connect(&seinas, &["--title", "second"]);
     seinas.wait_for_screen("the second window at the top left", |shot| {
         shows_window(shot, 0, 0, ACTIVE_BAR) && shows_window(shot, 300, 200, INACTIVE_BAR)
     });
-    // その次は、置き場所1。
+    // その次は、スロット1。
     let _third = connect(&seinas, &["--title", "third"]);
     seinas.wait_for_screen("the third window at the next slot", |shot| {
         shows_window(shot, 32, 32, ACTIVE_BAR) && shows_window(shot, 300, 200, INACTIVE_BAR)
     });
 
-    // 動かさずに帯を押しただけのウィンドウ(2つ目。手前に出る)は、番号を持ったまま。去ると、
+    // 動かさずにタイトルバーを押しただけのウィンドウ(2つ目。raise される)は、番号を持ったまま。去ると、
     // 次のウィンドウが、その番号0に入る。
     click(&mut seinas, 10, 10);
     seinas.wait_for_screen("the second window raised", |shot| {
@@ -232,7 +232,7 @@ fn the_close_button_asks_the_client_to_close() {
     motion(&mut seinas, x as i32, y as i32);
     seinas.wait_for_screen("the hot close button", |shot| {
         bar_color(shot, 32, 32, WINDOW_WIDTH) == Some(HOT_CLOSE_BUTTON)
-            // ボタンの左の端までが赤で、その手前は帯の色。
+            // ボタンの左の端までが赤で、その手前はタイトルバーの色。
             && shot.pixel(32 + WINDOW_WIDTH - CLOSE_BUTTON, 40) == HOT_CLOSE_BUTTON
             && shot.pixel(32 + WINDOW_WIDTH - CLOSE_BUTTON - 1, 40) == ACTIVE_BAR
             && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
@@ -304,7 +304,7 @@ fn a_client_may_ask_to_be_moved_while_a_button_is_held_on_it() {
     let mut client = connect(&seinas, &["--title", "mover", "--move-on-press"]);
     seinas.wait_for_screen("the window", |shot| shows_window(shot, 0, 0, ACTIVE_BAR));
 
-    // 中身の上で押すと、クライアントが、動かしてほしいと頼んでくる。
+    // コンテンツの上で押すと、クライアントが、動かしてほしいと頼んでくる。
     // 頼みが届くのを待たずに動かしても、押した点からのずれだけ、ちょうど動く。
     motion(&mut seinas, 100, 100);
     seinas.pointer("press");

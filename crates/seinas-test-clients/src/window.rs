@@ -1,19 +1,19 @@
 //! テスト用: ウィンドウを1つ出し、コンポジタから届くconfigureの中身を書き続けるクライアント。
 //!
-//! 行儀のよいクライアントで、止められるまで動き続ける。コンポジタが、どのウィンドウを「選ばれている
-//! (activated)」として知らせているか、題名をどう表示するかを確かめるのに使う。
+//! 行儀のよいクライアントで、止められるまで動き続ける。コンポジタが、どのウィンドウを
+//! activated として知らせているか、タイトルをどう表示するかを確かめるのに使う。
 //!
 //! 引数:
 //!
-//! - `--title TEXT`: 題名を付ける。無ければ、題名を付けない。
+//! - `--title TEXT`: タイトルを付ける。無ければ、タイトルを付けない。
 //! - `--app-id TEXT`: app_idを付ける。無ければ、付けない。
-//! - `--decoration`: 飾り(題名の帯など)をどちらの側で描くかを、xdg-decorationで尋ねる。
+//! - `--decoration`: 飾り(タイトルバーなど)をどちらの側で描くかを、xdg-decorationで尋ねる。
 //! - `--pointer`: 席のポインターを使い、届いた知らせを書く。
 //! - `--keyboard`: seat のキーボードを使い、届いたイベントを書く(`window: keyboard enter`(押されているキーが
 //!   あれば `window: keyboard enter keys 56`)、`window: keyboard leave`、
 //!   `window: key 30 pressed`、`window: modifiers 1 0 0 0`(押されている・ラッチ・ロック・グループ)、
 //!   `window: keymap 大きさ`)。
-//! - `--move-on-press`: 中身の上でボタンが押されたら、ウィンドウを動かしてほしいと頼む(xdg_toplevelのmove)。
+//! - `--move-on-press`: コンテンツの上でボタンが押されたら、ウィンドウを動かしてほしいと頼む(xdg_toplevelのmove)。
 //!   `--pointer` も付けたことになる。
 //! - `--ignore-close`: 閉じるように頼まれても、終わらない(閉じるのに応じないが、ping には pong を返すクライアントの
 //!   まね。保存するかを尋ねているアプリなど)。
@@ -54,7 +54,7 @@
 //! - `window: resized WxH`: `--follow-size` で、新しい大きさの絵を commit したとき。
 //! - `window: pointer enter X Y`、`window: pointer leave`、`window: pointer motion X Y`、
 //!   `window: pointer button 0x110 pressed`(または `released`): ポインターの知らせ(`--pointer` を付けたとき)。
-//!   位置は、中身の左上を原点にしたピクセル。
+//!   位置は、コンテンツの左上を原点にしたピクセル。
 //! - `window: close`: 閉じるように頼まれたとき(xdg_toplevel.close)。`--ignore-close` が無ければ、
 //!   これを書いて終わる。
 

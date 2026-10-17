@@ -1,8 +1,8 @@
 //! ウィンドウの飾り。上に付けるタイトルバーと、その右の端のボタン(最小化、最大化と元に戻す、閉じる)。
 //!
-//! 帯は、Seinasの側で描く(クライアントには、xdg-decorationで「サーバーの側で飾りを描く」と伝える)。
-//! ここにあるのは、大きさと位置の計算と、帯の絵(バイト列)を作る所だけで、土台(Smithay)を使わない。
-//! 帯の絵を描画の要素にする所は `title_bar.rs` にある。
+//! タイトルバーは、Seinasの側で描く(クライアントには、xdg-decorationで「サーバーの側で飾りを描く」と伝える)。
+//! ここにあるのは、大きさと位置の計算と、タイトルバーの絵(バイト列)を作る所だけで、土台(Smithay)を使わない。
+//! タイトルバーの絵を描画の要素にする所は `title_bar.rs` にある。
 //! 決まりの説明は `docs/window-placement.md` にある。
 
 use std::path::Path;
@@ -12,31 +12,31 @@ use tracing::{info, warn};
 
 use crate::geometry::{Point, Rect, Size};
 
-/// 題名の帯の高さ(ピクセル)。
+/// タイトルバーの高さ(ピクセル)。
 pub const TITLE_BAR_HEIGHT: i32 = 24;
-/// 題名の文字の大きさ(ピクセル)。
+/// タイトルの文字の大きさ(ピクセル)。
 pub const TITLE_SIZE: f32 = DEFAULT_SIZE;
-/// 帯の左右の端から、題名までの空き(ピクセル)。
+/// タイトルバーの左右の端から、タイトルまでの空き(ピクセル)。
 pub const TITLE_PADDING: i32 = 8;
 /// タイトルバーのボタンの大きさ(ピクセル)。タイトルバーの右の端から、タイトルバーと同じ高さの正方形で並べる。
 pub const TITLE_BUTTON_SIZE: i32 = TITLE_BAR_HEIGHT;
-/// 閉じるボタンの大きさ(ピクセル)。帯の右の端に、帯と同じ高さの正方形で置く。
+/// 閉じるボタンの大きさ(ピクセル)。タイトルバーの右の端に、タイトルバーと同じ高さの正方形で置く。
 pub const CLOSE_BUTTON_SIZE: i32 = TITLE_BUTTON_SIZE;
 /// 最小化と最大化の印の大きさ(ピクセル)。ボタンの中央に描く。
 const MARK_SIZE: i32 = 10;
 /// 閉じるボタンの「×」の印の大きさ(ピクセル)。ボタンの中央に描く。
 const CLOSE_MARK_SIZE: i32 = 10;
-/// ウィンドウを動かしても、帯のうち、横にこれだけ(ピクセル)は画面の中に残す。帯をもう一度掴めるようにする。
+/// ウィンドウを動かしても、タイトルバーのうち、横にこれだけ(ピクセル)は画面の中に残す。タイトルバーをもう一度 grab できるようにする。
 /// 左へ出すときは、右の端のボタン(いちばん多いときの 3 つ)の分を足して残す。
 pub const MIN_VISIBLE_BAR: i32 = 48;
 /// タイトルバーのボタンが、いちばん多いとき(最小化、最大化、閉じる)の幅。
 pub const MAX_BUTTONS_WIDTH: i32 = 3 * TITLE_BUTTON_SIZE;
 
 // 色は (赤, 緑, 青)。
-/// 選ばれているウィンドウの、帯と題名の色。
+/// activated なウィンドウの、タイトルバーとタイトルの色。
 pub const ACTIVE_BAR: [u8; 3] = [0x2f, 0x6f, 0xb5];
 pub const ACTIVE_TITLE: [u8; 3] = [0xff, 0xff, 0xff];
-/// 選ばれていないウィンドウの、帯と題名の色。
+/// activated でないウィンドウの、タイトルバーとタイトルの色。
 pub const INACTIVE_BAR: [u8; 3] = [0x4a, 0x50, 0x5c];
 pub const INACTIVE_TITLE: [u8; 3] = [0xc8, 0xcc, 0xd4];
 /// ポインターを乗せたときの、閉じるボタンの地と印の色。
@@ -127,17 +127,17 @@ pub struct TitleLook {
     pub unresponsive: bool,
 }
 
-/// 帯を含めた、ウィンドウの外形の大きさ。`content` は、クライアントが描く中身の大きさ。
+/// タイトルバーを含めた、ウィンドウの外枠の大きさ。`content` は、クライアントが描くコンテンツの大きさ。
 pub fn outer_size(content: Size) -> Size {
     (content.w, content.h + TITLE_BAR_HEIGHT).into()
 }
 
-/// 外形の左上が `outer` にあるウィンドウの、中身の左上。中身は、帯の下に置く。
+/// 外枠の左上が `outer` にあるウィンドウの、コンテンツの左上。コンテンツは、タイトルバーの下に置く。
 pub fn content_location(outer: Point) -> Point {
     (outer.x, outer.y + TITLE_BAR_HEIGHT).into()
 }
 
-/// 画面の大きさが `screen` のとき、クライアントに伝える中身の大きさ。帯のぶんだけ低い。
+/// 画面の大きさが `screen` のとき、クライアントに伝えるコンテンツの大きさ。タイトルバーのぶんだけ低い。
 pub fn content_size_for(screen: Size) -> Size {
     (screen.w, (screen.h - TITLE_BAR_HEIGHT).max(1)).into()
 }
@@ -165,7 +165,7 @@ pub fn clamp_outer_location(wanted: Point, width: i32, area: Rect) -> Point {
     (x, y).into()
 }
 
-/// 帯に出す文字を決める。題名があれば題名、無ければapp_id、それも無ければ何も出さない。
+/// タイトルバーに出す文字を決める。タイトルがあればタイトル、無ければapp_id、それも無ければ何も出さない。
 pub fn title_text<'a>(title: Option<&'a str>, app_id: Option<&'a str>) -> &'a str {
     [title, app_id]
         .into_iter()
@@ -177,7 +177,7 @@ pub fn title_text<'a>(title: Option<&'a str>, app_id: Option<&'a str>) -> &'a st
 /// 同梱のフォントの置き場 `dir` と、設定のファイル `config`(Noneなら既定の場所)で、フォントを読む
 /// (ADR 0003)。読めないフォントや、設定の読めない行があっても止まらず、原因をログに出す。
 ///
-/// 1つも読めなければ、題名の文字は出ない(帯だけを描く)。
+/// 1つも読めなければ、タイトルの文字は出ない(タイトルバーだけを描く)。
 pub fn load_fonts(dir: &Path, config: Option<&Path>) -> TextPainter {
     let setup = FontSetup {
         bundled_dir: dir.to_owned(),
@@ -202,7 +202,7 @@ pub fn load_fonts(dir: &Path, config: Option<&Path>) -> TextPainter {
     painter
 }
 
-/// 帯の絵を作る。幅は `width`、高さは [`TITLE_BAR_HEIGHT`]。ピクセルの並びは B, G, R, X。
+/// タイトルバーの絵を作る。幅は `width`、高さは [`TITLE_BAR_HEIGHT`]。ピクセルの並びは B, G, R, X。
 ///
 /// タイトルは左に寄せる。右の端には、`look` のボタンを並べ(右から、閉じる、最大化、最小化)、タイトルは、その手前に
 /// 収める。収まらなければ、末尾を切って「…」を付ける。`look.hot` のボタンは、目立たせて描く。
@@ -339,7 +339,7 @@ fn paint_button(
     }
 }
 
-/// 帯の右の端に、閉じるボタンを描く。`ground` があれば、ボタンの地をその色で塗る。
+/// タイトルバーの右の端に、閉じるボタンを描く。`ground` があれば、ボタンの地をその色で塗る。
 ///
 /// 「×」の印は、フォントが無くても出るように、文字ではなく線で描く。
 fn paint_close_button(pixels: &mut [u8], width: i32, ground: Option<[u8; 3]>, mark: [u8; 3]) {
@@ -391,7 +391,7 @@ mod tests {
             title_text(None, Some("seinas.zeyes-min")),
             "seinas.zeyes-min"
         );
-        // 空の題名は、無いものとして扱う。
+        // 空のタイトルは、無いものとして扱う。
         assert_eq!(
             title_text(Some(""), Some("seinas.zeyes-min")),
             "seinas.zeyes-min"
@@ -413,13 +413,13 @@ mod tests {
         for (active, color) in [(true, ACTIVE_BAR), (false, INACTIVE_BAR)] {
             let pixels = paint_title_bar(&mut painter, "zeyes", 100, active, TitleLook::default());
             assert_eq!(pixels.len(), 100 * TITLE_BAR_HEIGHT as usize * 4);
-            // 閉じるボタンの手前は、帯の色だけ。
+            // 閉じるボタンの手前は、タイトルバーの色だけ。
             assert!((0..TITLE_BAR_HEIGHT)
                 .all(|y| (0..100 - CLOSE_BUTTON_SIZE).all(|x| pixel(&pixels, 100, x, y) == color)));
         }
     }
 
-    /// 帯の絵の(x, y)の色(赤, 緑, 青)。
+    /// タイトルバーの絵の(x, y)の色(赤, 緑, 青)。
     fn pixel(pixels: &[u8], width: i32, x: i32, y: i32) -> [u8; 3] {
         let at = ((y * width + x) * 4) as usize;
         [pixels[at + 2], pixels[at + 1], pixels[at]]
@@ -431,7 +431,7 @@ mod tests {
         let width = 100;
         let left = width - CLOSE_BUTTON_SIZE;
 
-        // ふだん: 地は帯の色のままで、中央に、題名と同じ色の「×」がある。
+        // ふだん: 地はタイトルバーの色のままで、中央に、タイトルと同じ色の「×」がある。
         let pixels = paint_title_bar(&mut painter, "", width, true, TitleLook::default());
         assert_eq!(pixel(&pixels, width, left, 0), ACTIVE_BAR);
         assert_eq!(
@@ -476,9 +476,9 @@ mod tests {
         };
         // 画面の中なら、そのまま。
         assert_eq!(clamp(100, 50), (100, 50));
-        // 上: 帯の上の端は、画面の上の端より上へ行かない。
+        // 上: タイトルバーの上の端は、画面の上の端より上へ行かない。
         assert_eq!(clamp(100, -30), (100, 0));
-        // 下: 帯の全体が残る(中身は、画面の下へ出てよい)。
+        // 下: タイトルバーの全体が残る(コンテンツは、画面の下へ出てよい)。
         assert_eq!(clamp(100, 456), (100, 456));
         assert_eq!(clamp(100, 470), (100, 456));
         // 左へ: タイトルバーの右の 48 + 72(ボタン 3 つ)= 120 ピクセルが残る。右へ: 左の 48 ピクセルが残る。
@@ -489,7 +489,7 @@ mod tests {
         // 隅でも、両方の限りが働く。
         assert_eq!(clamp(-1000, -1000), (-200, 0));
         assert_eq!(clamp(1000, 1000), (592, 456));
-        // 帯が48ピクセルより短いウィンドウは、帯の全体が残る。
+        // タイトルバーが48ピクセルより短いウィンドウは、タイトルバーの全体が残る。
         let narrow = clamp_outer_location((-100, 10).into(), 30, screen);
         assert_eq!((narrow.x, narrow.y), (0, 10));
         let narrow = clamp_outer_location((700, 10).into(), 30, screen);

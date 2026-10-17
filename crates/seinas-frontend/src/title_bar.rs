@@ -23,7 +23,7 @@ use crate::{
     switcher_view::{paint_switcher, switcher_layout, SwitcherEntry, SwitcherLayout},
 };
 
-/// 1つのウィンドウの帯の絵と、それを作ったときの条件。
+/// 1つのウィンドウのタイトルバーの絵と、それを作ったときの条件。
 pub struct TitleBar {
     text: String,
     width: i32,

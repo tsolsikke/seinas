@@ -22,9 +22,9 @@
 //! - `--ime-socket PATH`: IME のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-ime` を入れたもの
 //!   (`--shell-socket` と同じ形。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、
 //!   input-method と virtual-keyboard を見せる(`docs/adr/0004-ime-keyboard-path.md` の 1.6)。
-//! - `--fonts DIR`: フォントの置き場(題名を描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
+//! - `--fonts DIR`: フォントの置き場(タイトルを描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
-//!   (題名の文字が出ないだけ)。
+//!   (タイトルの文字が出ないだけ)。
 //! - `--config PATH`: Seinas の設定のファイル(ウィンドウの切り替えのキーなど。`docs/config.md`)。無ければ
 //!   `$XDG_CONFIG_HOME/seinas/seinas.conf`。
 //! - `--log-keys`: 届いたキーを、修飾キーと keysym の名前でログに出す(`key: Alt+F6 pressed`)。

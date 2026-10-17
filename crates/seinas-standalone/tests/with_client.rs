@@ -25,7 +25,7 @@ fn a_client_window_is_drawn_on_the_fake_screen_again_after_reconnecting() {
     // ウィンドウの外は、seinasの背景のまま。
     let shot = seinas.shot();
     assert_eq!(shot.pixel(330, 120), BACKGROUND);
-    // 高さは、題名の帯の24と、中身の240。
+    // 高さは、タイトルバーの24と、コンテンツの240。
     assert_eq!(shot.pixel(160, 263), common::SKIN);
     assert_eq!(shot.pixel(160, 264), BACKGROUND);
 

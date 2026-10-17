@@ -1,4 +1,4 @@
-//! ウィンドウの並び(重ね方)と、置き場所の決まり。
+//! ウィンドウのスタック(重ね方)と、スロットの決まり。
 //!
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! 受け口は、`T` をtoplevelにして使う。決まりの説明は `docs/window-placement.md` にある。
@@ -13,7 +13,7 @@ pub fn slot_count(area: Size) -> usize {
     ((area.w.min(area.h) / 2 / CASCADE_STEP).max(1)) as usize
 }
 
-/// 新しいウィンドウの置き場所の番号を決める。
+/// 新しいウィンドウのスロット番号を決める。
 ///
 /// 空いている中で、いちばん小さい番号を選ぶ。全部ふさがっていれば、先頭の番号から順に、もう一度使う
 /// (同じ位置に重なる)。`occupied` は、いまあるウィンドウの番号(動かされて番号を手放したものは入れない)。
@@ -29,15 +29,15 @@ pub fn slot_location(slot: usize, area: Rect) -> Point {
     (area.loc.x + offset, area.loc.y + offset).into()
 }
 
-/// 並びの中のウィンドウを見分ける番号。ウィンドウが去るまで変わらず、使い回さない。
+/// スタックの中のウィンドウを見分ける番号。ウィンドウが去るまで変わらず、使い回さない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct WindowId(u64);
 
-/// 置き場所の決まった、1つのウィンドウ。
+/// スロットの決まった、1つのウィンドウ。
 pub struct Placed<T> {
     pub item: T,
     pub id: WindowId,
-    /// 置き場所の番号。0が左上で、1つ増えるごとに右下へずれる。動かされたウィンドウは、番号を
+    /// スロット番号。0が左上で、1つ増えるごとに右下へずれる。動かされたウィンドウは、番号を
     /// 手放してNoneになる(その番号は、次の新しいウィンドウが使える)。
     pub slot: Option<usize>,
     /// 画面の中での、左上の位置。
@@ -64,9 +64,9 @@ pub struct Restore {
     pub content: Option<Size>,
 }
 
-/// ウィンドウの並び。先頭がいちばん手前。
+/// ウィンドウのスタック。先頭がいちばん手前。
 ///
-/// いちばん手前の1つだけが「選ばれている(activated)」ウィンドウである。
+/// いちばん手前の1つだけが「activated」ウィンドウである。
 pub struct Stack<T> {
     entries: Vec<Placed<T>>,
     /// 次に加えるウィンドウに付ける番号。
@@ -148,7 +148,7 @@ impl<T> Stack<T> {
         self.entries.is_empty()
     }
 
-    /// 新しいウィンドウを、いちばん手前に加える。置き場所は、使える範囲 `area` の中で、前のものから
+    /// 新しいウィンドウを、いちばん手前に加える。スロットは、使える範囲 `area` の中で、前のものから
     /// ずらして決める。
     pub fn add(&mut self, item: T, area: Rect) -> WindowId {
         let occupied: Vec<usize> = self.entries.iter().filter_map(|entry| entry.slot).collect();
@@ -211,7 +211,7 @@ impl<T> Stack<T> {
 
     /// 番号が `id` のウィンドウを、左上が `location` に来るように動かす。位置が変わったらtrue。
     ///
-    /// 動かしたウィンドウは、置き場所の番号を手放す。重なる順は変えない。
+    /// 動かしたウィンドウは、スロット番号を手放す。重なる順は変えない。
     pub fn move_to(&mut self, id: WindowId, location: Point) -> bool {
         let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else {
             return false;
@@ -270,7 +270,7 @@ impl<T> Stack<T> {
         std::mem::replace(&mut entry.minimized, minimized) != minimized
     }
 
-    /// `is_gone` が真を返すウィンドウを、並びから外す。残ったものの順と置き場所は変わらない。
+    /// `is_gone` が真を返すウィンドウを、スタックから外す。残ったものの順とスロットは変わらない。
     pub fn remove(&mut self, is_gone: impl Fn(&T) -> bool) {
         self.entries.retain(|entry| !is_gone(&entry.item));
         if self.preview.is_some_and(|id| self.get(id).is_none()) {
@@ -293,9 +293,9 @@ impl<T> Stack<T> {
         self.position(id)
     }
 
-    /// 手前から `index` 番目のウィンドウを、いちばん手前に出す。順が変わったらtrue。
+    /// 手前から `index` 番目のウィンドウを、raise する。順が変わったらtrue。
     ///
-    /// ほかのウィンドウどうしの順と、どのウィンドウの置き場所も、変えない。
+    /// ほかのウィンドウどうしの順と、どのウィンドウのスロットも、変えない。
     pub fn raise(&mut self, index: usize) -> bool {
         if index == 0 || index >= self.entries.len() {
             return false;
@@ -305,7 +305,7 @@ impl<T> Stack<T> {
         true
     }
 
-    /// 点 `point` にある、いちばん手前のウィンドウを、いちばん手前に出す。順が変わったらtrue。
+    /// 点 `point` にある、いちばん手前のウィンドウを、raise する。順が変わったらtrue。
     ///
     /// すでにいちばん手前のとき、どのウィンドウの上でもないときは、何もしない。
     pub fn raise_at(&mut self, point: PointF, size_of: impl Fn(&T) -> Option<Size>) -> bool {
@@ -337,7 +337,7 @@ mod tests {
         stack.iter().map(|entry| entry.item).collect()
     }
 
-    /// 名前と置き場所の番号・位置。名前の順に並べる(重ねる順とは別に、置き場所だけを比べるため)。
+    /// 名前とスロット番号・位置。名前の順に並べる(重ねる順とは別に、スロットだけを比べるため)。
     fn places(stack: &Stack<&'static str>) -> Vec<(&'static str, Option<usize>, (i32, i32))> {
         let mut places: Vec<_> = stack
             .iter()
@@ -347,7 +347,7 @@ mod tests {
         places
     }
 
-    /// 選ばれているウィンドウの名前(いつも、ちょうど1つか、ウィンドウが無ければ0)。
+    /// activated なウィンドウの名前(いつも、ちょうど1つか、ウィンドウが無ければ0)。
     fn activated(stack: &Stack<&'static str>) -> Vec<&'static str> {
         stack
             .iter_with_activation()
@@ -356,7 +356,7 @@ mod tests {
             .collect()
     }
 
-    /// a(番号0、左上)、b(番号1)、c(番号2)の順につないだ並び。手前から c, b, a。
+    /// a(番号0、左上)、b(番号1)、c(番号2)の順につないだスタック。手前から c, b, a。
     fn three() -> Stack<&'static str> {
         let mut stack = Stack::default();
         for name in ["a", "b", "c"] {
@@ -399,7 +399,7 @@ mod tests {
         assert_eq!(slot_count((1024, 768).into()), 12);
         // どんなに小さい画面でも、1つはある。
         assert_eq!(slot_count((40, 30).into()), 1);
-        // いちばん遠い置き場所でも、左上は、画面の短い辺の半分より手前にある。
+        // いちばん遠いスロットでも、左上は、画面の短い辺の半分より手前にある。
         for (w, h) in [(800, 600), (640, 480), (1024, 768), (600, 800)] {
             let last = slot_location(
                 slot_count((w, h).into()) - 1,
@@ -458,7 +458,7 @@ mod tests {
         let mut stack = three();
         let before = places(&stack);
 
-        // 奥のaを押す: aが手前に出る。cとbの順は、そのまま。
+        // 奥のaを押す: aが raise される。cとbの順は、そのまま。
         assert!(stack.raise_at(at(10.0, 10.0), size));
         assert_eq!(order(&stack), ["a", "c", "b"]);
         assert_eq!(places(&stack), before, "raising must not move any window");
@@ -485,7 +485,7 @@ mod tests {
     #[test]
     fn a_raised_window_keeps_its_slot_for_later_windows() {
         let mut stack = three();
-        // aを手前に出してから、bを外す。空くのはbの番号1で、次のウィンドウはそこに入る。
+        // aを raise してから、bを外す。空くのはbの番号1で、次のウィンドウはそこに入る。
         stack.raise_at(at(10.0, 10.0), size);
         stack.remove(|name| *name == "b");
         stack.add("d", Rect::from_size(SCREEN.into()));
@@ -536,7 +536,7 @@ mod tests {
             ]
         );
 
-        // 当たり判定は、動かした先で行われる。
+        // ヒット判定は、動かした先で行われる。
         assert_eq!(stack.index_at(at(600.0, 430.0), size), stack.position(a));
 
         // 去ったウィンドウは、動かせない。番号は、使い回さない。
@@ -596,11 +596,11 @@ mod tests {
         stack.add("c", Rect::from_size(SCREEN.into()));
         assert_eq!(activated(&stack), ["c"]);
 
-        // 手前に出したとき: 出したものが選ばれる。
+        // raise したとき: 出したものが選ばれる。
         stack.raise_at(at(10.0, 10.0), size);
         assert_eq!(activated(&stack), ["a"]);
 
-        // 奥のものが去っても、選ばれているものは変わらない。
+        // 奥のものが去っても、activated なものは変わらない。
         stack.remove(|name| *name == "b");
         assert_eq!(activated(&stack), ["a"]);
 

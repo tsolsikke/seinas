@@ -3,8 +3,8 @@
 //! テスト用のクライアント(`test-client window`)は、届いたconfigureの中身を標準出力に書く。それを読んで、
 //! つないだとき、手前のウィンドウが去ったとき、奥のウィンドウが去ったときの知らせを確かめる。
 //!
-//! この構成はポインターを扱わないので、クリックで手前に出す操作は、ここでは確かめられない
-//! (並びの決まりは、`seinas-frontend` のユニットテストで確かめている)。
+//! この構成はポインターを扱わないので、クリックで raise する操作は、ここでは確かめられない
+//! (スタックの決まりは、`seinas-frontend` のユニットテストで確かめている)。
 
 mod common;
 
@@ -17,7 +17,7 @@ const NOT_ACTIVATED: &str = "[]";
 fn only_the_front_window_is_told_that_it_is_activated() {
     let mut seinas = Compositor::start("ac");
 
-    // 1つ目(a): つないだときの最初のconfigureで、選ばれていると知らされる。
+    // 1つ目(a): つないだときの最初のconfigureで、activated だと知らされる。
     let a = seinas.connect_test_client(&["window"]);
     assert_eq!(
         a.next_configure_states("the first configure of a"),
