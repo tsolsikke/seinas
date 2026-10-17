@@ -4,7 +4,7 @@
 //! 見るのは `smithay/src/wayland/shm/pool.rs` の2つの仕掛けである。
 //!
 //! - プールを捨てるとき、初回だけ「Shm dropping thread」という名前のスレッドを作り、以後はそこへ
-//!   後始末を送る。スレッドを作れないと `unwrap` で落ちる。
+//!   クリーンアップを送る。スレッドを作れないと `unwrap` で落ちる。
 //! - バッファの中身を読むとき、初回だけSIGBUSのハンドラーを置き換える。クライアントが共有メモリーの
 //!   ファイルを縮めていた場合に、読み出しを失敗として返すためである。
 //!
@@ -289,7 +289,7 @@ fn run(mut observe: impl FnMut(&str)) {
         .expect("the server saw the commit");
     observe("wl_surface.commit with a wl_shm buffer");
 
-    // 描画のために取り込む。PixmanRendererは、ここで初めてバッファの中身に触れる。
+    // 描画のために import する。PixmanRendererは、ここで初めてバッファの中身に触れる。
     let mut renderer = PixmanRenderer::new().expect("pixman renderer");
     let texture = renderer
         .import_shm_buffer(&server_buffer, None, &[])
@@ -319,7 +319,7 @@ fn run(mut observe: impl FnMut(&str)) {
         .expect("the server saw the second commit");
     file.set_len(0).expect("shrink the memfd");
     let read = with_buffer_contents(&server_buffer, |ptr, len, _| {
-        // SAFETY: Smithayが、プールの対応づけ(`len` バイト)の先頭を渡してくる。ファイルが縮んで
+        // SAFETY: Smithayが、プールのマッピング(`len` バイト)の先頭を渡してくる。ファイルが縮んで
         // いても、SIGBUSのハンドラーがその範囲を0で埋めた領域に差し替えるので、読み出しは完了する。
         unsafe { std::ptr::read_volatile(ptr.add(len - 1)) }
     });

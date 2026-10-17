@@ -16,8 +16,8 @@
 //! - `--size WIDTHxHEIGHT`: `--dry-run` のときの画面の大きさ。既定は800x600。
 //! - `--dump FILE`: `--dry-run` で描いた絵を、PPM形式の画像としてファイルに書く。
 //!
-//! 終わるときの後片付け: 始める前の画面の中身を覚えておき、終わるときに書き戻す。
-//! その後、対応づけを外して装置を閉じる。画面の設定(解像度など)は、読むだけで変えない。
+//! 終わるときのクリーンアップ: 始める前の画面の中身を覚えておき、終わるときに書き戻す。
+//! その後、マッピングを外して装置を閉じる。画面の設定(解像度など)は、読むだけで変えない。
 
 use std::{
     error::Error,
@@ -121,7 +121,7 @@ fn show(device: &Path, hold: Duration) -> Result<(), Box<dyn Error>> {
         fb.info().line_length
     );
 
-    // 後片付けのために、始める前の画面の中身を覚えておく。
+    // クリーンアップのために、始める前の画面の中身を覚えておく。
     let before = fb.pixels().to_vec();
 
     let mut painter = Painter::new(layout.width() as i32, layout.height() as i32)?;

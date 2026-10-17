@@ -88,7 +88,7 @@ ZeikOS に何が要るかを見積もるための材料で、Seinas の振る舞
 | 共有メモリー | memfd_create | 0 / 1 / 0 |
 | | ftruncate | 0 / 1 / 0 |
 
-- コンポジタの clone の 2 回のうち 1 回は、`test input` のスレッドの分です。本番の構成では 1 回(shm の後始末のスレッド)です。shrink の記録(`--test-input` なし)では 1 回でした。
+- コンポジタの clone の 2 回のうち 1 回は、`test input` のスレッドの分です。本番の構成では 1 回(shm のクリーンアップのスレッド)です。shrink の記録(`--test-input` なし)では 1 回でした。
 - zeyes-min の epoll・timerfd・read・futex の多さは、16 ms ごとに起きて待ち直していたためです(下の「Seinas の側で軽くできる所」)。
 - musl の静的 PIE なので、`open`・`stat` を使います(`openat`・`newfstatat` ではありません)。
 
@@ -138,7 +138,7 @@ ZeikOS に何が要るかを見積もるための材料で、Seinas の振る舞
 ### futex
 
 - zeyes-min:`FUTEX_WAKE_PRIVATE`(起こす数 2147483647)を 152 回。wayland-client の中の condition variable の notify_all です。スレッドは 1 本なので、いつも 0 人を起こすだけです。
-- コンポジタ:shm の後始末のスレッドが、`FUTEX_WAIT_BITSET_PRIVATE`(値 4294967295、timeout なし、FUTEX_BITSET_MATCH_ANY)で待ちます。今回の記録では、待ったままプロセスごと止められました。
+- コンポジタ:shm のクリーンアップのスレッドが、`FUTEX_WAIT_BITSET_PRIVATE`(値 4294967295、timeout なし、FUTEX_BITSET_MATCH_ANY)で待ちます。今回の記録では、待ったままプロセスごと止められました。
 - WAKE で待っているスレッドを実際に起こす場面(2 つ目のクライアントが切断したとき)は、記録に入っていません。
 
 ### シグナルと SIGBUS の流れ
@@ -151,7 +151,7 @@ ZeikOS に何が要るかを見積もるための材料で、Seinas の振る舞
   3. handler の中で、pool の範囲に `mmap(MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS)` をかぶせる。
   4. `rt_sigreturn` で、読んでいた命令からやり直す(0 のピクセルが読める)。
   5. そのクライアントに protocol error を送って切断する。
-  6. shm の後始末のスレッドを clone で作る。
+  6. shm のクリーンアップのスレッドを clone で作る。
 - 止めるときは、外から SIGTERM を送りました。handler は無いので、既定の動き(プロセスごと終了)で、すべてのスレッドが終わりました。
 
 ### ファイル(フォント)
@@ -205,7 +205,7 @@ ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall
 
 - クライアントがつながって、描画されるまでは、スレッドを使いません。clone は、最初のクライアントが切断するときに起きます。
 - そのため、スレッドの対応が無くても、「つないで描画する」ところまでは動くはずです。
-- ただし、クライアントが切断した時点で、Smithay が shm の後始末のスレッドを作ろうとし、作れないと panic でコンポジタが落ちます。「閉じて終わる」には、スレッドの対応が要ります。
+- ただし、クライアントが切断した時点で、Smithay が shm のクリーンアップのスレッドを作ろうとし、作れないと panic でコンポジタが落ちます。「閉じて終わる」には、スレッドの対応が要ります。
 - shm の縮小と SIGBUS の対応が要るのは、seal を付けずに pool を縮めるクライアントが来たときだけです。SCTK のクライアントは F_SEAL_SHRINK を付けるので、縮めません。
 
 ## Seinas の側で軽くできる所
@@ -214,7 +214,7 @@ ZeikOS のコードは読んでいません。M1・M2 で入ったもの(syscall
 
 - zeyes-min の待ち方:16 ms の timeout つきで待つのを繰り返していて、何も起きていなくても 1 秒に約 60 回起きていました(timerfd_settime・epoll_ctl・epoll_pwait・futex・read が、それぞれ約 150 回)。
   2026-10-08 に、timeout なしで待つ形に変えました。何も起きていない 5 秒間のシステムコールは、1,812 回(epoll_ctl 604、read・futex・timerfd_settime・epoll_pwait が 302 ずつ)から 0 回になりました。上の表の zeyes-min の数は、変える前のものです。
-- shm の後始末のスレッド:Smithay 0.7.0 の作りで、Seinas の側からは止められません。スレッドを使わない構成にするには、Smithay を変えるか、別のバージョンを選ぶ必要があり、ZeikOS のための作りになるので勧めません。ZeikOS の側でスレッドに対応するのが筋だと考えます。
+- shm のクリーンアップのスレッド:Smithay 0.7.0 の作りで、Seinas の側からは止められません。スレッドを使わない構成にするには、Smithay を変えるか、別のバージョンを選ぶ必要があり、ZeikOS のための作りになるので勧めません。ZeikOS の側でスレッドに対応するのが筋だと考えます。
 - epoll の入れ子、ロックファイルと flock:wayland-server と Smithay の作りです。Seinas の側で避けるには特別な作りが要るので、勧めません。
 - フォント:置かなくても動くので、M3 の最初はフォントなしで始められます(変更は要りません)。
 - `--test-input`:M3 では使わないでください(標準入力を読むスレッドが 1 本増えます)。

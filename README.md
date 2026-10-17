@@ -41,25 +41,25 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/golden.md` | 正解データ(golden)のテスト:置き換える前の出力を保存して比べる決まりと、作り直しの手順 |
 | `docs/terminology.md` | 用語と書き方の決まり(IT 用語の使い方と、これまでの言い方との対応表) |
 | `docs/text-rendering.md` | 文字の描き方の決まり(手段、フォント、大きさ)と、手段を比べた記録 |
-| `tools/` | 静的ビルドや、依存の一覧を作るための道具、フォントを取得する手順、releaseの一式を作る手順 |
+| `tools/` | 静的ビルドや、依存の一覧を作るための道具、フォントを取得する手順、releaseのアセットを作る手順 |
 | `trials/` | 採るかどうかを決める前の試し。本体のワークスペースには入れていない |
 | `THIRD-PARTY/` | 第三者のライセンス文と著作権表示、依存の一覧 |
 
 ## ビルドに要るもの
 
-- Rust(版は `rust-toolchain.toml` で固定)
+- Rust(バージョンは `rust-toolchain.toml` で固定)
 - pixmanとlibxkbcommonの開発用ファイル。Ubuntuなら次のとおりです。
 
 ```bash
 sudo apt install libpixman-1-dev libxkbcommon-dev
 ```
 
-依存するクレートの版は `Cargo.lock` で固定しています。ビルドやテストでは `--locked` を付けてください。
+依存するクレートのバージョンは `Cargo.lock` で固定しています。ビルドやテストでは `--locked` を付けてください。
 
 ## フォント
 
 ウィンドウのタイトルを描くのに、フォントのファイルを使います。フォントは、リポジトリにも実行ファイルにも入れていません。
-次のスクリプトで、決まった版を `target/fonts/` に取得します(SHA-256を確かめます)。テストも、このフォントを使います。
+次のスクリプトで、決まったバージョンを `target/fonts/` に取得します(SHA-256を確かめます)。テストも、このフォントを使います。
 
 ```bash
 tools/fetch-fonts.sh

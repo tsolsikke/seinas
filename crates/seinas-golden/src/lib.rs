@@ -240,7 +240,7 @@ fn diff_image(expected: &Image, actual: &Image) -> Image {
 /// フォントが、正解データを作ったときと同じものか。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fonts {
-    /// `tools/fetch-fonts.sh` の版と同じ。中身は、フォントの置き場。
+    /// `tools/fetch-fonts.sh` のバージョンと同じ。中身は、フォントの置き場。
     Ready(PathBuf),
     /// 足りないファイルがある。
     Missing(Vec<String>),

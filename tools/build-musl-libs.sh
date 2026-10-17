@@ -1,5 +1,5 @@
 #!/bin/sh
-# musl向けの静的ライブラリ(libpixman-1.a と libxkbcommon.a)を、版を固定してソースから作る。
+# musl向けの静的ライブラリ(libpixman-1.a と libxkbcommon.a)を、バージョンを固定してソースから作る。
 #
 # 使い方:
 #     tools/build-musl-libs.sh
@@ -7,7 +7,7 @@
 # 要るもの: musl-gcc(musl-tools)、meson、ninja、bison、curl、sha256sum、tar、xz
 # できるもの: target/musl-libs/lib/libpixman-1.a、target/musl-libs/lib/libxkbcommon.a
 #
-# ソースは決まった版を取り、SHA-256が合わなければ止まる。CPU向けの最適化の指定(-march=nativeなど)は
+# ソースは決まったバージョンを取り、SHA-256が合わなければ止まる。CPU向けの最適化の指定(-march=nativeなど)は
 # 付けないので、できるコードはx86-64の基本の命令(SSE2まで)が前提になる。
 # pixmanは、実行時にCPUを調べてMMX・SSE2・SSSE3の速い処理を選ぶ。0.42.2にはAVX2の処理は無い。
 set -eu
@@ -54,7 +54,7 @@ cpu = 'x86_64'
 endian = 'little'
 
 [built-in options]
-# ライブラリに、作った環境の道の名前(__FILE__ など)が入らないようにする。
+# ライブラリに、作った環境のパス(__FILE__ など)が入らないようにする。
 c_args = ['-ffile-prefix-map=$work=/build', '-ffile-prefix-map=$root=/seinas']
 CROSS
 

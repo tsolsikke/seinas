@@ -8,7 +8,7 @@
 //! - `--title TEXT`: タイトルを付ける。無ければ、タイトルを付けない。
 //! - `--app-id TEXT`: app_idを付ける。無ければ、付けない。
 //! - `--decoration`: 飾り(タイトルバーなど)をどちらの側で描くかを、xdg-decorationで尋ねる。
-//! - `--pointer`: 席のポインターを使い、届いた知らせを書く。
+//! - `--pointer`: seat のポインターを使い、届いたイベントを書く。
 //! - `--keyboard`: seat のキーボードを使い、届いたイベントを書く(`window: keyboard enter`(押されているキーが
 //!   あれば `window: keyboard enter keys 56`)、`window: keyboard leave`、
 //!   `window: key 30 pressed`、`window: modifiers 1 0 0 0`(押されている・ラッチ・ロック・グループ)、
@@ -47,13 +47,13 @@
 //!
 //! - `window: configure 640x480 [activated]`: xdg_toplevel.configure が届くたびに1行。大きさと、状態の並び。
 //!   状態が無ければ `[]`。
-//! - `window: decoration server-side`: 飾りを描く側の知らせ(zxdg_toplevel_decoration_v1.configure)が
+//! - `window: decoration server-side`: 飾りを描く側のイベント(zxdg_toplevel_decoration_v1.configure)が
 //!   届くたびに1行(`--decoration` を付けたとき)。クライアントの側なら `client-side`。
 //! - `window: wm_capabilities []`: コンポジタができることの並び(xdg_toplevel.wm_capabilities)が届くたびに1行。
 //! - `window: drawn`: 最初の絵をコンポジタが描いたとき(frameコールバックが届いたとき)に1回。
 //! - `window: resized WxH`: `--follow-size` で、新しい大きさの絵を commit したとき。
 //! - `window: pointer enter X Y`、`window: pointer leave`、`window: pointer motion X Y`、
-//!   `window: pointer button 0x110 pressed`(または `released`): ポインターの知らせ(`--pointer` を付けたとき)。
+//!   `window: pointer button 0x110 pressed`(または `released`): ポインターのイベント(`--pointer` を付けたとき)。
 //!   位置は、コンテンツの左上を原点にしたピクセル。
 //! - `window: close`: 閉じるように頼まれたとき(xdg_toplevel.close)。`--ignore-close` が無ければ、
 //!   これを書いて終わる。
@@ -198,7 +198,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     println!("window: drawn");
     let _ = std::io::stdout().flush();
 
-    // 標準入力は、別のスレッドで1行ずつ読む(コンポジタからの知らせを待つのと、並べて行うため)。
+    // 標準入力は、別のスレッドで1行ずつ読む(コンポジタからのイベントを待つのと、並べて行うため)。
     let (sender, commands) = mpsc::channel();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {

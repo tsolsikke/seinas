@@ -1,5 +1,5 @@
 #!/bin/sh
-# 既定のフォントを、版を固定して取得する。
+# 既定のフォントを、バージョンを固定して取得する。
 #
 # 使い方:
 #     tools/fetch-fonts.sh
@@ -11,11 +11,11 @@
 #     unifont_jp-18.0.01.otf     GNU Unifont JP(控え用。上のフォントに無い文字を描く)
 #
 # 取得元:
-# ・BIZ UDゴシック: googlefonts/morisawa-biz-ud-gothic の v1.051 のタグ(OFL 1.1で公開されている版)。
+# ・BIZ UDゴシック: googlefonts/morisawa-biz-ud-gothic の v1.051 のタグ(OFL 1.1で公開されているバージョン)。
 # ・GNU Unifont JP: GNUの配布元(ftp.gnu.org)の 18.0.01。OFL 1.1と、GPL 2以降(フォントの埋め込みの
 #   例外つき)の二重ライセンスで、SeinasはOFL 1.1を選んで使う。ライセンス文と著作権表示は
 #   THIRD-PARTY/fonts/ に置いてある。
-# 版は、ここに書いたものに固定している。SHA-256が合わなければ止まる。
+# バージョンは、ここに書いたものに固定している。SHA-256が合わなければ止まる。
 # フォントは実行ファイルに埋め込まず、別のファイルとして読む。
 set -eu
 

@@ -62,7 +62,7 @@ pub struct Seinas {
     parent: Parent,
     start: Instant,
     needs_redraw: bool,
-    /// 描けない要素があった。切られたクライアントの後片付けが要る。
+    /// 描けない要素があった。切られたクライアントのクリーンアップが要る。
     reap_needed: bool,
     exit: bool,
 }

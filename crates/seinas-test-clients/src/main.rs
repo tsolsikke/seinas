@@ -13,12 +13,12 @@
 //! - `unknown-opcode`: wl_displayに、無い番号の要求を送る。
 //! - `unknown-object`: 作っていないオブジェクトへ要求を送る。
 //! - `short-message`: 長さがヘッダーより短い、壊れたメッセージを送る。
-//! - `bad-global`: wl_registryで、無いグローバルを束ねようとする(プロトコルのエラーが返る)。
+//! - `bad-global`: wl_registryで、無いグローバルを bind しようとする(プロトコルのエラーが返る)。
 //! - `shrink`: ウィンドウを1つ描いた後、共有メモリーのプールを縮めて、もう一度commitする。
 //!   `--step` を付けると、縮める前に、標準入力から1行届くまで待つ。くわしくは `shrink.rs`。
 //! - `window`: 行儀よくウィンドウを1つ出し、届いたconfigureの中身を書き続ける。止められるまで動く。
 //!   `--title TEXT` と `--app-id TEXT` で、タイトルとapp_idを付けられる。`--decoration` で、飾りの描き方を尋ねる。
-//!   ポインターの知らせを書く、動かしてほしいと頼む、閉じる頼みに応じない、という指定もある。くわしくは `window.rs`。
+//!   ポインターのイベントを書く、動かしてほしいと頼む、閉じる頼みに応じない、という指定もある。くわしくは `window.rs`。
 //! - `layer`: layer surface(wlr-layer-shell)を 1 つ出す。シェルの部品のためのソケットへつなぐこと。
 //!   層・anchor・大きさ・exclusive zone・margin・色を引数で決める。くわしくは `layer.rs`。
 //! - `toplevels`: ウィンドウの一覧(foreign-toplevel)を受け取って書き出し、標準入力から届いた頼み
@@ -28,8 +28,8 @@
 //! - `globals`: コンポジタが見せる global を、`globals: <interface の名前>` の行で届いた順に書き、最後に
 //!   `globals: done` を書いて、exit status 0 で終わる。
 //!
-//! コンポジタに切られたら終了コード0、切られなければ1、準備の段階で失敗したら2で終わる。
-//! `window` は、閉じるように頼まれて終わったときも、終了コード0で終わる。
+//! コンポジタに切られたら exit status 0、切られなければ1、準備の段階で失敗したら2で終わる。
+//! `window` は、閉じるように頼まれて終わったときも、exit status 0で終わる。
 
 mod ime;
 mod layer;

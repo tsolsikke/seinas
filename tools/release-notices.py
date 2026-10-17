@@ -9,7 +9,7 @@
 
 対象は、x86_64-unknown-linux-musl 向けの静的ビルドで、そのパッケージの実行ファイルに入るものである。
 Rustのクレートは Cargo.lock のとおりに調べ(cargo metadata --locked)、ライセンス文は THIRD-PARTY/ に
-置いてあるものを写す(THIRD-PARTY/ が最新であること。tools/third-party.py --check で確かめられる)。
+置いてあるものをコピーする(THIRD-PARTY/ が最新であること。tools/third-party.py --check で確かめられる)。
 Cのライブラリ(pixman、libxkbcommon、musl)とRustの標準ライブラリの分も、あわせて入れる。
 Cのライブラリは、リンクの指定があっても、使われなければ実行ファイルに入らない(リンカーが、参照されない
 部分を落とす)。そこで、実行ファイルのシンボルを見て、実際に入っているものだけを入れる。
@@ -50,7 +50,7 @@ def load_third_party_module():
 
 
 def runtime_crates(third_party, package_name):
-    """`package_name` の実行ファイルに入る、第三者のクレート(名前と版の順)。
+    """`package_name` の実行ファイルに入る、第三者のクレート(名前とバージョンの順)。
 
     cargo tree で、そのパッケージだけを起点に依存を解決する(cargo metadata は、ワークスペース全体で
     機能をまとめて解決するので、このパッケージには入らないものまで数えてしまう)。
@@ -81,7 +81,7 @@ def runtime_crates(third_party, package_name):
 
 
 def copy_license_dir(label, out):
-    """THIRD-PARTY/licenses/ か licenses-upstream/ にある `label` のライセンス文を写す。写した場所を返す。"""
+    """THIRD-PARTY/licenses/ か licenses-upstream/ にある `label` のライセンス文をコピーする。コピーした場所を返す。"""
     for kind in ("licenses", "licenses-upstream"):
         src = os.path.join(THIRD_PARTY, kind, label)
         if os.path.isdir(src):

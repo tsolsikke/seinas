@@ -57,7 +57,7 @@ impl FakeScreen {
         &self.pixels
     }
 
-    /// 描画結果を、fake screen へ写す。
+    /// 描画結果を、fake screen へコピーする。
     pub fn show(&mut self, view: &FrameView<'_>) -> Result<(), FbError> {
         self.layout.blit(view, &mut self.pixels)
     }

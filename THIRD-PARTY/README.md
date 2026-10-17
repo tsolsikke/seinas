@@ -7,8 +7,8 @@ Seinas自身のライセンス(MIT)は、リポジトリの先頭の `LICENSE` �
 
 | 場所 | 中身 |
 | --- | --- |
-| `rust-crates.md` | 使っているRustクレートの一覧(名前、版、ライセンス、使われ方) |
-| `licenses/` | 各クレートの配布物に入っていたライセンス文を、そのまま写したもの |
+| `rust-crates.md` | 使っているRustクレートの一覧(名前、バージョン、ライセンス、使われ方) |
+| `licenses/` | 各クレートの配布物に入っていたライセンス文を、そのままコピーしたもの |
 | `licenses-upstream/` | 配布物にライセンス文が入っていないクレートについて、上流のリポジトリから取ってきたもの |
 | `c-libraries/` | 静的にリンクするCのライブラリのライセンス文と著作権表示 |
 | `fonts/` | 既定のフォントのライセンス文と著作権表示(フォントそのものは、リポジトリに入れていない) |
@@ -28,7 +28,7 @@ python3 tools/third-party.py
 | --- | --- | --- |
 | drm-fourcc 2.2.0 | MIT | 上流の `main` ブランチの `LICENSE` を `licenses-upstream/` に置いた(2026-10-04に取得) |
 | profiling 1.0.18、profiling-procmacros 1.0.18 | MIT OR Apache-2.0 | 上流の `master` ブランチの `LICENSE-MIT` と `LICENSE-APACHE` を `licenses-upstream/` に置いた(2026-10-04に取得) |
-| harfrust 0.5.2 | MIT | 上流のリポジトリ(<https://github.com/harfbuzz/harfrust>)の、この版のもとになったコミット(efdae3142ab76a2f1524d72cff9e3dfdc5afd7ca)の `LICENSE` を `licenses-upstream/` に置いた(2026-10-05に取得) |
+| harfrust 0.5.2 | MIT | 上流のリポジトリ(<https://github.com/harfbuzz/harfrust>)の、このバージョンのもとになったコミット(efdae3142ab76a2f1524d72cff9e3dfdc5afd7ca)の `LICENSE` を `licenses-upstream/` に置いた(2026-10-05に取得) |
 | pixman 0.2.1、pixman-sys 0.1.0 | MIT | 上流のリポジトリ(<https://github.com/cmeissl/pixman-rs>)にもライセンス文のファイルが無い。`Cargo.toml` にMITと書かれていて、作者はChristian Meisslさん |
 
 ## ライセンスを選んで使うクレート
@@ -58,7 +58,7 @@ musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-m
 - 取得元:<https://github.com/googlefonts/morisawa-biz-ud-gothic> のタグ `v1.051`(コミット 18934af56b9c003ca58c54bffbf226848cb11032)。Windows に付属するファイルではなく、OFL で公開されているものです。
 - バージョン:フォントの中の表記は `Version 1.051`。
 - 予約されたフォント名(Reserved Font Name)の宣言は、ありません。
-- 著作権表示(上流のものを、そのまま写しています):
+- 著作権表示(上流のものを、そのままコピーしています):
   - `OFL.txt` の 1 行目:`Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-mincho)`
   - フォントの中の表記:`Copyright 2022 The BIZ UDGothic Project Authors (https://github.com/googlefonts/morisawa-biz-ud-gothic)`
   - `OFL.txt` とフォントの中とで、URL の末尾が違います(`mincho` と `gothic`)。上流のファイルが、そうなっています。
@@ -84,16 +84,16 @@ musl の静的ビルド(`tools/build-musl.sh`)の配布物 `target/dist/seinas-m
 
 Rustクレートのほかに、次のCのライブラリをリンクします。
 
-| ライブラリ | 版 | ライセンス | 使われ方 | ライセンス文 |
+| ライブラリ | バージョン | ライセンス | 使われ方 | ライセンス文 |
 | --- | --- | --- | --- | --- |
 | pixman(libpixman-1) | 0.42.2 | MIT | ピクセルの合成 | `c-libraries/pixman-0.42.2/COPYING` |
 | libxkbcommon | 1.6.0 | MIT(X11系の表示を含む) | キーボードの配列。Smithayがリンクの指定を付けるが、使わない実行ファイルには入らない(seinasとseinas-standaloneには入る。seinas-fbdevには入らない) | `c-libraries/libxkbcommon-1.6.0/LICENSE` |
 | musl | 1.2.5 | MIT | Cの標準ライブラリ(Rustのmusl向けターゲットに同梱のもの) | `c-libraries/musl-1.2.5/COPYRIGHT` |
 
-版は、musl向けの静的ビルド(`tools/build-musl.sh`)で実行ファイルに入るものです。
+バージョンは、musl向けの静的ビルド(`tools/build-musl.sh`)で実行ファイルに入るものです。
 リンクの指定があっても、使われないライブラリは、リンカーが落とすので実行ファイルに入りません。実際に入っているかは、実行ファイルのシンボル(`nm` で `xkb_` や `pixman_` で始まる関数があるか)で分かります。
 1つの実行ファイルに入っているものだけを集めるには、`tools/release-notices.py` を使います。
-pixmanとlibxkbcommonのライセンス文は、ビルドに使うソース(`tools/build-musl-libs.sh` が取る版)に入っているファイルと同じものです。
+pixmanとlibxkbcommonのライセンス文は、ビルドに使うソース(`tools/build-musl-libs.sh` が取るバージョン)に入っているファイルと同じものです。
 muslのライセンス文は、musl 1.2.5のソースの `COPYRIGHT` です。
 
 ホスト(glibc)向けのビルドでは、OSに入っている共有ライブラリを実行時に使うので、これらは実行ファイルに入りません。

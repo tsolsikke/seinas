@@ -13,7 +13,7 @@
 //! - `--device PATH`: 画面の装置。無ければ環境変数 `SEINAS_FBDEV`、それも無ければ `/dev/fb0`。
 //! - `--fake WIDTHxHEIGHT`: 装置を開かず、その大きさの fake screen(メモリー上)へ描く。
 //! - `--dump FILE`: fake screen の中身を、描くたびにPPM形式の画像としてファイルに書く。
-//! - `--socket PATH`: クライアントを待ち受けるソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、
+//! - `--socket PATH`: クライアントを listen するソケットの場所。無ければ環境変数 `SEINAS_SOCKET`、
 //!   それも無ければ `XDG_RUNTIME_DIR` の下の `seinas-0`。
 //! - `--shell-socket PATH`: シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットの
 //!   パスの名前に `-shell` を入れたもの(拡張子があれば、その前。`/tmp/seinas.sock` なら `/tmp/seinas-shell.sock`。
@@ -29,16 +29,16 @@
 //!   `$XDG_CONFIG_HOME/seinas/seinas.conf`。
 //! - `--log-keys`: 届いたキーを、修飾キーと keysym の名前でログに出す(`key: Alt+F6 pressed`)。
 //! - `--test-input`: テスト用の入力インターフェースを開く。標準入力から、ポインターの動きとボタンを1行ずつ読む
-//!   (下の「テスト用の入力インターフェース」)。これを付けたときだけ、席(wl_seat)とポインターを公開する。
+//!   (下の「テスト用の入力インターフェース」)。これを付けたときだけ、seat(wl_seat)とポインターを公開する。
 //!
 //! 描く時機: クライアントがcommitして再描画が要るときにだけ描き、描いた後にframeコールバックを
-//! 返す。fbdevには垂直同期の知らせが無いので、描く回数は1秒に60回までに抑える。何も起きていない間は、
+//! 返す。fbdevには垂直同期のイベントが無いので、描く回数は1秒に60回までに抑える。何も起きていない間は、
 //! 何もせずに待つ。
 //!
 //! 制限: 入力の装置は扱わない(ふだんは、wl_seatを公開しない)。そのため、ふだんの起動では、
 //! ウィンドウを動かすことも、閉じることもできない。
 //!
-//! テスト用の入力インターフェース: `--test-input` を付けると、標準入力の1行を、1つのポインターの知らせとして扱う。
+//! テスト用の入力インターフェース: `--test-input` を付けると、標準入力の1行を、1つのポインターのイベントとして扱う。
 //! ピクセルのテストが、ドラッグや閉じるボタンを確かめるのに使う。ふだんの起動では、開かない。
 //!
 //! ```text
@@ -47,7 +47,7 @@
 //! release [BUTTON]  いまの位置で、ボタンが離された
 //! leave             ポインターが、画面の外へ出た
 //! ```
-//! 止めるにはシグナルで終わらせる。終わるときの後片付け(画面を元に戻す、ソケットのファイルを消す)は
+//! 止めるにはシグナルで終わらせる。終わるときのクリーンアップ(画面を元に戻す、ソケットのファイルを消す)は
 //! していない。
 
 mod screen;
@@ -168,7 +168,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
     Ok(options)
 }
 
-/// テスト用の入力インターフェースに届いた1行を、ポインターの知らせに直す。`at` は、ポインターのいまの位置で、
+/// テスト用の入力インターフェースに届いた1行を、ポインターのイベントに直す。`at` は、ポインターのいまの位置で、
 /// `motion` の行が届くたびに書き換える。
 /// テスト用の入力インターフェースの 1 行。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -258,7 +258,7 @@ struct Standalone {
     screen: Screen,
     start: Instant,
     needs_redraw: bool,
-    /// 描けない要素があった。切られたクライアントの後片付けが要る。
+    /// 描けない要素があった。切られたクライアントのクリーンアップが要る。
     reap_needed: bool,
     last_draw: Option<Instant>,
 }
@@ -508,7 +508,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         },
     )?;
 
-    // 源その3(テストのときだけ): 標準入力から届く、ポインターの知らせ。
+    // 源その3(テストのときだけ): 標準入力から届く、ポインターのイベント。
     if options.test_input {
         warn!("the test input is open; pointer and key events are read from the standard input");
         let (sender, lines) = channel::channel::<String>();

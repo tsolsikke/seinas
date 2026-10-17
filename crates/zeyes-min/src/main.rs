@@ -86,7 +86,7 @@ impl CompositorHandler for Zeyes {
         _: &wl_surface::WlSurface,
         _: u32,
     ) {
-        // 前の絵が表示に使われた合図。再描画が要るときだけ、次の絵を描く。
+        // 前の絵が表示に使われた通知。再描画が要るときだけ、次の絵を描く。
         self.frame_pending = false;
         if self.dirty {
             self.draw(conn, qh);

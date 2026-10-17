@@ -26,11 +26,11 @@ WAYLAND_DISPLAY=<ソケットの名前か絶対パス> test-client shrink [--ste
 ```
 
 - 400x300の、紫(赤と青が最大)のウィンドウを1つ出します。
-- frameコールバックが届いたら(コンポジタが描いた合図)、標準出力に `shrink: drawn` と書きます。
+- frameコールバックが届いたら(コンポジタが描いた通知)、標準出力に `shrink: drawn` と書きます。
 - `--step` を付けると、ここで、標準入力から1行届くまで待ちます。呼ぶ側が、画面を確かめてから先へ進めるためです。
 - プールを縮めて `shrink: shrunk` と書き、もう一度commitします。
 - コンポジタが切るまで読み、結果を書きます。
-- 終了コードは、切られたら0、切られなければ1、準備の段階で失敗したら2です。
+- exit status は、切られたら0、切られなければ1、準備の段階で失敗したら2です。
 
 ## 期待する結果
 
@@ -44,7 +44,7 @@ shrink: the compositor closed the connection
 ```
 
 - プロトコルのエラーは、縮めたプールから作ったバッファ(object 11、wl_buffer)に対して届きます。codeの2は、wl_shmのエラーの `invalid_fd` です。
-- クライアントの終了コードは0です。
+- クライアントの exit status は0です。
 
 コンポジタの側は、次のようになります。
 
@@ -82,7 +82,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 1. seinas-standaloneを fake screen で起動し、zeyes-minをつなぐ。
 2. `test-client shrink --step` をつなぎ、`shrink: drawn` が届くのを待つ。紫のウィンドウが画面に描かれていることを、ピクセルで確かめる。
 3. 1行送って、縮めさせる。
-4. 標準出力の残りの3行と、終了コードが0であることを確かめる。
+4. 標準出力の残りの3行と、exit status が0であることを確かめる。
 5. 紫のウィンドウ(後からつなぐので、zeyes-minの手前に、右下へずれて出る)が消え、zeyes-minのウィンドウの全体が見えていることを、ピクセルで確かめる。seinas-standaloneとzeyes-minが動いていることを確かめる。
 6. zeyes-minを止めて、新しいzeyes-minをつなぎ、描かれることを確かめる。
 
@@ -102,4 +102,4 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p seinas-test-clients -- sh
 クライアントの側は、`memfd_create`(封印なし)、`ftruncate` での縮小、fdの受け渡し(`sendmsg` の `SCM_RIGHTS`)を使います。
 
 縮められた範囲を読んでもシグナルが来ないOS(たとえば、0が読めるだけのOS)では、コンポジタは縮められたことに気づきません。
-その場合、クライアントの出力の3行目が `shrink: the second frame was drawn (the compositor did not notice)` になり、切られないまま待ち時間の上限で終わります(終了コード1)。コンポジタは落ちませんが、期待する結果とは違うので、OSの側の扱いを決める材料になります。
+その場合、クライアントの出力の3行目が `shrink: the second frame was drawn (the compositor did not notice)` になり、切られないまま待ち時間の上限で終わります(exit status 1)。コンポジタは落ちませんが、期待する結果とは違うので、OSの側の扱いを決める材料になります。

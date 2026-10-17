@@ -337,7 +337,7 @@ impl Wire {
         Ok(())
     }
 
-    /// `event` が、ポインターのボタンが押された知らせなら、その通し番号(serial)。
+    /// `event` が、ポインターのボタンが押されたイベントなら、その通し番号(serial)。
     pub fn button_press_serial(&self, event: &Event) -> Option<u32> {
         // wl_pointer.button(通し番号、時刻、ボタン、状態)。状態の1が「押された」。
         (Some(event.object) == self.pointer && event.opcode == 3 && event.u32_at(12) == Some(1))
@@ -480,7 +480,7 @@ impl Wire {
         Ok(true)
     }
 
-    /// 返事の要るイベント(ping、configure)に返事をする。届いた知らせの中身も、求められていれば書く。
+    /// 返事の要るイベント(ping、configure)に返事をする。届いたイベントの中身も、求められていれば書く。
     pub fn answer(&mut self, event: &Event) -> Result<(), String> {
         if let Some(layer) = self.layer_surface {
             // layer surface を作ったときは、xdg のオブジェクトは無い(番号が重なるので、先に見る)。
@@ -553,7 +553,7 @@ impl Wire {
                 self.say(&format!("wm_capabilities [{}]", names.join(",")));
                 Ok(())
             }
-            // wl_pointer の知らせ。位置は、コンテンツの左上を原点にしたピクセル(端数は切り捨て)。
+            // wl_pointer のイベント。位置は、コンテンツの左上を原点にしたピクセル(端数は切り捨て)。
             (object, opcode) if Some(object) == self.pointer => {
                 let fixed = |at: usize| event.u32_at(at).unwrap_or(0) as i32 >> 8;
                 match opcode {
@@ -772,7 +772,7 @@ pub fn open_window_with(
     pixel: [u8; 4],
     setup: &WindowSetup,
 ) -> Result<File, String> {
-    // グローバルの一覧を受け取る。syncの返事(wl_callback.done)が、一覧の終わりの合図。
+    // グローバルの一覧を受け取る。syncの返事(wl_callback.done)が、一覧の終わりの通知。
     wire.send(&message(WL_DISPLAY, 1, &REGISTRY.to_le_bytes()))?;
     wire.send(&message(WL_DISPLAY, 0, &SYNC.to_le_bytes()))?;
     let mut globals: Vec<(u32, String)> = Vec::new();
@@ -782,7 +782,7 @@ pub fn open_window_with(
             break;
         }
         if event.opcode == 0 {
-            // wl_registry.global(番号、インターフェースの名前、版)
+            // wl_registry.global(番号、インターフェースの名前、バージョン)
             let name = event.u32_at(0).ok_or("a broken global")?;
             let length = event.u32_at(4).ok_or("a broken global")? as usize;
             let interface = event
@@ -805,7 +805,7 @@ pub fn open_window_with(
     };
     wire.send(&bind("wl_compositor", 1, COMPOSITOR)?)?;
     wire.send(&bind("wl_shm", 1, SHM)?)?;
-    // 版5から、コンポジタができることの並び(wm_capabilities)が届く。
+    // バージョン5から、コンポジタができることの並び(wm_capabilities)が届く。
     wire.send(&bind("xdg_wm_base", 5, WM_BASE)?)?;
 
     // ウィンドウを作り、最初のconfigureを待つ。
@@ -868,7 +868,7 @@ pub fn open_window_with(
         wire.decoration = Some(decoration);
     }
 
-    // バッファを出し、frameコールバックが届くまで待つ(コンポジタが描いた合図)。
+    // バッファを出し、frameコールバックが届くまで待つ(コンポジタが描いた通知)。
     let first_frame = wire.new_id();
     commit_buffer(wire, width, height, first_frame)?;
     wire.wait_for("the first frame", |e| e.object == first_frame)?;

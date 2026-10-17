@@ -168,14 +168,14 @@ enum Grab {
         /// 最後に configure で伝えた、コンテンツの大きさ。
         size: Size,
     },
-    /// コンテンツ(か、何も無い所)を押している。ポインターの知らせは、クライアントへ渡す。
+    /// コンテンツ(か、何も無い所)を押している。ポインターのイベントは、クライアントへ渡す。
     Client {
         /// 押されているボタンの数。
         buttons: u32,
     },
 }
 
-/// ポインターの知らせを、だれに渡すか。
+/// ポインターのイベントを、だれに渡すか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Deliver {
     /// ポインターの下にあるウィンドウのコンテンツへ、いつもどおり渡す。
@@ -184,7 +184,7 @@ pub enum Deliver {
     Nobody,
 }
 
-/// 1つの知らせを処理した結果。
+/// 1つのイベントを処理した結果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outcome {
     /// 画面を描き直す必要があるか。
@@ -791,7 +791,7 @@ mod tests {
         (x, y).into()
     }
 
-    /// スタックと、操作の状態。知らせを1つずつ送って、結果を見る。
+    /// スタックと、操作の状態。イベントを1つずつ送って、結果を見る。
     struct World {
         stack: Stack<&'static str>,
         interaction: Interaction,
@@ -914,7 +914,7 @@ mod tests {
         // 動き始めた後は、押した点の近くへ戻っても、付いてくる。
         assert!(world.motion(101.0, 41.0).redraw);
         assert_eq!(world.place("b"), ((33, 33), None));
-        // 同じ点への知らせでは、描き直さない。
+        // 同じ点へのイベントでは、描き直さない。
         assert!(!world.motion(101.0, 41.0).redraw);
 
         // 離すと終わる。その後の動きでは、動かない。
@@ -1143,14 +1143,14 @@ mod tests {
         assert!(world.begin_client_move(b, 100.0, 100.0));
         assert!(world.interaction.is_moving());
         assert_eq!(world.place("b"), ((34, 32), None));
-        // しきい値は無く、1ピクセルでも動く。知らせは、クライアントには渡さない。
+        // しきい値は無く、1ピクセルでも動く。イベントは、クライアントには渡さない。
         let moved = world.motion(101.0, 100.0);
         assert_eq!((moved.redraw, moved.deliver), (true, Deliver::Nobody));
         assert_eq!(world.place("b"), ((33, 32), None));
         // 画面の外の限りは、同じ。
         world.motion(100.0, -500.0);
         assert_eq!(world.place("b").0, (32, 0));
-        // 離すと終わる。離した知らせは、クライアントには渡さない。
+        // 離すと終わる。離したイベントは、クライアントには渡さない。
         assert_eq!(
             world.release(100.0, 50.0, LEFT_BUTTON).deliver,
             Deliver::Nobody

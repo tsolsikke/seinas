@@ -147,7 +147,7 @@ pub struct Config {
     /// 画面の幅と高さ(ピクセル)。wl_outputで公開する。
     pub width: i32,
     pub height: i32,
-    /// 席(wl_seat)とポインターを公開するか。入力を扱わない構成ではfalseにする。
+    /// seat(wl_seat)とポインターを公開するか。入力を扱わない構成ではfalseにする。
     pub pointer: bool,
     /// seat にキーボードを足すときの keymap。キーボードを扱わない構成ではNone。
     pub keyboard: Option<KeyboardConfig>,
@@ -227,7 +227,7 @@ pub struct Frontend<D: SeatHandler> {
     pub ime: ImeState,
     pub shm_state: ShmState,
     pub seat_state: SeatState<D>,
-    /// 席は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
+    /// seat は、持っている間だけクライアントに見える。入力を扱わない構成ではNone。
     pub seat: Option<Seat<D>>,
     pub pointer: Option<PointerHandle<D>>,
     /// キーボード。キーボードを扱わない構成か、keymap を作れなかったときはNone。
@@ -1124,7 +1124,7 @@ impl<D: FrontendHost> Frontend<D> {
         }
     }
 
-    /// クライアントへframeコールバックを返す(「次の絵を描いてよい」の合図)。
+    /// クライアントへframeコールバックを返す(「次の絵を描いてよい」の通知)。
     pub fn send_frame_callbacks(&self, elapsed: Duration) {
         let time = elapsed.as_millis() as u32;
         let mut layers: Vec<WlSurface> = layer_map_for_output(&self.output)
@@ -1161,7 +1161,7 @@ impl<D: FrontendHost> Frontend<D> {
     }
 }
 
-/// ポインターの知らせ。バックエンド(親のWayland、テスト用の入力インターフェース)が、フロントエンドへ渡す。
+/// ポインターのイベント。バックエンド(親のWayland、テスト用の入力インターフェース)が、フロントエンドへ渡す。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PointerInput {
     /// 画面の上の点へ動いた(入ってきたときも、これ)。
@@ -1176,10 +1176,10 @@ pub enum PointerInput {
     },
 }
 
-/// ポインターの知らせを処理する。`time` は、起動からの時間(ミリ秒)。
+/// ポインターのイベントを処理する。`time` は、起動からの時間(ミリ秒)。
 ///
 /// 押した所のウィンドウを raise し、タイトルバーと閉じるボタンの上での操作(動かす、閉じる)はSeinasが
-/// 自分で行い、それ以外は、ポインターの下にあるウィンドウのコンテンツへ渡す。席(wl_seat)を公開して
+/// 自分で行い、それ以外は、ポインターの下にあるウィンドウのコンテンツへ渡す。seat(wl_seat)を公開して
 /// いない構成では、何もしない。
 pub fn pointer_input<D>(state: &mut D, input: PointerInput, time: u32)
 where
@@ -1279,8 +1279,8 @@ where
             button, pressed, ..
         } => {
             pointer.motion(state, focus, &motion);
-            // Seinasが自分で使ったボタンは、クライアントには渡さない。離した知らせだけは、渡す相手を
-            // 無しにしたうえで、Smithayに伝える(クライアントから頼まれた移動では、押した知らせを
+            // Seinasが自分で使ったボタンは、クライアントには渡さない。離したイベントだけは、渡す相手を
+            // 無しにしたうえで、Smithayに伝える(クライアントから頼まれた移動では、押したイベントを
             // Smithayが覚えているので、離したことも教えておく)。
             if outcome.deliver == Deliver::ToClient || !pressed {
                 let state_of_button = if pressed {
@@ -1780,7 +1780,7 @@ fn toplevel_title(toplevel: &ToplevelSurface) -> String {
     })
 }
 
-/// 切られたクライアントの後片付けを、いますぐ行わせる。
+/// 切られたクライアントのクリーンアップを、いますぐ行わせる。
 ///
 /// 描いている最中に切られたクライアント(共有メモリーを縮めていた場合など)は、そのままだと、ほかの
 /// クライアントから次の要求が届くまで、ソケットもウィンドウも残り続ける。描けない要素があったときに、
@@ -1796,7 +1796,7 @@ pub fn reap_dead_clients<D: FrontendHost + 'static>(display: &mut Display<D>, st
             .find_map(|window| window.item.wl_surface().client())
     });
     if let Some(client) = client {
-        // 切られたクライアントを選んだ場合は失敗が返るが、後片付けは行われる。
+        // 切られたクライアントを選んだ場合は失敗が返るが、クリーンアップは行われる。
         let _ = display.backend().dispatch_single_client(state, client.id());
     }
 }

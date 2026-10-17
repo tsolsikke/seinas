@@ -6,7 +6,7 @@
     python3 tools/third-party.py --check   作り直した結果が、置いてあるものと同じかを確かめる
 
 Cargo.lock のとおりに依存を調べる(cargo metadata --locked)。対象は、Linuxのx86-64(glibcとmusl)で
-実際に使うクレートだけである。ライセンス文は、各クレートの配布物に入っているファイルをそのまま写す。
+実際に使うクレートだけである。ライセンス文は、各クレートの配布物に入っているファイルをそのままコピーする。
 """
 
 import filecmp

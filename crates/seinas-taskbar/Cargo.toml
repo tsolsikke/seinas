@@ -10,7 +10,7 @@ publish.workspace = true
 [dependencies]
 smithay-client-toolkit = { workspace = true }
 wayland-client = { workspace = true }
-# foreign-toplevel(zwlr_foreign_toplevel_manager_v1)のクライアントの型。smithay-client-toolkit がすでに使っている版。
+# foreign-toplevel(zwlr_foreign_toplevel_manager_v1)のクライアントの型。smithay-client-toolkit がすでに使っているバージョン。
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 seinas-text = { path = "../seinas-text" }
 # 設定のファイル(taskbar.conf)の読み方。フォントと壁紙の設定と同じもの。

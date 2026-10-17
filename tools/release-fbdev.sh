@@ -1,5 +1,5 @@
 #!/bin/sh
-# seinas-fbdev(musl向けの静的PIE)を、GitHubのreleaseに置くための一式を作る。
+# seinas-fbdev(musl向けの静的PIE)を、GitHubのreleaseに置くためのアセットを作る。
 #
 # 使い方:
 #     tools/release-fbdev.sh <タグ>        例: tools/release-fbdev.sh v0.1.0
@@ -8,7 +8,7 @@
 #     seinas-fbdev                                 実行ファイル(musl向けの静的PIE)
 #     seinas-fbdev-<タグ>-third-party.tar.gz       実行ファイルに入っている第三者のライセンス文と著作権表示
 #     SHA256SUMS                                   上の2つのSHA-256
-#     NOTES.md                                     releaseの説明文(作り方、版、ライセンス)
+#     NOTES.md                                     releaseの説明文(作り方、バージョン、ライセンス)
 #
 # 作った後、releaseを作るgh のコマンドを表示する(実行はしない)。手順は docs/release.md にある。
 #

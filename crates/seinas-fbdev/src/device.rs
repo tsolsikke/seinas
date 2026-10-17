@@ -1,4 +1,4 @@
-//! fbdevの装置。LinuxのfbdevのABI(`linux/fb.h`)で、画面の情報を読み、画面の領域を対応づける。
+//! fbdevの装置。LinuxのfbdevのABI(`linux/fb.h`)で、画面の情報を読み、画面の領域をマップする。
 
 use std::{
     fs::{File, OpenOptions},
@@ -86,7 +86,7 @@ struct FbFixScreeninfo {
     reserved: [u16; 2],
 }
 
-/// 開いたfbdevの装置と、対応づけた画面の領域。
+/// 開いたfbdevの装置と、マップした画面の領域。
 pub struct Fbdev {
     file: File,
     map: NonNull<u8>,
@@ -96,7 +96,7 @@ pub struct Fbdev {
 }
 
 impl Fbdev {
-    /// 装置を開き、画面の情報を読んで、画面の領域を対応づける。
+    /// 装置を開き、画面の情報を読んで、画面の領域をマップする。
     pub fn open(path: &Path) -> Result<Self, FbError> {
         let file = OpenOptions::new()
             .read(true)
@@ -147,7 +147,7 @@ impl Fbdev {
             });
         }
 
-        // SAFETY: アドレスは任せ(null)、開いているfdの先頭から `len` バイトを共有で対応づける。
+        // SAFETY: アドレスは任せ(null)、開いているfdの先頭から `len` バイトを共有でマップする。
         // 失敗は MAP_FAILED で返るので、下で確かめる。
         let map = unsafe {
             libc::mmap(
@@ -186,7 +186,7 @@ impl Fbdev {
 
     /// 画面の領域の全体。
     pub fn pixels(&mut self) -> &mut [u8] {
-        // SAFETY: `map` は `len` バイトの生きた対応づけで、このFbdevが捨てられるまで外さない。
+        // SAFETY: `map` は `len` バイトの生きたマッピングで、このFbdevが捨てられるまで外さない。
         // `&mut self` を借りているので、このプログラムの中でほかに触るものは無い。
         unsafe { std::slice::from_raw_parts_mut(self.map.as_ptr(), self.len) }
     }
@@ -196,7 +196,7 @@ impl Fbdev {
         self.file.as_fd()
     }
 
-    /// 描画結果を画面の領域へ写し、`presenter` で画面へ反映する。
+    /// 描画結果を画面の領域へコピーし、`presenter` で画面へ反映する。
     pub fn show(
         &mut self,
         view: &FrameView<'_>,
@@ -217,7 +217,7 @@ impl Fbdev {
 
 impl Drop for Fbdev {
     fn drop(&mut self) {
-        // SAFETY: `open` で対応づけた範囲を、そのまま外す。この後は誰も触らない。
+        // SAFETY: `open` でマップした範囲を、そのまま外す。この後は誰も触らない。
         unsafe {
             libc::munmap(self.map.as_ptr().cast(), self.len);
         }

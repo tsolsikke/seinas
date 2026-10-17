@@ -7,7 +7,7 @@
 //!
 //! 1. 呼ぶ側が、描きたい要素([`RenderElement`])を手前から順に並べる。
 //! 2. [`Painter::paint`] が、背景と要素を合成して [`FrameView`] を返す。
-//! 3. 呼ぶ側(バックエンド)が、[`FrameView`] の中身を自分の出力先へ写す。
+//! 3. 呼ぶ側(バックエンド)が、[`FrameView`] の中身を自分の出力先へコピーする。
 //!
 //! 境界の決まりは `docs/render-boundary.md` にまとめてある。
 
@@ -137,7 +137,7 @@ impl Painter {
 
     /// 要素を作るときに使うレンダラ。
     ///
-    /// クライアントのバッファを取り込む要素などは、作るときにレンダラを求める。
+    /// クライアントのバッファを import する要素などは、作るときにレンダラを求める。
     /// そのために貸し出すだけで、描画そのものは [`Painter::paint`] で行う。
     pub fn renderer(&mut self) -> &mut PixmanRenderer {
         &mut self.renderer
@@ -177,7 +177,7 @@ impl Painter {
                     failed_elements += 1;
                 }
             }
-            // pixmanの描画は同期で終わるので、返ってくる同期点を待つ必要は無い。
+            // pixmanの描画は同期で終わるので、返ってくる sync point を待つ必要は無い。
             let _ = frame.finish()?;
         }
         Ok(self.view(failed_elements))
@@ -263,7 +263,7 @@ impl<'a> FrameView<'a> {
         &self.data[y * self.stride..y * self.stride + self.row_bytes()]
     }
 
-    /// 全体を、行の幅が `dst_stride` バイトの `dst` へ写す。行の余り(`幅 × 4` より後ろ)には触れない。
+    /// 全体を、行の幅が `dst_stride` バイトの `dst` へコピーする。行の余り(`幅 × 4` より後ろ)には触れない。
     ///
     /// # Panics
     ///

@@ -1,6 +1,6 @@
 //! seinas-standaloneのテストで共通に使うもの。
 //!
-//! seinas-standaloneを fake screen で動かし、その写し(PPM)のピクセルを見て確かめる。親のWaylandも、画面の
+//! seinas-standaloneを fake screen で動かし、そのコピー(PPM)のピクセルを見て確かめる。親のWaylandも、画面の
 //! 装置も要らない。
 
 #![allow(dead_code)]
@@ -194,7 +194,7 @@ pub fn wait_for<T>(what: &str, mut check: impl FnMut() -> Option<T>) -> T {
     }
 }
 
-/// fake screen の写し。
+/// fake screen のコピー。
 pub struct Shot {
     pub width: usize,
     pub height: usize,
@@ -203,7 +203,7 @@ pub struct Shot {
 }
 
 impl Shot {
-    /// fake screen の写し(PPM)を読む。まだ無いか、書きかけならNone。
+    /// fake screen のコピー(PPM)を読む。まだ無いか、書きかけならNone。
     pub fn read(path: &Path) -> Option<Self> {
         let image = fs::read(path).ok()?;
         // ヘッダーは「P6 幅 高さ 255」と改行。
@@ -342,7 +342,7 @@ pub struct Compositor {
 }
 
 impl Compositor {
-    /// fake screen で起動し、最初の1枚(背景)が出て、ソケットで待ち受けるまで待つ。
+    /// fake screen で起動し、最初の1枚(背景)が出て、ソケットで listen するまで待つ。
     ///
     /// `name` は、作業用の場所をテストごとに分けるための短い名前。
     pub fn start(name: &str) -> Self {
@@ -354,7 +354,7 @@ impl Compositor {
         Self::start_with(name, fonts, false)
     }
 
-    /// [`Compositor::start`] と同じだが、テスト用の入力インターフェースを開く。ポインターの知らせは、
+    /// [`Compositor::start`] と同じだが、テスト用の入力インターフェースを開く。ポインターのイベントは、
     /// [`Compositor::pointer`] で送る。
     pub fn start_with_input(name: &str) -> Self {
         Self::start_with(name, &font_dir(), true)

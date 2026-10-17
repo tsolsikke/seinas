@@ -11,21 +11,21 @@ ZeikOS の CI は pixman の musl 向けのライブラリを作れないので�
 | `seinas-fbdev` | 実行ファイル(x86-64 の Linux、musl、静的 PIE。共有ライブラリに依存しない) |
 | `seinas-fbdev-<タグ>-third-party.tar.gz` | この実行ファイルに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
 | `SHA256SUMS` | 上の2つの SHA-256(`sha256sum --check SHA256SUMS` で確かめられる) |
-| release の説明文 | 何の実行ファイルか、作り方(コミット、Rust と musl の版)、ライセンス。`NOTES.md` として作られ、`gh release create` に渡す |
+| release の説明文 | 何の実行ファイルか、作り方(コミット、Rust と musl のバージョン)、ライセンス。`NOTES.md` として作られ、`gh release create` に渡す |
 
 実行ファイルは、リポジトリの `main` のソースから、変更を入れずに作ります。ZeikOS のための変更は入れません。
 
 ## タグの決め方
 
-- タグは `v<版>` で、版は `Cargo.toml` の `[workspace.package]` の `version` です(例: `v0.1.0`)。
-- release は `seinas-fbdev` だけを置きますが、タグはリポジトリ全体に付きます(ワークスペースの版が1つなので、実行ファイルごとに版を分けません)。
-- 同じ版で作り直すときは、版を上げてから切ります。切った後のタグは、付け替えません。
-- 版を上げるときは、`Cargo.toml` の `version` を変え、`cargo build --locked` で `Cargo.lock` を合わせて、コミットしてから切ります。
+- タグは `v<バージョン>` で、バージョンは `Cargo.toml` の `[workspace.package]` の `version` です(例: `v0.1.0`)。
+- release は `seinas-fbdev` だけを置きますが、タグはリポジトリ全体に付きます(ワークスペースのバージョンが1つなので、実行ファイルごとにバージョンを分けません)。
+- 同じバージョンで作り直すときは、バージョンを上げてから切ります。切った後のタグは、付け替えません。
+- バージョンを上げるときは、`Cargo.toml` の `version` を変え、`cargo build --locked` で `Cargo.lock` を合わせて、コミットしてから切ります。
 
 ## 手順
 
 1. `main` を最新にし、作業ツリーに変更が無いことを確かめます(スクリプトも確かめます)。
-2. 一式を作ります。musl 向けの成果物(C のライブラリを含む)を消してから作り直すので、数分かかります。
+2. アセットを作ります。musl 向けの成果物(C のライブラリを含む)を消してから作り直すので、数分かかります。
 
 ```bash
 tools/release-fbdev.sh v0.1.0
@@ -33,7 +33,7 @@ tools/release-fbdev.sh v0.1.0
 
    できるものは `target/release-assets/v0.1.0/` の下です。終わりに、SHA-256 と、release を作るコマンドが表示されます。
 
-3. 決定的に作れていることを確かめます。もう一度 2 を実行し、`SHA256SUMS` が同じになることを見ます(下の「決定的に作れること」)。
+3. 再現可能なビルドになっていることを確かめます。もう一度 2 を実行し、`SHA256SUMS` が同じになることを見ます(下の「再現可能なビルド」)。
 4. 表示されたコマンドで release を作ります。タグは、そのコミットに付きます。
 
 ```bash
@@ -58,16 +58,16 @@ gh release view v0.1.0
 
 `tools/release-notices.py` は、次のものを集めます。
 
-- Rust のクレート: `cargo tree -p seinas-fbdev -e normal,no-proc-macro --target x86_64-unknown-linux-musl` で、この実行ファイルに入るものだけを選びます(ワークスペース全体で解決すると、`seinas-fbdev` には入らない Wayland 系のクレートまで数えてしまうので、そうしません)。ライセンス文は `THIRD-PARTY/licenses/` と `licenses-upstream/` から写します。
-- C のライブラリ: `THIRD-PARTY/c-libraries/` から写します。リンクの指定があっても、使われないものは実行ファイルに入らないので、実行ファイルのシンボル(`nm`)を見て、実際に入っているものだけを入れます。`seinas-fbdev` には pixman と musl が入り、libxkbcommon は入りません。
+- Rust のクレート: `cargo tree -p seinas-fbdev -e normal,no-proc-macro --target x86_64-unknown-linux-musl` で、この実行ファイルに入るものだけを選びます(ワークスペース全体で解決すると、`seinas-fbdev` には入らない Wayland 系のクレートまで数えてしまうので、そうしません)。ライセンス文は `THIRD-PARTY/licenses/` と `licenses-upstream/` からコピーします。
+- C のライブラリ: `THIRD-PARTY/c-libraries/` からコピーします。リンクの指定があっても、使われないものは実行ファイルに入らないので、実行ファイルのシンボル(`nm`)を見て、実際に入っているものだけを入れます。`seinas-fbdev` には pixman と musl が入り、libxkbcommon は入りません。
 - Rust の標準ライブラリと libunwind は、一覧に書きます。
 - Seinas 自身の `LICENSE` も入れます。
 
 アーカイブは、中身の並びと日時をそろえて作るので、同じ中身なら同じファイルになります。
 
-## 道の名前を残さないこと
+## パスを残さないこと
 
-`tools/build-musl.sh` は、Rust のソースの道の名前を `--remap-path-prefix` で置き換えます(リポジトリの置き場所は `/seinas`、Cargo の置き場所(`CARGO_HOME`、無ければ `~/.cargo`)は `/cargo`)。
+`tools/build-musl.sh` は、Rust のソースのパスを `--remap-path-prefix` で置き換えます(リポジトリの置き場所は `/seinas`、Cargo の置き場所(`CARGO_HOME`、無ければ `~/.cargo`)は `/cargo`)。
 `tools/build-musl-libs.sh` も、C のライブラリを `-ffile-prefix-map` で同じように作ります。
 そのため、実行ファイルに、作った環境の絶対パス(`/home/…` など)は残りません。確かめるには、次のようにします。
 
@@ -77,20 +77,20 @@ strings -a target/x86_64-unknown-linux-musl/release/seinas-fbdev | grep -c /home
 
 0 であれば、残っていません(残っていてよいのは、`/seinas/…`、`/cargo/…`、Rust 自身が置き換えた `/rustc/<ハッシュ>/…` です)。
 
-release v0.1.0 は、この置き換えを入れる前に作ったものです(実行ファイルに、作った環境の道の名前が入っています)。
+release v0.1.0 は、この置き換えを入れる前に作ったものです(実行ファイルに、作った環境のパスが入っています)。
 v0.1.0 は切り直さず、そのままにしています。次に release を切るときから、置き換えを入れた形で作ります。
 
-## 決定的に作れること
+## 再現可能なビルド
 
 `tools/build-musl.sh` は、同じソース、同じ Rust、同じ手順で作れば、同じ実行ファイルになります(2026-10-06 に、musl 向けの成果物を消してから2回作り、SHA-256 が同じであることを確かめました)。
 
 ただし、次が変わると、実行ファイルも変わります。
 
-- Rust と C の、道の名前の置き換え(上の節)。置き換えているので、リポジトリや Cargo の置き場所が違っても、同じ実行ファイルになります(それ以外の置き場所、たとえば Rust のツールチェーンの置き場所は、Rust 自身が置き換えています)。
-- Rust の版(`rust-toolchain.toml`)、Cargo.lock、pixman の版(`tools/build-musl-libs.sh`)。
-- ホストの musl-gcc(Ubuntu の musl-tools)の版。pixman のコンパイルに使うヘッダーが変わるためです。
+- Rust と C の、パスの置き換え(上の節)。置き換えているので、リポジトリや Cargo の置き場所が違っても、同じ実行ファイルになります(それ以外の置き場所、たとえば Rust のツールチェーンの置き場所は、Rust 自身が置き換えています)。
+- Rust のバージョン(`rust-toolchain.toml`)、Cargo.lock、pixman のバージョン(`tools/build-musl-libs.sh`)。
+- ホストの musl-gcc(Ubuntu の musl-tools)のバージョン。pixman のコンパイルに使うヘッダーが変わるためです。
 
-別の環境で同じものを作りたいときは、同じ版をそろえてください。
+別の環境で同じものを作りたいときは、同じバージョンをそろえてください。
 
 ## 確かめ方(release を取ってきた側)
 

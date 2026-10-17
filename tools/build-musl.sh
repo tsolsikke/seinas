@@ -10,7 +10,7 @@
 #
 # CPUの指定(target-cpu=nativeなど)は付けない。Rustの既定のx86-64(SSE2まで)で作る。
 # Cのライブラリは、tools/build-musl-libs.sh が作った静的ライブラリをリンクする。
-# ソースの道の名前は、--remap-path-prefix で、置き場所によらない名前(/seinas、/cargo)に置き換える。
+# ソースのパスは、--remap-path-prefix で、置き場所によらない名前(/seinas、/cargo)に置き換える。
 set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -24,8 +24,8 @@ fi
 unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS CARGO_BUILD_RUSTFLAGS
 
 cd "$root"
-# 実行ファイルに、作った環境の道の名前(リポジトリの置き場所、Cargoの置き場所)が入らないようにする。
-# 入ると、置き場所が違うだけで別の実行ファイルになり、手元の道の名前が配布物に残る。
+# 実行ファイルに、作った環境のパス(リポジトリの置き場所、Cargoの置き場所)が入らないようにする。
+# 入ると、置き場所が違うだけで別の実行ファイルになり、手元のパスが配布物に残る。
 cargo_home=${CARGO_HOME:-$HOME/.cargo}
 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$libs --remap-path-prefix=$root=/seinas --remap-path-prefix=$cargo_home=/cargo"
 cargo build --release --locked --target x86_64-unknown-linux-musl -p seinas -p zeyes-min -p seinas-test-clients

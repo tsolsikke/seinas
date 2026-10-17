@@ -2,7 +2,7 @@
 //! ピクセルで確かめる。
 //!
 //! あわせて、zeyes-minを強制終了してからもう一度つなぎ、2回目も描かれることを確かめる。
-//! クライアントが去ると、Smithayが共有メモリーの後始末のスレッドを作るので、その経路も通る。
+//! クライアントが去ると、Smithayが共有メモリーのクリーンアップのスレッドを作るので、その経路も通る。
 
 mod common;
 
@@ -10,7 +10,7 @@ use common::{shows_only_background, shows_zeyes, wait_for, Compositor, BACKGROUN
 
 #[test]
 fn a_client_window_is_drawn_on_the_fake_screen_again_after_reconnecting() {
-    // 起動すると、クライアントがいなくても背景が1枚出て、ソケットで待ち受ける。
+    // 起動すると、クライアントがいなくても背景が1枚出て、ソケットで listen する。
     let mut seinas = Compositor::start("sa");
     assert_eq!(
         seinas.thread_count(),
@@ -29,7 +29,7 @@ fn a_client_window_is_drawn_on_the_fake_screen_again_after_reconnecting() {
     assert_eq!(shot.pixel(160, 263), common::SKIN);
     assert_eq!(shot.pixel(160, 264), BACKGROUND);
 
-    // 強制終了すると、ウィンドウが消えて背景に戻る。後始末のスレッドが1本できる。
+    // 強制終了すると、ウィンドウが消えて背景に戻る。クリーンアップのスレッドが1本できる。
     drop(first);
     seinas.wait_for_screen(
         "the background after the first client was killed",

@@ -1,4 +1,4 @@
-//! 画面の形式と、描画結果をその形式に直して写す処理。
+//! 画面の形式と、描画結果をその形式に直してコピーする処理。
 //!
 //! 共通のレンダラーが返すのは `Xrgb8888`(メモリー上でB, G, R, Xの順)の1種類だけである。
 //! 画面の側の違い(色の位置、1行のバイト数、見えている範囲の位置)は、ここで吸収する。
@@ -16,7 +16,7 @@ pub struct Bitfield {
     pub length: u32,
 }
 
-/// 画面の情報のうち、絵を写すのに要るもの。装置から読んだ値を、そのまま入れる。
+/// 画面の情報のうち、絵をコピーするのに要るもの。装置から読んだ値を、そのまま入れる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScreenInfo {
     /// 見えている範囲の幅と高さ(ピクセル)。
@@ -36,7 +36,7 @@ pub struct ScreenInfo {
     pub transp: Bitfield,
 }
 
-/// 確かめ終えた画面の形式。ここまで来たものは、必ず写せる。
+/// 確かめ終えた画面の形式。ここまで来たものは、必ずコピーできる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Layout {
     width: usize,
@@ -55,7 +55,7 @@ pub struct Layout {
 const BYTES_PER_PIXEL: usize = 4;
 
 impl Layout {
-    /// 画面の情報を確かめて、写し方を決める。対応しない形式は、名前のある失敗で断る。
+    /// 画面の情報を確かめて、コピーのしかたを決める。対応しない形式は、名前のある失敗で断る。
     pub fn new(info: &ScreenInfo) -> Result<Self, FbError> {
         if info.bits_per_pixel != 32 {
             return Err(FbError::UnsupportedDepth {
@@ -129,7 +129,7 @@ impl Layout {
         self.start + self.line_length * (self.height - 1) + self.width * BYTES_PER_PIXEL
     }
 
-    /// 描画結果を、この形式に直して `screen`(画面の領域)へ写す。
+    /// 描画結果を、この形式に直して `screen`(画面の領域)へコピーする。
     ///
     /// 行の余り(幅×4より後ろ)と、見えている範囲の外には触れない。
     pub fn blit(&self, view: &FrameView<'_>, screen: &mut [u8]) -> Result<(), FbError> {
@@ -215,7 +215,7 @@ mod tests {
         }
     }
 
-    /// 左上が赤、右上が緑、左下が青、ほかは白の絵を描いて、`info` の形式の fake screen へ写す。
+    /// 左上が赤、右上が緑、左下が青、ほかは白の絵を描いて、`info` の形式の fake screen へコピーする。
     fn paint_to(info: &ScreenInfo, screen: &mut [u8]) -> Result<(), FbError> {
         let layout = Layout::new(info)?;
         let mut painter = Painter::new(WIDTH as i32, HEIGHT as i32).unwrap();

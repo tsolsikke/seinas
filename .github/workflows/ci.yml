@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: Cのライブラリを入れる
         run: sudo apt-get update && sudo apt-get install -y libpixman-1-dev libxkbcommon-dev xkb-data
-      - name: Rustを入れる(rust-toolchain.tomlの版)
+      - name: Rustを入れる(rust-toolchain.tomlのバージョン)
         run: rustup show active-toolchain || rustup toolchain install
       - name: 整形
         run: cargo fmt --all -- --check
@@ -65,7 +65,7 @@ jobs:
       - uses: actions/checkout@v7
       - name: ビルドの道具を入れる
         run: sudo apt-get update && sudo apt-get install -y musl-tools meson ninja-build bison xkb-data
-      - name: Rustを入れる(rust-toolchain.tomlの版)
+      - name: Rustを入れる(rust-toolchain.tomlのバージョン)
         run: rustup show active-toolchain || rustup toolchain install
       # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。
       # キャッシュから戻したファイルも、次の手順がSHA-256を確かめ、合わなければ取り直す。

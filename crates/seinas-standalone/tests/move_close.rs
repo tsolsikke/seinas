@@ -8,7 +8,7 @@
 //!   外へ出して離すと、取り消し。奥のウィンドウのボタンも、見えていれば1回で効く。
 //! - クライアントから頼まれた移動は、そのクライアントの上でボタンが押されている間だけ受ける。
 //!
-//! ポインターの知らせは、seinas-standaloneのテスト用の入力インターフェース(`--test-input`)から送る。
+//! ポインターのイベントは、seinas-standaloneのテスト用の入力インターフェース(`--test-input`)から送る。
 //! テスト用のクライアント(`test-client window`)のウィンドウは、コンテンツが200x150の橙。
 
 mod common;
@@ -343,7 +343,7 @@ fn a_client_may_ask_to_be_moved_while_a_button_is_held_on_it() {
 #[test]
 fn without_the_test_input_no_seat_is_offered() {
     let mut seinas = Compositor::start("mg");
-    // ポインターを使おうとするクライアントは、席が無いので、準備の段階で失敗して終わる。
+    // ポインターを使おうとするクライアントは、seat が無いので、準備の段階で失敗して終わる。
     let mut client = seinas.connect_test_client(&["window", "--pointer"]);
     let status = wait_for("the client to give up", || {
         client.process.0.try_wait().expect("check the client")
