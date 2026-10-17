@@ -1198,7 +1198,7 @@ fn virtual_keyboards_of_one_generation_work_in_any_order() {
 
 #[test]
 fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
-    let mut seinas = Compositor::start_with_input("jj");
+    let seinas = Compositor::start_with_input("jj");
     let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
     // A を前の世代で作り(要求は送らない)、IME を去らせてから、同じ接続で次の世代を受け入れ、B を作る。
@@ -1208,18 +1208,31 @@ fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
     common::wait_for("the second generation", || {
         (seinas.log().matches("an input method connected").count() == 2).then_some(())
     });
-    // B(今の世代)から先に、続けて A(前の世代)が要求する。どちらがどちらか見分けられないので、両方とも認めない。
-    ime_lines(
-        &mut ime,
-        &["vk-keymap b", "vk-key b 45 press", "vk-key b 45 release"],
+    // B(今の世代)が最初の要求を送る。A と B のどちらの要求か見分けられないので、認めず、IME の接続を
+    // unauthorized のエラーで切る(つなぎ直しを求める)。
+    for line in ["vk-keymap b", "vk-key b 45 press", "vk-key b 45 release"] {
+        ime.send_line(line);
+    }
+    let line = loop {
+        let line = ime.next_line("the refusal");
+        if line.starts_with("ime: protocol error") {
+            break line;
+        }
+    };
+    assert!(line.contains("cannot tell which input method"), "{line}");
+    wait_for_log(
+        &seinas,
+        "a virtual keyboard was refused (it cannot be told whether it was made for the past or the current input method); the input method is disconnected and has to reconnect",
     );
-    ime_lines(
-        &mut ime,
-        &["vk-keymap a", "vk-key a 21 press", "vk-key a 21 release"],
-    );
-    let wait = std::time::Duration::from_millis(300);
-    assert!(!key_arrived(&window, 45, wait) && !key_arrived(&window, 21, wait));
-    // 混ざりが無くなった後に作ったものは、今の世代として使える。
+    assert!(!key_arrived(
+        &window,
+        45,
+        std::time::Duration::from_millis(300)
+    ));
+    // つなぎ直した IME の virtual-keyboard は、今の世代として使える。
+    wait_for_log(&seinas, "the input method left");
+    let window = open_window(&seinas, "ウィンドウ 2");
+    let mut ime = connect_ime(&seinas, &[]);
     ime_lines(
         &mut ime,
         &[
@@ -1234,7 +1247,6 @@ fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
             break;
         }
     }
-    tap(&mut seinas, KEY_X);
 }
 
 #[test]
@@ -1259,6 +1271,38 @@ fn a_virtual_keyboard_destroyed_before_its_first_request_does_not_shift_the_queu
         ],
     );
     assert_eq!(next_key_line(&window, "x from b"), "window: key 45 pressed");
+}
+
+#[test]
+fn too_many_live_virtual_keyboards_are_refused() {
+    let seinas = Compositor::start_with_input("jo");
+    let _window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // 最初の要求(keymap)を送ったものも数える。テスト用の IME は、つないだときに 1 つ作るので、ここで作れる
+    // のは 15 個まで(合わせて 16 個)。次の 1 つは unauthorized のエラーで切られる。
+    for i in 0..15 {
+        ime_lines(
+            &mut ime,
+            &[&format!("vk-new k{i}"), &format!("vk-keymap k{i}")],
+        );
+    }
+    assert!(
+        !seinas.log().contains("a virtual keyboard was refused"),
+        "{}",
+        seinas.log()
+    );
+    ime.send_line("vk-new k15");
+    let line = loop {
+        let line = ime.next_line("the refusal");
+        if line.starts_with("ime: protocol error") {
+            break line;
+        }
+    };
+    assert!(line.contains("are alive on this connection"), "{line}");
+    wait_for_log(
+        &seinas,
+        "a virtual keyboard was refused (too many are alive on the connection)",
+    );
 }
 
 #[test]

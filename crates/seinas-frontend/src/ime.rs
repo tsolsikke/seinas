@@ -102,6 +102,15 @@ pub struct ImeState {
     /// ([`PendingKeyboards`])に置く(Smithay が作るオブジェクトの番号は、作るときには分からないため)。
     vk_pending: HashMap<ClientId, PendingKeyboards>,
     vk_generation: HashMap<ObjectId, u64>,
+    /// クライアントごとの、生きている virtual-keyboard(Smithay へ通したもの)。
+    vk_clients: HashMap<ClientId, ClientKeyboards>,
+}
+
+/// 1 つのクライアントの、生きている virtual-keyboard の数と、それを作った manager。
+struct ClientKeyboards {
+    live: usize,
+    /// 世代を見分けられないときに、`unauthorized` のエラーを送る先(最後に作ったときの manager)。
+    manager: ZwpVirtualKeyboardManagerV1,
 }
 
 /// 1 つのクライアントの、作ったが、まだ最初の要求が届いていない virtual-keyboard。
@@ -127,19 +136,22 @@ impl PendingKeyboards {
         self.queue.clear();
     }
 
-    /// 最初の要求が届いたオブジェクトの世代。見分けられないか、前の世代のものなら None。
-    fn take(&mut self) -> Option<u64> {
+    /// 最初の要求が届いたオブジェクトの世代。
+    fn take(&mut self) -> Taken {
         match (self.stale, self.queue.is_empty()) {
-            (0, _) => self.queue.pop_front(),
+            (0, _) => self
+                .queue
+                .pop_front()
+                .map_or(Taken::Refused, Taken::Generation),
             (_, true) => {
                 self.stale -= 1;
-                None
+                Taken::Refused
             }
             (_, false) => {
                 // 見分けられない:このオブジェクトを認めず、ほかの待っているものも、前の世代として扱う。
                 self.stale = self.len() - 1;
                 self.queue.clear();
-                None
+                Taken::Ambiguous
             }
         }
     }
@@ -159,9 +171,30 @@ impl PendingKeyboards {
     }
 }
 
+/// [`PendingKeyboards::take`] の結果。
+#[derive(Debug, PartialEq, Eq)]
+enum Taken {
+    /// 作ったときの世代。
+    Generation(u64),
+    /// 前の世代のもの(または待ち行列に無いもの)。認めない。
+    Refused,
+    /// 前の世代のものと今の世代のものが両方待っていて、どちらか見分けられない。認めず、IME の接続を切る。
+    Ambiguous,
+}
+
 /// 1 つのクライアントが、最初の要求を送らずに持てる virtual-keyboard の数の上限。越えて作ろうとしたら、
 /// `unauthorized` のエラーにする(待ち行列が増え続けないように)。
 const MAX_PENDING_KEYBOARDS: usize = 8;
+
+/// 1 つのクライアントが、同時に持てる virtual-keyboard(待っているものも、最初の要求を送ったものも)の数の
+/// 上限。越えて作ろうとしたら、`unauthorized` のエラーにする。
+///
+/// 根拠:IME が同時に使う virtual-keyboard は、ふつう 1 つ(テスト用の IME も 1 つ)。keymap を変えるために
+/// 作り直す IME もあるので、待ち行列の上限([`MAX_PENDING_KEYBOARDS`])の 2 倍まで余裕を見る。生きている
+/// オブジェクトごとに、Smithay が keymap(xkb)を持ち、Seinas が世代の記録(`vk_generation`)を持つので、数に
+/// 上限を置いて、メモリーが増え続けないようにする。世代の記録は、生きているオブジェクトのぶんだけ(destroy で
+/// 消す)なので、この上限で一緒に抑えられる。
+const MAX_KEYBOARDS: usize = 16;
 
 /// Smithay へ通した IME のクライアントと、そのオブジェクトが残っているか。
 struct Connected {
@@ -225,6 +258,7 @@ impl ImeState {
             generation: 0,
             vk_pending: HashMap::new(),
             vk_generation: HashMap::new(),
+            vk_clients: HashMap::new(),
         }
     }
 
@@ -596,7 +630,7 @@ where
         dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
-        if !vk_authorized(state, &client.id(), &resource.id()) {
+        if !vk_authorized(state, client, &resource.id()) {
             // 認可の無い(消えた)virtual-keyboard からの要求は、捨てる。
             return;
         }
@@ -642,27 +676,53 @@ where
         if ime.vk_pending.get(&client).is_some_and(|p| p.len() == 0) {
             ime.vk_pending.remove(&client);
         }
+        if let Some(keyboards) = ime.vk_clients.get_mut(&client) {
+            keyboards.live = keyboards.live.saturating_sub(1);
+            if keyboards.live == 0 {
+                ime.vk_clients.remove(&client);
+            }
+        }
     }
 }
 
 /// virtual-keyboard `object`(クライアント `client` のもの)が、いま認められているか。作ったときの世代が、いま
 /// 認められた IME の世代と同じときだけ。最初の要求で、作ったときの世代を決める(待ち行列の先頭)。
-fn vk_authorized<D: FrontendHost>(state: &mut D, client: &ClientId, object: &ObjectId) -> bool {
+///
+/// 世代を見分けられないとき(前の世代のものと今の世代のものが両方待っているとき)は、IME の接続を
+/// `unauthorized` のエラーで切り、つなぎ直しを求める。
+fn vk_authorized<D: FrontendHost>(state: &mut D, client: &Client, object: &ObjectId) -> bool {
+    let id = client.id();
     let ime = &mut state.frontend_mut().ime;
     let generation = match ime.vk_generation.get(object) {
         Some(&generation) => Some(generation),
         None => {
-            let pending = ime
+            let taken = ime
                 .vk_pending
-                .get_mut(client)
-                .and_then(PendingKeyboards::take);
+                .get_mut(&id)
+                .map_or(Taken::Refused, PendingKeyboards::take);
+            let generation = match taken {
+                Taken::Generation(generation) => Some(generation),
+                Taken::Refused => None,
+                Taken::Ambiguous => {
+                    if let Some(keyboards) = ime.vk_clients.get(&id) {
+                        keyboards.manager.post_error(
+                            zwp_virtual_keyboard_manager_v1::Error::Unauthorized,
+                            "cannot tell which input method a virtual keyboard was made for; reconnect",
+                        );
+                    }
+                    warn!(
+                        "a virtual keyboard was refused (it cannot be told whether it was made for the past or the current input method); the input method is disconnected and has to reconnect"
+                    );
+                    None
+                }
+            };
             // 認めないものも、0(どの世代とも違う)で覚え、次からは待ち行列を見ない。
             ime.vk_generation
-                .insert(object.clone(), pending.unwrap_or(0));
-            pending
+                .insert(object.clone(), generation.unwrap_or(0));
+            generation
         }
     };
-    generation.is_some() && generation == ime.authorized(client)
+    generation.is_some() && generation == ime.authorized(&id)
 }
 
 /// いまのキーボードのフォーカス。
@@ -791,7 +851,30 @@ where
                 warn!("a virtual keyboard was refused (too many wait for their first request)");
                 return;
             }
+            if ime
+                .vk_clients
+                .get(&client.id())
+                .is_some_and(|keyboards| keyboards.live >= MAX_KEYBOARDS)
+            {
+                data_init.init(id, RefusedVirtualKeyboard);
+                resource.post_error(
+                    zwp_virtual_keyboard_manager_v1::Error::Unauthorized,
+                    "too many virtual keyboards are alive on this connection",
+                );
+                warn!("a virtual keyboard was refused (too many are alive on the connection)");
+                return;
+            }
+            let pending = ime.vk_pending.entry(client.id()).or_default();
             pending.queue.push_back(generation);
+            let keyboards = ime
+                .vk_clients
+                .entry(client.id())
+                .or_insert_with(|| ClientKeyboards {
+                    live: 0,
+                    manager: resource.clone(),
+                });
+            keyboards.live += 1;
+            keyboards.manager = resource.clone();
             let request =
                 zwp_virtual_keyboard_manager_v1::Request::CreateVirtualKeyboard { seat, id };
             <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardManagerV1, (), D>>::request(
@@ -816,7 +899,7 @@ impl<D> Dispatch<ZwpVirtualKeyboardV1, RefusedVirtualKeyboard, D> for ImeState {
 
 #[cfg(test)]
 mod tests {
-    use super::PendingKeyboards;
+    use super::{PendingKeyboards, Taken};
 
     fn pending(queue: &[u64], stale: usize) -> PendingKeyboards {
         PendingKeyboards {
@@ -828,9 +911,9 @@ mod tests {
     #[test]
     fn keyboards_of_one_generation_get_it_in_any_order() {
         let mut p = pending(&[3, 3], 0);
-        assert_eq!(p.take(), Some(3));
-        assert_eq!(p.take(), Some(3));
-        assert_eq!(p.take(), None);
+        assert_eq!(p.take(), Taken::Generation(3));
+        assert_eq!(p.take(), Taken::Generation(3));
+        assert_eq!(p.take(), Taken::Refused);
     }
 
     #[test]
@@ -838,18 +921,18 @@ mod tests {
         // 前の世代で作ったもの(stale)だけが残っていれば、認めない。
         let mut p = pending(&[1], 0);
         p.retire();
-        assert_eq!(p.take(), None);
+        assert_eq!(p.take(), Taken::Refused);
         assert_eq!(p.len(), 0);
-        // 前の世代と今の世代が混ざっていれば、どちらの順で要求が来ても、全部認めない。
+        // 前の世代と今の世代が混ざっていれば、見分けられない(IME の接続を切る)。残りも全部認めない。
         let mut p = pending(&[1], 0);
         p.retire();
         p.queue.push_back(2);
-        assert_eq!(p.take(), None);
-        assert_eq!(p.take(), None);
+        assert_eq!(p.take(), Taken::Ambiguous);
+        assert_eq!(p.take(), Taken::Refused);
         assert_eq!(p.len(), 0);
         // 混ざりが無くなった後に作ったものは、認める。
         p.queue.push_back(2);
-        assert_eq!(p.take(), Some(2));
+        assert_eq!(p.take(), Taken::Generation(2));
     }
 
     #[test]
@@ -857,7 +940,7 @@ mod tests {
         let mut p = pending(&[4, 4], 0);
         p.forget_one();
         assert_eq!(p.len(), 1);
-        assert_eq!(p.take(), Some(4));
+        assert_eq!(p.take(), Taken::Generation(4));
         let mut p = pending(&[], 2);
         p.forget_one();
         assert_eq!(p.len(), 1);
