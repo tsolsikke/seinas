@@ -261,6 +261,8 @@ struct Standalone {
     /// 描けない要素があった。切られたクライアントのクリーンアップが要る。
     reap_needed: bool,
     last_draw: Option<Instant>,
+    /// 最初の 1 枚を画面へ present したか(ログに 1 回だけ出すため)。
+    presented: bool,
 }
 
 impl FrontendHost for Standalone {
@@ -313,6 +315,16 @@ impl Standalone {
             self.reap_needed = true;
         }
         self.screen.show(&view)?;
+        if !self.presented {
+            // 起動を見る側(ZeikOS の確かめなど)が、この行で「最初の 1 枚が出た」ことを知る。文言を変えるときは、
+            // 探す側にも知らせる。
+            self.presented = true;
+            info!(
+                "presented the first frame ({}x{})",
+                self.painter.width(),
+                self.painter.height()
+            );
+        }
         drop(elements);
         self.needs_redraw = false;
         self.last_draw = Some(Instant::now());
@@ -557,6 +569,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         needs_redraw: true,
         reap_needed: false,
         last_draw: None,
+        presented: false,
     };
 
     loop {

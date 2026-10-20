@@ -65,6 +65,8 @@ pub struct Seinas {
     /// 描けない要素があった。切られたクライアントのクリーンアップが要る。
     reap_needed: bool,
     exit: bool,
+    /// 最初の 1 枚を親へ present したか(ログに 1 回だけ出すため)。
+    presented: bool,
 }
 
 impl Seinas {
@@ -110,6 +112,15 @@ impl Seinas {
             error!("drawing failed: {e}");
             self.exit = true;
             return;
+        }
+        if !self.presented {
+            // 起動を見る側が、この行で「最初の 1 枚が出た」ことを知る。文言を変えるときは、探す側にも知らせる。
+            self.presented = true;
+            info!(
+                "presented the first frame ({}x{})",
+                self.painter.width(),
+                self.painter.height()
+            );
         }
         self.needs_redraw = false;
         self.frontend.send_frame_callbacks(self.start.elapsed());
@@ -272,6 +283,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         needs_redraw: false,
         reap_needed: false,
         exit: false,
+        presented: false,
     };
 
     while !state.exit {
