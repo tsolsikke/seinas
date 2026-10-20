@@ -3,6 +3,7 @@
 Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が ZeikOS の上で動くのに要るものを 1 つにまとめ、ZeikOS の今の対応と突き合わせた文書です(C1S4 の準備)。
 
 - Seinas の側の値は、2026-10-11 に Linux(WSL2)の上で、musl の静的ビルドを `strace -f` で取ったものです(4 つを同時に動かし、seinas は seinas-standalone を親にして入れ子で動かした)。取り方と、変更ごとの差分の記録は `docs/m3-syscalls.md` にあります。こちらは、その記録から「要るもの」を引いた表です。
+- 2026-10-21 に、下の「2026-10-21 に合わせ直したこと」の節と、表のうち時計・epoll・eventfd・timerfd・ppoll・ソケット・ロックファイル・memfd の封・スレッドの行を、zeikos の 253c8b39(2026-10-20)のソースと ADR に合わせました。ほかの行と「数の要約」は、10/11 のままです。
 - ZeikOS の側は、隣の zeikos のリポジトリの main(9666a4cce94c6e886d3c83b3b46ed99bd3f727fb)のソースを読んで判断しました。ビルドも実行もしていません。根拠は、ファイルと関数(と行)で書きます。断りの無いファイルは `kernel/src/syscall.rs` です。syscall の番号から関数への表は `dispatch()`(771〜1128 行)で、表に無い番号は `-ENOSYS` を返します(1123 行)。
 - 下の「まとまり」の欄は、ZeikOS の側の機能のまとまりの名前です。どの課題に当たるかは、Jira を正とします(下の「まとまりごとの一覧」)。
 
@@ -33,7 +34,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | poll(events=0、timeout 0。Rust の起動のとき) | S N T Z | 有る | `poll_from_ring3` 1857 行(1901 行) | — | — |
 | getrandom(GRND_INSECURE と、フラグ 0) | S N T | 有る | `sys_getrandom` 5659 行 | 1 回 256 バイトまで | getrandom のフラグ 0(フラグ 0 は動く形になっている) |
 | clock_gettime(CLOCK_MONOTONIC) | S N T Z | 有る | `sys_clock_gettime` 5126 行 | 分解能 10 ms。vDSO は無い(AT_SYSINFO_EHDR を置かない。`kernel/src/abi/linux/initial_stack.rs` 75 行)ので、musl は syscall で呼ぶ | — |
-| clock_gettime(CLOCK_REALTIME。タスクバーの時計) | T | 無い | `sys_clock_gettime` 5132 行(MONOTONIC のほかは EINVAL) | 取れないとき、タスクバーは「--:--」を出して動き続ける | 新しい課題の候補 |
+| clock_gettime(CLOCK_REALTIME。タスクバーの時計と、ログの時刻) | S N T | 有る | `sys_clock_gettime`、zeikos の ADR-0090 | 起動時に CMOS の RTC を 1 回読み、単調な時計の経過を足す(読めなければ EINVAL のまま)。コンポジタも、tracing のログの時刻(UTC)で使う。2026-10-21 に、ZeikOS の上でログに UTC の時刻が出ることを確かめた(ZeikOS の側) | — |
 
 ### 共有メモリー(Wayland の shm)
 
@@ -43,7 +44,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | ftruncate(memfd。pool の大きさ。SCTK は伸ばす) | N T Z | 一部 | `ftruncate_from_ring3` 2910 行、`kernel/src/shm.rs` の `set_size` | 1 回だけ(2 回目は EINVAL)、32 KiB まで。zeyes-min の pool は 614,400 バイト、タスクバーは 256,000 バイト、800x600 のウィンドウは 1.9 MB で、どれも越える | 新しい課題の候補 |
 | 2 つのプロセスの間の MAP_SHARED(PROT_READ\|PROT_WRITE、memfd) | S N T Z | 一部 | 2993〜3067 行、`kernel/src/shm.rs`(ADR-0065) | 共有は動く。memfd はシステム全体で 2 つまで(`MAX_SHM`、`shm.rs` 41 行)、1 つ 8 ページ(`MAX_SHM_PAGES`、45 行)。クライアントごとに 1 つ以上と、コンポジタの keymap の分が要る | 新しい課題の候補 |
 | munmap・mprotect(shm のマップ) | S N T Z | 一部 | `munmap_from_ring3` 2464 行(shm・画面は EINVAL) | コンポジタは、クライアントが pool を手放すと munmap する | 新しい課題の候補 |
-| fcntl(F_ADD_SEALS。F_SEAL_SEAL\|F_SEAL_SHRINK と、keymap の F_SEAL_SEAL\|F_SEAL_SHRINK\|F_SEAL_GROW\|F_SEAL_WRITE) | S N T Z | 一部 | `sys_fcntl` 5789 行 | 0 を返すが、封は覚えず、効かない。Seinas が動くのには困らない | — |
+| fcntl(F_ADD_SEALS。F_SEAL_SEAL\|F_SEAL_SHRINK と、keymap の F_SEAL_SEAL\|F_SEAL_SHRINK\|F_SEAL_GROW\|F_SEAL_WRITE) | S N T Z | 有る | zeikos の ADR-0065 の Addendum(memfd のフラグと封と FD_CLOEXEC) | memfd_create のフラグと名前を確かめ、封を持って効かせる | — |
 | write と lseek(SEEK_SET。memfd。コンポジタが keymap を書く) | S N | 無い | `sys_write` 6520〜6601 行(memfd は EBADF)、`sys_lseek` 4677 行(何もしない) | keymap を書けないと、キーボードの keymap をクライアントへ渡せない | 新しい課題の候補 |
 | pread64(親の keymap を読む) | N | 無い | 17 番が無い | 入れ子の構成だけ | 新しい課題の候補(低い) |
 
@@ -51,31 +52,31 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
-| epoll_create1(EPOLL_CLOEXEC)、epoll_ctl(ADD・MOD・DEL、EPOLLIN\|EPOLLPRI\|EPOLLERR\|EPOLLHUP、EPOLLONESHOT)、epoll_pwait(timeout -1・0・正の値)、epoll の入れ子 | S N T Z | 無い | 291・233・281 番が無い | calloop と wayland-backend が使う。入れ子は wayland-backend の epoll を calloop の epoll に入れる形 | epoll・eventfd・timerfd・ppoll |
-| eventfd2(0、EFD_CLOEXEC\|EFD_NONBLOCK) | S N T Z | 無い | 290 番が無い | calloop の起こし方 | epoll・eventfd・timerfd・ppoll |
-| timerfd_create(CLOCK_MONOTONIC、TFD_CLOEXEC\|TFD_NONBLOCK)、timerfd_settime(相対、1 回きり、0 で止める) | S N T Z | 無い | 283・286 番が無い | — | epoll・eventfd・timerfd・ppoll |
-| ppoll(fd 1 つ、POLLIN\|POLLERR、timeout と sigmask は NULL) | N T Z | 無い | 271 番が無い。poll でも POLLIN\|POLLERR は EINVAL | wayland-client が使う | epoll・eventfd・timerfd・ppoll |
+| epoll_create1(EPOLL_CLOEXEC)、epoll_ctl(ADD・MOD・DEL、EPOLLIN\|EPOLLPRI\|EPOLLERR\|EPOLLHUP、EPOLLONESHOT)、epoll_pwait(timeout -1・0・正の値)、epoll の入れ子 | S N T Z | 有る | `kernel/src/epoll.rs`、zeikos の ADR-0088 | レベルトリガーと EPOLLONESHOT(EPOLLET は断る)。epoll はシステム全体で 8 個、1 つに項目 16 個、入れ子の鎖は 5 個まで(`MAX_EPOLLS`・`MAX_ENTRIES`・`MAX_CHAIN`)。コンポジタは 2 個(うち 1 つを複製して 3 つの fd)、クライアントは 1 個ずつ使う | — |
+| eventfd2(0、EFD_CLOEXEC\|EFD_NONBLOCK) | S N T Z | 有る | zeikos の ADR-0088 | システム全体で 8 個。プロセスごとに 1 個使う | — |
+| timerfd_create(CLOCK_MONOTONIC、TFD_CLOEXEC\|TFD_NONBLOCK)、timerfd_settime(相対、1 回きり、0 で止める) | S N T Z | 有る | `kernel/src/timerfd.rs`、zeikos の ADR-0088 | システム全体で 8 個(`MAX_TIMERFDS`)。締切は 10 ms のティックに切り上げる。プロセスごとに 1 個使う | — |
+| ppoll(fd 1 つ、POLLIN\|POLLERR、timeout と sigmask は NULL) | N T Z | 無い | 271 番が無い(2026-10-21 の zeikos でも、番号の表に無い) | wayland-client が使う(タスクバーは、つないだ直後の往復で使う)。クライアントを ZeikOS で動かすときに要る | 新しい課題の候補 |
 | fcntl(F_SETFD の FD_CLOEXEC、F_DUPFD_CLOEXEC) | S N T Z | 有る | `sys_fcntl` 5789 行 | CLOEXEC は覚えない(exec が無いので困らない) | — |
 
 ### AF_UNIX ソケット(Wayland の接続)
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
-| socket(AF_UNIX、SOCK_STREAM\|SOCK_CLOEXEC) | S N T Z | 一部 | `socket_from_ring3` 1399 行(1403 行) | SOCK_STREAM だけを受け、SOCK_CLOEXEC・SOCK_NONBLOCK が付くと EINVAL。wayland-rs はいつも SOCK_CLOEXEC を付けるので、今は失敗する | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
-| bind(ファイルシステムの上のパス)、ソケットのパスの stat | S N | 一部 | `bind_from_ring3` 2004 行、`read_socket_name` 1349 行 | 名前はカーネルの表に入るだけで、ファイルシステムに inode を作らない(stat で見えない)。名前は 31 バイトまで | flock とパスへの bind |
+| socket(AF_UNIX、SOCK_STREAM\|SOCK_CLOEXEC) | S N T Z | 有る | `socket_from_ring3`、zeikos の ADR-0087 | SOCK_CLOEXEC と SOCK_NONBLOCK を受ける | — |
+| bind(ファイルシステムの上のパス)、ソケットのパスの stat | S N | 一部 | `bind_from_ring3`、zeikos の ADR-0087 の決定 2 | 名前はカーネルの表に置き、inode は作らない(stat と unlink は ENOENT)。wayland-server の形(ロックファイルを取り、残ったソケットのファイルを消してから bind)は、これで通る。名前は 107 バイトまで | — |
 | listen(backlog -1) | S N | 有る | `listen_from_ring3` 2043 行 | backlog は見ない | — |
-| accept4(SOCK_CLOEXEC)と、待っている接続が無いときの EAGAIN、ioctl(FIONBIO) | S N | 無い | 288 番が無い(accept は `accept_from_ring3` 2065 行で、いつも待つ)、`sys_ioctl` 6253 行(端末のほかは ENOTTY) | wayland-server は non-blocking の accept4 を使い、EAGAIN を「もう無い」という意味に使う | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
+| accept4(SOCK_CLOEXEC)と、待っている接続が無いときの EAGAIN、ioctl(FIONBIO) | S N | 有る | `accept_from_ring3`、`SYS_IOCTL` の FIONBIO、zeikos の ADR-0087 の Addendum | 待たない印の立った listener の accept は、待っている接続が無ければ EAGAIN を返す。FIONBIO は fd の種類によらず受ける | — |
 | connect | N T Z | 有る | `connect_from_ring3` 2122 行 | — | — |
-| sendto・sendmsg(MSG_DONTWAIT\|MSG_NOSIGNAL)、recvmsg(MSG_DONTWAIT\|MSG_CMSG_CLOEXEC)、SCM_RIGHTS での memfd の受け渡し | S N T Z | 一部 | `sendmsg_from_ring3` 3201 行、`recvmsg_from_ring3` 3251 行、`read_msghdr` 3112 行、`write_to_socket` 2235 行 | フラグを読まず、いつも待つ(recvmsg はフラグの引数を読まない。送る側も、いっぱいなら待つ)。iovlen は 1、fd は 1 通に 1 つで memfd だけ | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
+| sendto・sendmsg(MSG_DONTWAIT\|MSG_NOSIGNAL)、recvmsg(MSG_DONTWAIT\|MSG_CMSG_CLOEXEC)、SCM_RIGHTS での memfd の受け渡し | S N T Z | 一部 | `sendmsg_from_ring3`・`recvmsg_from_ring3`(2026-10-19・20) | MSG_DONTWAIT・MSG_NOSIGNAL・MSG_CMSG_CLOEXEC を受け、ほかのフラグは断る。待たない形なら、空きや読めるものが無いとき EAGAIN。SCM_RIGHTS は、1 通に 1 つ、memfd だけで、向きごとに 1 つまでしか待たせられない(下の「SCM_RIGHTS を続けて送る場面」) | AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS |
 | 相手が切ったとき recvmsg が 0 を返すこと | S N T Z | 有る | `read_from_socket` 2168 行 | — | — |
-| ソケットの数:コンポジタは listen を 3 つ(ふだんのソケットと、シェルの部品のソケットと、IME のソケット)、接続はクライアントの数だけ | S N | 一部 | `kernel/src/socket.rs` 45・48 行(`MAX_LISTENERS`=1、`MAX_CONNECTIONS`=2。システム全体で、受け付け待ちも含む) | コンポジタ・タスクバー・クライアントの 3 本でも、listen 3、接続 2 が要る(シェルの部品と IME が増えれば、その数だけ増える) | 新しい課題の候補 |
+| ソケットの数:コンポジタは listen を 3 つ(ふだんのソケットと、シェルの部品のソケットと、IME のソケット)、接続はクライアントの数だけ | S N | 有る | `kernel/src/socket.rs`(`MAX_LISTENERS`=4、`MAX_CONNECTIONS`=8。システム全体で、受け付け待ちも含む) | — | — |
 
 ### ファイル
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
 | open(O_RDONLY\|O_LARGEFILE\|O_CLOEXEC)、stat、fstat、read、close | S N T | 有る | `sys_open` 4869 行、`sys_stat` 6164 行、`sys_fstat` 5828 行、`sys_read` 4038 行 | — | — |
-| ロックファイル:open(O_RDWR\|O_CREAT\|O_TRUNC)と flock(LOCK_EX\|LOCK_NB) | S N | 無い | `sys_open` 4892〜4897 行(O_RDWR は EROFS)、73 番(flock)が無い | wayland-server が、ソケットのパスに `.lock` を付けたファイルで、同じ名前のコンポジタが 2 つ動かないようにする | flock とパスへの bind |
+| ロックファイル:open(O_RDWR\|O_CREAT\|O_TRUNC)と flock(LOCK_EX\|LOCK_NB) | S N | 有る | `sys_flock`(`kernel/src/flock.rs`)、`sys_open`、zeikos の ADR-0087 | flock の表はシステム全体で 8 本。O_TRUNC の無い O_RDWR は EROFS のまま | — |
 | faccessat2(AT_FDCWD、xkb の置き場、R_OK\|X_OK、AT_EACCESS) | S N | 無い | 439 番が無い | xkbcommon が、xkb のファイルの置き場を確かめる | 新しい課題の候補 |
 | 一時ファイル:open(`$XDG_RUNTIME_DIR` のディレクトリ、O_RDWR\|O_TMPFILE\|O_CLOEXEC)、write、fcntl(F_DUPFD_CLOEXEC)、close(IME の keyboard の grab と、バージョン 7 より古い wl_keyboard へ、封をしない keymap を渡すとき) | S N | 無い | `sys_open`(O_RDWR は EROFS。2026-10-12 に、HEAD が 809e5de の zeikos のソースで確かめた) | Smithay 0.7.0 は、IME の grab へは、いつもこの形で渡す。tempfile は、O_TMPFILE が使えなければ、名前を付けて作って unlink する形に切り替える(そのときは O_CREAT\|O_EXCL と unlink が要る) | 新しい課題の候補 |
 | クライアントから受け取った keymap の fd の mmap(PROT_READ、MAP_PRIVATE。IME の virtual-keyboard) | S N | 一部 | `mmap_from_ring3` と `shm_of`(memfd のほかは EBADF。MAP_PRIVATE と MAP_SHARED を分けない。2026-10-12 に、HEAD が 809e5de のソースで確かめた) | IME が memfd で渡せば通る(読むだけなので、分けなくても困らない)。Smithay が grab で渡した一時ファイルを、IME がそのまま戻すと EBADF | ファイルの mmap(新しい課題の候補) |
@@ -95,8 +96,8 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
-| clone(0x7d0f00。CLONE_DETACHED を含む)、prctl(PR_SET_NAME)、gettid、スレッドごとのシグナルマスクと代替スタック | S N | 無い | 56 番(clone)・157 番(prctl)が無い。gettid は 881 行でいつも 1 | Smithay が、最初のクライアントが切れたときに shm のクリーンアップのスレッド(名前は「Shm dropping th…」)を作る。作れないと panic する | スレッド |
-| futex(FUTEX_WAIT_BITSET_PRIVATE。上のスレッドが待つ) | S N | 一部 | `sys_futex` 5559 行 | 値が合うと、待たずにプロセスを止める(終了 137) | スレッド |
+| clone(0x7d0f00。CLONE_DETACHED を含む)、prctl(PR_SET_NAME)、gettid、スレッドごとのシグナルマスクと代替スタック | S N | 一部 | `clone_from_ring3`・`classify_clone_flags`(M3a) | musl の pthread_create の形の clone と gettid は有る。スレッドはシステム全体で 4 本まで。prctl は無い(ENOSYS。Rust はスレッドの名前の失敗を無視する見込み) | スレッド |
+| futex(FUTEX_WAIT_BITSET_PRIVATE。上のスレッドが待つ) | S N | 一部 | `sys_futex`(M3a) | 本当に待つようになった。期限つきの待ちは ENOSYS | スレッド |
 | futex(FUTEX_WAKE_PRIVATE。wayland-client などの notify) | S N T Z | 一部 | `sys_futex` 5559 行 | いつも 0 を返す。スレッドが 1 本なら、これで足りる | futex の WAKE |
 
 ### 入出力の装置
@@ -123,9 +124,9 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | fd の種類 | seinas-standalone | seinas(入れ子) | seinas-taskbar | zeyes-min |
 | --- | --- | --- | --- | --- |
-| AF_UNIX の listen(ふだん・シェルの部品) | 2 | 2 | — | — |
+| AF_UNIX の listen(ふだん・シェルの部品・IME) | 3 | 3 | — | — |
 | AF_UNIX の接続 | クライアントの数(この例で 3) | 親へ 1 + 子の数 | 1 | 1 |
-| ロックファイル(`<ソケット>.lock`。開いたまま) | 2 | 2 | — | — |
+| ロックファイル(`<ソケット>.lock`。開いたまま) | 3 | 3 | — | — |
 | memfd(keymap と、クライアントから受け取った pool) | 1 + pool の数(IME がつながると、virtual-keyboard の keymap の 1 と、候補ウィンドウの pool が増える) | keymap 2 + 自分の pool 1 | pool 1 | pool 1 |
 | epoll | 3(calloop、wayland-backend、その複製) | 3 | 1 | 1 |
 | eventfd | 1 | 1 | 1 | 1 |
@@ -133,7 +134,19 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | 普通のファイル(フォント、xkb) | 読んだら閉じる(フォントはマップしたまま) | 同じ | 同じ(フォント) | — |
 | /dev/fb0 | fbdev の構成で 1 | — | — | — |
 
-ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります。
+ZeikOS の 1 プロセスの fd は 16 まで(標準入出力を含む)です。2026-10-21 に ZeikOS の上で、クライアント 0 のコンポジタ(seinas-standalone、/dev/fb0)が開いた fd は 15 本でした(標準入出力 3、epoll 3、eventfd 1、timerfd 1、/dev/fb0 1、ロックファイル 3、listen 3。ZeikOS の側が測った値)。クライアント 1 つにつき、ソケットと pool の memfd で 2 本増えるので、クライアントが 1 つつながると 17 本になり、上限を越えます(→ 新しい課題の候補)。
+
+## 2026-10-21 に合わせ直したこと
+
+ZeikOS の側に、epoll・eventfd・timerfd、待たない形のソケット、memfd の封、CLOCK_REALTIME が入り、Seinas の origin/main(1ba9fd5)の seinas-standalone が、変更なしで ZeikOS の上で起動しました(クライアント 0。ZeikOS の側の確かめ)。上の表の行のほかに、次のことが分かっています。
+
+- 相対のパスの open は、ZeikOS が断ります。コンポジタの既定のフォントの置き場は、作業中のディレクトリから見た `target/fonts` なので、ZeikOS の上では、起動のときにフォントを読めないという WARN が出ます(文字を描かないだけで動き続ける)。フォントを置くときは、`--fonts` か `SEINAS_FONTS` に絶対のパスを渡します。
+- fd の複製:ZeikOS は、ソケットとパイプの端の複製で参照を数えていません(複製を閉じると端が閉じる)。2026-10-21 に、Linux の上で、musl の静的ビルドのコンポジタ(fake screen)とタスクバー(シェルの部品のソケットへつなぐ)を `strace -f` で取って調べました。
+  - コンポジタ:複製するのは epoll の fd だけです(calloop が `fcntl(F_DUPFD_CLOEXEC)` で 1 回。ZeikOS の側で対応済み)。ソケットの fd は、dup・dup2・dup3・F_DUPFD・F_DUPFD_CLOEXEC のどれでも複製しません。パイプは作りません。
+  - タスクバー:複製するのは、pool の memfd だけです(smithay-client-toolkit が `fcntl(F_DUPFD_CLOEXEC)` で 1 回)。ソケットは複製せず、パイプも作りません。memfd の複製で参照を数えるかは、ZeikOS の側に確かめてもらう点です。
+- SCM_RIGHTS を続けて送る場面:ZeikOS は、向きごとに 1 つまでしか fd を待たせられません。
+  - 上の記録(キーボードの無い構成。クライアントはタスクバー 1 つ)では、タスクバーからコンポジタへ、pool の memfd を 1 つ、1 回だけ送りました。コンポジタからクライアントへは、fd を送りません(fd を付けない送信は `sendto(MSG_DONTWAIT|MSG_NOSIGNAL)`)。今の C1S4 の構成では、続けて 2 つ送る場面はありません。
+  - 続けて送りうる場面(コードを読んで分かったもの。どれも今の ZeikOS の構成では起きない):キーボードを持つ構成(`--test-input`)で、コンポジタが wl_keyboard を作るたびに keymap の fd を送るとき(1 つのクライアントが wl_keyboard を続けて 2 つ作ると、同じ向きに 2 つ)。IME の virtual-keyboard のキーで、Smithay がフォーカスのあるクライアントへ keymap を送り直すとき。クライアントが pool を続けて 2 つ作るとき(今のタスクバー・壁紙・zeyes-min は、それぞれ 1 つ)。
 
 ## 置くファイル
 
@@ -175,10 +188,10 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 
 | まとまり | 当てはまる「無い」「一部」 |
 | --- | --- |
-| epoll・eventfd・timerfd・ppoll | epoll(入れ子と EPOLLONESHOT を含む)、eventfd2、timerfd、ppoll(と poll の POLLIN\|POLLERR) |
-| AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS | socket の SOCK_CLOEXEC、accept4 と EAGAIN、FIONBIO、MSG_DONTWAIT・MSG_NOSIGNAL・MSG_CMSG_CLOEXEC、SCM_RIGHTS の制限(1 通に 1 つ、memfd だけ) |
+| epoll・eventfd・timerfd・ppoll | ppoll(と poll の POLLIN\|POLLERR)。epoll(入れ子と EPOLLONESHOT を含む)・eventfd2・timerfd は、2026-10-21 の時点で入った |
+| AF_UNIX ソケットのフラグ・accept4・SCM_RIGHTS | SCM_RIGHTS の制限(1 通に 1 つ、memfd だけ、向きごとに 1 つ)。SOCK_CLOEXEC・SOCK_NONBLOCK、accept4 と EAGAIN、FIONBIO、MSG_DONTWAIT・MSG_NOSIGNAL・MSG_CMSG_CLOEXEC は、2026-10-21 の時点で入った |
 | futex の WAKE | futex の WAKE(いまは 0 を返すだけ。スレッドを使うまでは足りる) |
-| flock とパスへの bind | flock、ロックファイルの O_RDWR\|O_CREAT\|O_TRUNC、ファイルシステムの上のパスへの bind(inode を作り、stat で見えるようにする) |
+| flock とパスへの bind | 2026-10-21 の時点で入った(flock、ロックファイルの O_RDWR\|O_CREAT\|O_TRUNC。bind は inode を作らない形で、wayland-server の形が通る。zeikos の ADR-0087) |
 | 4 MiB を越えるファイル | 4 MiB を越えるファイル(フォント 3 本) |
 | getrandom のフラグ 0 | getrandom のフラグ 0(読んだ限りでは、もう動く形。確かめて閉じられるかを ZeikOS の側で見てもらう) |
 | スレッド | clone(スレッド)、futex の WAIT、prctl(PR_SET_NAME)、gettid、set_tid_address の終わるときの消去 |
@@ -188,15 +201,16 @@ ZeikOS の 1 プロセスの fd は 16 までで、上の数は収まります�
 1. 共有メモリーの量:memfd の数(システムで 2 つ)と大きさ(32 KiB)、ftruncate を 2 回以上(伸ばす)、shm のマップの munmap・mprotect。
 2. memfd への write と lseek(コンポジタが keymap を書く)。
 3. ファイルの mmap(PROT_READ、MAP_SHARED。フォントと xkb。無くてもヒープへ読んで動くが、メモリーが増える)。
-4. AF_UNIX の数(listen 1・接続 2 を、listen 2・接続 4 以上に)。
+4. AF_UNIX の数(listen 1・接続 2 を、listen 2・接続 4 以上に)。2026-10-21 の時点で、listen 4・接続 8 になった。
 5. 3〜4 本のプロセスを同時に動かすこと(Ring 3 のタスクの数、並べて動かす子の数、shell からの起こし方)。
 6. 外からプロセスを止めること(kill と SIGTERM の既定の動き)。
 7. シグナルの配送(SIGBUS の同期的な配送、rt_sigreturn。shm の縮小のときだけ要る)。
-8. clock_gettime の CLOCK_REALTIME(タスクバーの時計)。
+8. clock_gettime の CLOCK_REALTIME(タスクバーの時計)。2026-10-21 の時点で入った(zeikos の ADR-0090)。
 9. faccessat2(xkbcommon)。
 10. 入力の装置(マウスと、Linux の /dev/input/event* の形)。Seinas の側の、seinas-standalone が装置から入力を読む作りと合わせて決める。
 11. pread64(入れ子の構成だけ。低い)。
 12. IME の道:`$XDG_RUNTIME_DIR` の O_TMPFILE の一時ファイル(Smithay が IME の grab へ keymap を渡す形)と、クライアントから受け取った memfd でない fd の mmap。プロセスは IME の 1 本が増える(上の 5)。
+13. 1 プロセスの fd の数(16 まで)。クライアント 0 のコンポジタで 15 本で、クライアントが 1 つつながると 17 本になる(上の「fd の種類」)。
 
 ## 壁紙
 
