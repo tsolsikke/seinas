@@ -19,3 +19,8 @@
    判定・起動・ログのように、普通に使われている日本語の IT 用語は、そのまま使います。git の push は「push」と書きます。
    使わない語の一覧は、zeikos のリポジトリの `docs/terminology.md` の「使わない語」の表を見てください(zeikos は
    読むだけ)。Seinas の側の対応表は `docs/terminology.md` にあり、`tools/old-terms.py` が新しく書いた行を確かめます。
+4. **重い作業(cargo test の全体、`tools/pre-push.sh` の code 以上の段、musl のビルド)は、ZeikOS の QEMU と重ならないように、`tools/zeikos-lock.sh <コマンド>` で包む。**
+   ZeikOS は、QEMU を使う間、`/tmp/zeikos-qemu.lock` を flock の共有で持ちます(zeikos のリポジトリの ADR-0089 の
+   「重い作業をする側の約束」)。`tools/zeikos-lock.sh` は、同じファイルを排他で取り、取れなければ 1 行出してから待ちます
+   (最長 90 分)。`tools/pre-push.sh`(code 以上の段)と `tools/build-musl.sh` は、自分でこのロックを取ります。
+   ロックのファイルには書かない・消さないでください。

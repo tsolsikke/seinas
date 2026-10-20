@@ -54,6 +54,7 @@ tools/pre-push.sh
 - `--base <ref>` で、比べる相手を変えられます(既定は `origin/main`)。
 - `--dry-run` で、選んだ段と、ファイルごとの段だけを出します。
 - 終わりに、段と、かかった秒数と、落ちた確かめを出します。落ちたものがあれば、終わりの値は 1 です。
+- code 以上の段は、ZeikOS の QEMU と重ならないように、`tools/zeikos-lock.sh` でホストのロック(`/tmp/zeikos-qemu.lock` の排他)を取ってから動きます。ZeikOS が QEMU を使っている間は、`waiting for ZeikOS's QEMU` を 1 行出して待ちます(最長 90 分。zeikos のリポジトリの ADR-0089)。docs の段と `--dry-run` は、ロックを取りません。
 
 push の後は、CI を待って確かめます。
 
