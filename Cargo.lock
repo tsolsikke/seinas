@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "seinas"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "seinas-frontend",
@@ -679,11 +679,11 @@ dependencies = [
 
 [[package]]
 name = "seinas-config"
-version = "0.1.0"
+version = "0.2.0"
 
 [[package]]
 name = "seinas-fbdev"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "seinas-golden",
@@ -692,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "seinas-frontend"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "seinas-config",
  "seinas-golden",
@@ -703,14 +703,14 @@ dependencies = [
 
 [[package]]
 name = "seinas-golden"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "sha2",
 ]
 
 [[package]]
 name = "seinas-render"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "pixman",
@@ -720,7 +720,7 @@ dependencies = [
 
 [[package]]
 name = "seinas-standalone"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "seinas-fbdev",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "seinas-taskbar"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "seinas-config",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "seinas-test-clients"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "seinas-text",
@@ -755,7 +755,7 @@ dependencies = [
 
 [[package]]
 name = "seinas-text"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cosmic-text",
  "seinas-config",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "seinas-wallpaper"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "png",
  "seinas-config",
@@ -1336,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "zeyes-min"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "smithay-client-toolkit",
  "wayland-client",
