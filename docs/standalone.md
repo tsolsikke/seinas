@@ -62,6 +62,29 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 - クライアントは、`WAYLAND_DISPLAY` にソケットの絶対パスを入れてつなぎます。
 - `--dump` は、書きかけを読まれないように、別の名前で書いてから名前を付け替えます。
 
+## ZeikOS の上で起動する
+
+ZeikOS の上では、release の `seinas-standalone`(`docs/release.md` の「seinas-standalone の release」)を、変更を入れずに、そのまま動かします(2026-10-21 の時点の形。クライアントは 0 で、コンポジタだけを起動する)。
+
+```text
+seinas-standalone --socket /tmp/seinas/s.sock
+```
+
+- 画面は、引数が無ければ `/dev/fb0` です(ZeikOS では、前面のプロセスだけが開けます)。
+- ソケットとロックファイルは、`/tmp/seinas` の下にできます。ZeikOS は、`/tmp/seinas` をイメージに作ってあります。
+  - listen のソケット:`s.sock`(ふだん)、`s-shell.sock`(シェルの部品)、`s-ime.sock`(IME)
+  - ロックファイル:`s.lock`、`s-shell.lock`、`s-ime.lock`(パスの拡張子を `.lock` に替えたもの)
+- `--socket` を付けるので、`XDG_RUNTIME_DIR` は使いません(ZeikOS の `/etc/environment` の `XDG_RUNTIME_DIR=/tmp/seinas` は、そのままでよい)。
+- 置くファイルは、実行ファイル 1 つだけです。フォントと xkb のファイルは置きません(C1S4 の決定)。
+  - フォントが無いので、起動のときに、フォントを読めないという WARN の行が出ます(既定のフォントの置き場は、作業中のディレクトリから見た `target/fonts` で、ZeikOS は相対のパスの open を断るため)。文字を描かないだけで、動き続けます。
+  - ふだんの起動(`--test-input` なし)では、キーボードを作らないので、xkb のファイルは読みません。
+- 起動が済んだことは、ログ(標準エラー)の次の行で分かります。
+  - `listening on /tmp/seinas/s.sock`、`listening on /tmp/seinas/s-shell.sock`、`listening on /tmp/seinas/s-ime.sock`
+  - `screen: 1280x800 (…)`(大きさは、ZeikOS の画面のもの)
+  - `presented the first frame (1280x800)`(最初の 1 枚を画面へ present し終えたときに、1 回だけ。target は `seinas_standalone`)
+- 最初の 1 枚は、コンポジタの背景の色(`191e28`)だけの絵です。
+- 止めるには、前面の子を止める ZeikOS の手段(Ctrl+C)を使います。終わるときのクリーンアップはしていません(下の「今の制限」)。
+
 ## 公開するもの
 
 | グローバル | 中身 |

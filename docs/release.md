@@ -103,3 +103,21 @@ sha256sum --check SHA256SUMS
 ```
 
 `--dry-run` は、装置を開かずに終わります。実際の画面へ present する動かし方は `docs/fbdev.md` にあります。
+
+## seinas-standalone の release
+
+ZeikOS の上で Seinas のコンポジタを動かすために、`seinas-standalone`(musl 向けの静的 PIE)も、同じ形の release として配ります。手順は、上の seinas-fbdev と同じで、スクリプトが `tools/release-standalone.sh` に替わります。
+
+| ファイル | 中身 |
+| --- | --- |
+| `seinas-standalone` | 実行ファイル(x86-64 の Linux、musl、静的 PIE)。`tools/build-musl.sh` の出力と同じもので、strip はしない(CI の SHA-256 と同じバイトにするため) |
+| `seinas-standalone-<タグ>-third-party.tar.gz` | この実行ファイルに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
+| `SHA256SUMS` | 上の2つの SHA-256 |
+
+```bash
+tools/release-standalone.sh v0.2.0
+```
+
+- タグはリポジトリ全体に付くので、seinas-fbdev と seinas-standalone を同じバージョンで出すときは、同じタグの release に両方を置くこともできます。別々に出すときは、バージョンを上げてから切ります(上の「タグの決め方」)。
+- コンポジタは、最初の 1 枚を画面へ present し終えたときに、標準エラーのログへ `presented the first frame (<幅>x<高さ>)` を 1 回だけ出します(target は `seinas_standalone`。ZeikOS の側の確かめが、この行を探す)。文言を変えるときは、ZeikOS の側に知らせます。
+- ZeikOS の上での起動のしかたと、置くファイルは `docs/standalone.md` の「ZeikOS の上で起動する」にあります。
