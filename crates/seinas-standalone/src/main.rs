@@ -288,7 +288,6 @@ impl Standalone {
         }
     }
 
-    /// クライアントの画面を合成して画面へ present し、クライアントへframeコールバックを返す。
     /// 出力の大きさを `width` × `height` に変える(画面、共通のレンダラー、フロントエンド)。
     fn resize(&mut self, width: u32, height: u32) -> Result<(), Box<dyn Error>> {
         if (width as i32, height as i32) == self.screen.size() {
@@ -305,6 +304,7 @@ impl Standalone {
         Ok(())
     }
 
+    /// クライアントの画面を合成して画面へ present し、クライアントへframeコールバックを返す。
     fn draw(&mut self) -> Result<(), Box<dyn Error>> {
         let elements = self.frontend.render_elements(self.painter.renderer());
         let view = self.painter.paint(&elements)?;
