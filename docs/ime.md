@@ -39,7 +39,7 @@ ZeikOS でキーボードを有効にするときは、xkb のファイル(ADR 0
 
 Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas はその場でフォーカスを移しますが、IME が virtual-keyboard で戻す「Alt を離した」は、その後で届きます。
 
-- virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡します。Seinas は、virtual-keyboard で「押した」を渡したキーを覚え、キーボードのフォーカスを動かしたら(同じクライアントへの leave と enter のし直しも含む)、記録を空にします。Smithay の `forwarded_pressed_keys` は、Smithay の外から読めず、virtual-keyboard のキーも入らないので使いません。
+- virtual-keyboard で戻ってきたキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡します。Seinas は、virtual-keyboard のオブジェクトごとに、「押した」を渡したキーと、渡した先とフォーカスの世代を覚えます。キーボードのフォーカスを動かしたら(同じクライアントへの leave と enter のし直しも含む)、世代を進め、前の世代で渡したものは、leave で消えたものとして扱います。Smithay の `forwarded_pressed_keys` は、Smithay の外から読めず、virtual-keyboard のキーも入らないので使いません。
 - そのため、新しいフォーカスのクライアントには、押したことを知らない Alt の「離した」が届きません。前のクライアントには leave が届いているので、Alt が押されたまま残るクライアントもありません。
 
 ## IME の復旧(接続断と緊急解除)
@@ -70,7 +70,8 @@ IME が去った後(接続断でも緊急解除でも)は、次の順に届き�
 
 - 変換中の文字:Seinas から、空の preedit_string と done は送りません(先に届いていた commit_string まで、アプリに適用させるおそれがあるため)。text-input の leave で、アプリが変換中の文字を消します(text-input-v3 の leave の「The client should reset any preedit string previously set」)。テスト用のアプリは、そのとおりに消し、`window: reset preedit` を書きます。
 - 押されたままのキー:`wl_keyboard` の enter に入るのは、物理のキーボードで今押されていて、IME かアプリへ渡したキーだけです(Smithay の `forwarded_pressed_keys`)。IME が virtual-keyboard で押したキーは入らないので、leave でアプリから消えます。Seinas が使ったショートカットのキー(緊急解除の F12 など)も入りません。物理のキーボードで押しているキーは、離したことが直接アプリへ届きます。
-- まだ直していないこと(2026-10-16 に再現した):IME が grab だけを release し(input method は残す)、virtual-keyboard で押したキーの離したことを送らないと、アプリにはそのキーが押されたまま残ります(フォーカスが動くまで)。grab の release では、`wl_keyboard` の leave と enter を送り直さないためです。テスト `a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_pressed` を `#[ignore]` で置いてあります。直し方は C1S4 で決めます。
+- virtual-keyboard が壊れたとき(destroy、IME の接続断、input method の destroy での認可の取り消し、緊急解除):その virtual-keyboard が押したままのキーの「離した」を、渡した先のアプリへキーごとに送り、modifiers を物理のキーボードの状態へ戻します(ADR 0004 の 1.9)。ログには `released N key(s) … left pressed by a virtual keyboard` を出します(キーは出しません)。物理のキーボードやほかの virtual-keyboard が同じキーを押しているときと、フォーカスが動いた後は、送りません。2 回続けて壊れても(destroy の後の接続断)、2 回目は送りません。
+- grab の release だけでは、virtual-keyboard の押下を消しません(仕様は、grab の release が押下を消すとは書いていない)。IME が「離した」を遅れて送れば、そのとおりアプリに届きます。IME が「離した」を送らずに接続を保ったままなら、アプリにはキーが押されたまま残るので、緊急解除で復旧します。
 - 繰り返し:Seinas には、キーの繰り返しのタイマーがありません(繰り返しは、アプリと IME が `repeat_info` で行う)。アプリの繰り返しは `wl_keyboard` の leave で止まり、IME の繰り返しは、接続を切ると届かなくなります。
 - 戻すのは、IME が新しい接続でつなぎ直したときだけです。古い接続のクリーンアップ(Smithay の部品で、古い input method と grab の destroy)が済むまでは、新しい `get_input_method` を断ります(ログに `the released input method is not cleaned up yet`)。Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため、新しい IME の grab を消さないようにするためです。新しい IME がつながると、フォーカスのあるアプリに text-input の enter が届き、同じ欄で続けて打てます(クリックし直さなくてよい)。
 - 保証していない範囲:serial の合わない古い要求が、新しいアプリに入りえます(Smithay 0.7.0 は、IME の文字の要求を、届いたその場で、そのときアクティブな text-input へ送るため)。commit の前に切れた IME の commit_string は、アプリの pending の状態に残り、アプリの作りによっては、後の done で適用されます。次の課題で扱います(ADR 0004 の 1.5)。
@@ -139,7 +140,16 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `too_many_waiting_virtual_keyboards_are_refused` | 要求を送らずに 9 個目を作ると unauthorized で切られ、その後につないだ IME はふつうに使える |
 | `too_many_live_virtual_keyboards_are_refused` | 最初の要求を送ったものも数えて、生きている virtual-keyboard が 16 個ある所で次を作ると unauthorized で切られ、ログに理由が出る |
 | `a_virtual_keyboard_key_released_after_the_grab_release_is_not_left_pressed` | virtual-keyboard で押し、grab を release した後に virtual-keyboard で離すと、離したことがウィンドウに届く |
-| `a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_pressed`(`#[ignore]`) | 離したことが来ないと、押されたまま残る(再現する。まだ直していない) |
+| `a_virtual_keyboard_key_left_pressed_after_the_grab_release_is_released_with_the_virtual_keyboard` | grab を release しただけでは、virtual-keyboard で押したキーは押されたまま(離したことも leave も届かない)。その virtual-keyboard を destroy すると、離したことが届く |
+| `a_virtual_keyboard_destroyed_with_a_key_pressed_releases_it` | virtual-keyboard で押したまま destroy すると、離したことがウィンドウに届き、ログに出る |
+| `a_disconnected_ime_releases_the_keys_of_its_virtual_keyboard` | IME の接続が切れると、leave の送り直しより先に、押したままのキーの離したことが届く |
+| `a_destroyed_input_method_releases_the_keys_of_its_virtual_keyboard` | input method の destroy(認可の取り消し)でも同じ |
+| `the_release_key_releases_the_keys_of_the_virtual_keyboards` | 緊急解除でも同じ。物理のキーボードで押している Alt と Shift は離さない |
+| `a_virtual_keyboard_key_is_released_once_when_the_destroy_and_the_disconnection_follow` | destroy の後に接続が切れても、離したことは 1 回だけ |
+| `a_key_held_on_the_physical_keyboard_is_not_released_with_a_virtual_keyboard` | 同じキーを物理のキーボードも押しているときは、virtual-keyboard が壊れても離さない |
+| `only_the_keys_of_the_broken_virtual_keyboard_are_released` | 2 つの virtual-keyboard が押しているとき、壊れた方だけが押しているキーだけを離す |
+| `keys_are_not_released_after_the_focus_moved` | フォーカスが別のウィンドウへ動いた後に壊れても、どちらのウィンドウにも離したことを送らない |
+| `modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks` | キーを押さずに modifiers だけを渡した virtual-keyboard が壊れると、modifiers が物理のキーボードの状態に戻る |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |

@@ -158,7 +158,13 @@ text-input と `wl_keyboard` の leave は、別のもの:
 ### 1.9 virtual-keyboard で戻ったキー
 
 - IME が virtual-keyboard で戻したキーは、キーボードのフォーカスのあるクライアントへ届ける。
-- 戻ったキーの「離した」は、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡す(`docs/ime.md` の「キーの道」)。フォーカスを動かしたら、記録を空にする。どのクライアントにも、キーが押されたまま残らないようにするため。
+- 戻ったキーの「離した」は、その virtual-keyboard が、いまのフォーカスのクライアントに「押した」を渡したキーのときだけ渡す(`docs/ime.md` の「キーの道」)。押下の状態は、virtual-keyboard のオブジェクトごとに持つ(押したキー、modifiers を渡したか、渡した先の surface、そのときのフォーカスの世代)。フォーカスを動かしたら世代を進め、前の世代で渡したものは、leave でアプリの側から消えたものとして扱う。どのクライアントにも、キーが押されたまま残らないようにするため。
+- 片付ける時(2026-10-22 に決めた):virtual-keyboard が壊れた時に、そのオブジェクトが押したままのものを片付ける。壊れた時は、virtual-keyboard の destroy、IME の接続断、認可の取り消し(input method の destroy、IME の権限の分離で切られたとき)、緊急解除。記録を取り出してから片付けるので、destroy と接続断が続けて来ても、2 回目は何もしない。
+  - 片付け方:渡した先が、いまもフォーカスを持っていれば(世代も同じ)、その先のクライアントの `wl_keyboard` へ、キーごとの「離した」を直に送り、modifiers を物理のキーボードの今の状態へ戻す。Seinas のショートカットの処理は通さない。物理のキーボードが押しているキーと、ほかの virtual-keyboard が同じ先へ押しているキーは、離さない。フォーカスが動いた後は、何も送らない(新しいフォーカスのアプリへ、誤った「離した」を送らない)。keymap は戻さない(virtual-keyboard が送った keymap は、次に物理のキーボードのキーが届くまで、アプリの側に残る)。
+  - 片付けない時:ふつうの grab の release だけでは、virtual-keyboard の押下を消さない。release の後に、正当な「離した」が遅れて届く形も正常である。
+  - 根拠:virtual-keyboard-unstable-v1.xml の `destroy` には、押したキーの扱いの説明が無い(86〜88 行)。input-method-unstable-v2.xml の grab の `release` は「release the grab object」とだけ書き、virtual-keyboard の押下に触れない(438〜440 行)。どちらも wayland-protocols-misc 0.3.12 で確かめた。wlroots 0.19.0 は、キーボードを片付けるとき(`wlr_keyboard_finish`)に、押したままのキーの「離した」を送る(GPT-6 の答えによる。Seinas の側では、wlroots のソースを確かめていない)。
+  - 不具合のある IME が、「離した」を送らずに接続を保つ場合(grab を release した後など)は、緊急解除(1.5)で復旧する。
+  - 古い grab を効力の無いものとして扱う本来の形(手元の Smithay の直しを `[patch.crates-io]` で当てる案)は、依存を変えない決まりの例外になるので、運用者の判断の後で別の課題にした。それまでは、1.5 の守り(古い grab が残る間は新しい IME を断る)を残す。
 
 ### 1.10 変換中の文字と、text-input を使わないアプリ
 
