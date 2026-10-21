@@ -22,6 +22,9 @@
 //!   ときだけ渡す。Alt+Tab で Alt を離すと、Seinas はその場でフォーカスを移すが、IME が戻す「Alt を離した」は
 //!   後から届くので、そのままでは、押したことを知らない新しいフォーカスのクライアントへ届いてしまうため。前の
 //!   フォーカスのクライアントには leave が届いているので、押されたまま残るクライアントは無い。
+//! - virtual-keyboard の押下の状態は、オブジェクトごとに持つ([`VkInput`])。virtual-keyboard が壊れたとき
+//!   (destroy・接続断・認可の取り消し・緊急解除)に、押したままのキーの「離した」をキーごとに送り、modifiers を
+//!   物理のキーボードの状態へ戻す([`release_vk_input`])。grab の release だけでは消さない(ADR 0004 の 1.9)。
 //!
 //! 2 つ目を Smithay へ渡さない理由(Smithay 0.7.0 の不具合を避けるため):
 //!
@@ -40,6 +43,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use smithay::utils::SERIAL_COUNTER;
 use smithay::{
+    backend::input::Keycode,
     input::{keyboard::KeyboardHandle, Seat},
     reexports::{
         wayland_protocols::wp::text_input::zv3::server::{
@@ -59,7 +63,7 @@ use smithay::{
         },
         wayland_server::{
             backend::{protocol::ProtocolError, ClientId, ObjectId},
-            protocol::wl_surface::WlSurface,
+            protocol::{wl_keyboard::KeyState as WlKeyState, wl_surface::WlSurface},
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, Resource,
         },
     },
@@ -92,10 +96,12 @@ pub struct ImeState {
     pub(crate) to_reap: Option<Client>,
     /// 見せている候補ウィンドウ。IME が有効で、親(フォーカスのあるウィンドウ)があるときだけ。
     pub popup: Option<PopupSurface>,
-    /// virtual-keyboard で「押した」を渡したキー(evdev の番号)と、そのときのキーボードのフォーカス。フォーカスが
-    /// 変わったら空にする(前のクライアントには leave が届き、押したキーは離したことになる)。
-    vk_pressed: HashSet<u32>,
-    vk_focus: Option<WlSurface>,
+    /// virtual-keyboard のオブジェクトごとの、アプリへ渡した押下の状態([`VkInput`])。オブジェクトが壊れたとき
+    /// (destroy・接続断・認可の取り消し・緊急解除)に、[`release_vk_input`] で片付ける。
+    vk_inputs: HashMap<ObjectId, VkInput>,
+    /// キーボードのフォーカスの世代(フォーカスが動くたびに 1 つ進める。同じクライアントへの leave と enter の
+    /// し直しも含む)。進んだ後は、前の世代で渡した押下は、アプリの側で leave により消えている。
+    focus_generation: u64,
     /// 受け入れた IME の世代(受け入れるたびに 1 つ進める)。
     generation: u64,
     /// virtual-keyboard を作ったときの世代。作ってから最初の要求が届くまでは、クライアントごとの待ち行列
@@ -104,6 +110,22 @@ pub struct ImeState {
     vk_generation: HashMap<ObjectId, u64>,
     /// クライアントごとの、生きている virtual-keyboard(Smithay へ通したもの)。
     vk_clients: HashMap<ClientId, ClientKeyboards>,
+}
+
+/// 1 つの virtual-keyboard が、アプリへ渡した押下の状態。
+///
+/// 記録するのは、フォーカスのあるアプリへ実際に渡したものだけ。フォーカスが動いた後(`focus_generation` が
+/// 違う)の記録は、アプリの側で leave により消えているので、片付けでは何も送らない。
+struct VkInput {
+    client: ClientId,
+    /// 押したまま、まだ「離した」を渡していないキー(evdev の番号)。
+    keys: HashSet<u32>,
+    /// `modifiers` の要求で渡したか(渡していれば、片付けで物理のキーボードの状態に戻す)。
+    modifiers: bool,
+    /// 渡した先(フォーカスのあった surface)と、そのときのフォーカスの世代。
+    target: Option<(WlSurface, u64)>,
+    /// 最後に届いたキーの時刻(片付けで送る「離した」に使う)。
+    time: u32,
 }
 
 /// 1 つのクライアントの、生きている virtual-keyboard の数と、それを作った manager。
@@ -253,8 +275,8 @@ impl ImeState {
             connected: None,
             to_reap: None,
             popup: None,
-            vk_pressed: HashSet::new(),
-            vk_focus: None,
+            vk_inputs: HashMap::new(),
+            focus_generation: 0,
             generation: 0,
             vk_pending: HashMap::new(),
             vk_generation: HashMap::new(),
@@ -276,10 +298,9 @@ impl ImeState {
     }
 
     /// キーボードのフォーカスを動かしたときに呼ぶ(同じクライアントへの leave と enter のし直しも含む)。
-    /// virtual-keyboard で「押した」を渡したキーの記録を空にする。
+    /// フォーカスの世代を進める(前の世代で virtual-keyboard が渡した押下は、leave でアプリの側から消えている)。
     pub fn keyboard_focus_moved(&mut self) {
-        self.vk_pressed.clear();
-        self.vk_focus = None;
+        self.focus_generation += 1;
     }
 
     /// IME がつないでいるか(Smithay へ通した `zwp_input_method_v2` か grab が残っているか)。
@@ -378,10 +399,22 @@ fn retire<D: FrontendHost>(state: &mut D, client: &ClientId) -> bool {
         pending.retire();
     }
     frontend.ime.popup = None;
-    if let Some(keyboard) = frontend.keyboard.clone() {
+    // 認可が消えると、この接続の virtual-keyboard からの「離した」は、もう届かない(捨てる)。押したままのものを片付ける。
+    let objects: Vec<ObjectId> = frontend
+        .ime
+        .vk_inputs
+        .iter()
+        .filter(|(_, input)| input.client == *client)
+        .map(|(object, _)| object.clone())
+        .collect();
+    let keyboard = frontend.keyboard.clone();
+    if let Some(keyboard) = keyboard {
         if ime_grab(&keyboard).is_some() {
             keyboard.unset_grab(state);
         }
+    }
+    for object in objects {
+        release_vk_input(state, &object);
     }
     state.redraw_needed();
     true
@@ -634,14 +667,24 @@ where
             // 認可の無い(消えた)virtual-keyboard からの要求は、捨てる。
             return;
         }
-        if let zwp_virtual_keyboard_v1::Request::Key { key, state: 0, .. } = request {
-            if !take_vk_press(state, key) {
-                // 押したことを渡していないキーの「離した」は、渡さない。
+        if let zwp_virtual_keyboard_v1::Request::Key {
+            key,
+            state: 0,
+            time,
+        } = request
+        {
+            if !take_vk_press(state, &resource.id(), key, time) {
+                // このオブジェクトが、いまのフォーカスへ「押した」を渡していないキーの「離した」は、渡さない。
                 return;
             }
         }
-        let press = match request {
-            zwp_virtual_keyboard_v1::Request::Key { key, state: 1, .. } => Some(key),
+        let note = match request {
+            zwp_virtual_keyboard_v1::Request::Key {
+                key,
+                state: 1,
+                time,
+            } => Some((Some(key), time)),
+            zwp_virtual_keyboard_v1::Request::Modifiers { .. } => Some((None, 0)),
             _ => None,
         };
         <VirtualKeyboardManagerState as Dispatch<
@@ -649,8 +692,8 @@ where
             VirtualKeyboardUserData<D>,
             D,
         >>::request(state, client, resource, request, data, dhandle, data_init);
-        if let Some(key) = press {
-            note_vk_press(state, key);
+        if let Some((key, time)) = note {
+            note_vk_input(state, client.id(), resource.id(), key, time);
         }
     }
     fn destroyed(
@@ -664,6 +707,8 @@ where
             VirtualKeyboardUserData<D>,
             D,
         >>::destroyed(state, client.clone(), resource, data);
+        // destroy(と接続断)で、このオブジェクトが押したままのものを片付ける。
+        release_vk_input(state, &resource.id());
         let ime = &mut state.frontend_mut().ime;
         if ime.vk_generation.remove(&resource.id()).is_none() {
             // 最初の要求を送らずに destroy された:待ち行列から 1 つ外す。
@@ -730,28 +775,133 @@ fn current_focus<D: FrontendHost>(state: &D) -> Option<WlSurface> {
     state.frontend().keyboard.as_ref()?.current_focus()
 }
 
-/// virtual-keyboard で、キー `key` の「押した」をいまのフォーカスへ渡した後に呼ぶ。
-fn note_vk_press<D: FrontendHost>(state: &mut D, key: u32) {
-    let focus = current_focus(state);
+/// virtual-keyboard `object` が、キー `key` の「押した」(`key` が None なら `modifiers`)を、いまのフォーカスへ
+/// 渡した後に呼ぶ。フォーカスが無ければ、何も渡していないので記録しない。
+fn note_vk_input<D: FrontendHost>(
+    state: &mut D,
+    client: ClientId,
+    object: ObjectId,
+    key: Option<u32>,
+    time: u32,
+) {
+    let Some(focus) = current_focus(state) else {
+        return;
+    };
     let ime = &mut state.frontend_mut().ime;
-    if ime.vk_focus != focus {
-        ime.vk_pressed.clear();
-        ime.vk_focus = focus.clone();
+    let target = Some((focus, ime.focus_generation));
+    let input = ime.vk_inputs.entry(object).or_insert_with(|| VkInput {
+        client,
+        keys: HashSet::new(),
+        modifiers: false,
+        target: None,
+        time: 0,
+    });
+    if input.target != target {
+        // フォーカスが動いた後:前の先へ渡したものは、leave で消えている。
+        input.keys.clear();
+        input.modifiers = false;
+        input.target = target;
     }
-    if focus.is_some() {
-        ime.vk_pressed.insert(key);
+    match key {
+        Some(key) => {
+            input.keys.insert(key);
+            input.time = time;
+        }
+        None => input.modifiers = true,
     }
 }
 
-/// virtual-keyboard で、キー `key` の「離した」が届いた。いまのフォーカスへ「押した」を渡したキーなら、記録から
-/// 外してtrue(「離した」を渡す)。
-fn take_vk_press<D: FrontendHost>(state: &mut D, key: u32) -> bool {
+/// virtual-keyboard `object` から、キー `key` の「離した」が届いた。このオブジェクトが、いまのフォーカスへ
+/// 「押した」を渡したキーなら、記録から外してtrue(「離した」を渡す)。
+fn take_vk_press<D: FrontendHost>(state: &mut D, object: &ObjectId, key: u32, time: u32) -> bool {
     let focus = current_focus(state);
     let ime = &mut state.frontend_mut().ime;
-    if focus.is_none() || ime.vk_focus != focus {
+    let generation = ime.focus_generation;
+    let Some(input) = ime.vk_inputs.get_mut(object) else {
+        return false;
+    };
+    let current = matches!((&input.target, &focus), (Some((target, g)), Some(focus)) if target == focus && *g == generation);
+    if !current || !input.keys.remove(&key) {
         return false;
     }
-    ime.vk_pressed.remove(&key)
+    input.time = time;
+    true
+}
+
+/// virtual-keyboard `object` が押したままのもの(キーと modifiers)を片付ける(destroy・接続断・認可の取り消し・
+/// 緊急解除のとき)。記録を取り出してから片付けるので、2 回呼ばれても 2 回目は何もしない。
+///
+/// 渡した先が、いまもフォーカスを持っている(フォーカスの世代も同じ)ときだけ、その先のクライアントの
+/// `wl_keyboard` へ、キーごとの「離した」を直に送り、modifiers を物理のキーボードの状態に戻す。Seinas の
+/// ショートカットの処理(キーの filter)は通らない。次のキーの「離した」は送らない:物理のキーボードが押して
+/// いるキー、ほかの virtual-keyboard が同じ先へ押しているキー。フォーカスが動いていれば、アプリの側の押下は
+/// leave で消えているので、何も送らない(新しいフォーカスのアプリへ、誤った「離した」を送らない)。
+fn release_vk_input<D: FrontendHost>(state: &mut D, object: &ObjectId) {
+    let Some(input) = state.frontend_mut().ime.vk_inputs.remove(object) else {
+        return;
+    };
+    let Some(keyboard) = state.frontend().keyboard.clone() else {
+        return;
+    };
+    let Some((target, generation)) = input.target else {
+        return;
+    };
+    let ime = &state.frontend().ime;
+    if generation != ime.focus_generation || keyboard.current_focus().as_ref() != Some(&target) {
+        return;
+    }
+    let Some(client) = target.client() else {
+        return;
+    };
+    let same_target =
+        |other: &VkInput| other.target.as_ref() == Some(&(target.clone(), generation));
+    let physical = keyboard.pressed_keys();
+    let keys: Vec<u32> = input
+        .keys
+        .iter()
+        .copied()
+        .filter(|&key| !physical.contains(&Keycode::new(key + 8)))
+        .filter(|key| {
+            !ime.vk_inputs
+                .values()
+                .any(|other| same_target(other) && other.keys.contains(key))
+        })
+        .collect();
+    // modifiers は、ほかの virtual-keyboard が渡していても、物理のキーボードの今の状態へ戻す(IME は、grab で
+    // 届いた物理の modifiers を、自分の virtual-keyboard で戻すのがふつうで、その値も物理と同じ)。
+    let restore_modifiers = input.modifiers;
+    if keys.is_empty() && !restore_modifiers {
+        return;
+    }
+    let modifiers = keyboard.modifier_state().serialized;
+    for kbd in keyboard.client_keyboards(&client) {
+        for &key in &keys {
+            kbd.key(
+                SERIAL_COUNTER.next_serial().into(),
+                input.time,
+                key,
+                WlKeyState::Released,
+            );
+        }
+        if restore_modifiers {
+            kbd.modifiers(
+                SERIAL_COUNTER.next_serial().into(),
+                modifiers.depressed,
+                modifiers.latched,
+                modifiers.locked,
+                modifiers.layout_effective,
+            );
+        }
+    }
+    info!(
+        "released {} key(s){} left pressed by a virtual keyboard",
+        keys.len(),
+        if restore_modifiers {
+            " and the modifiers"
+        } else {
+            ""
+        }
+    );
 }
 
 impl<D> Dispatch<ZwpInputMethodV2, RefusedInputMethod, D> for ImeState

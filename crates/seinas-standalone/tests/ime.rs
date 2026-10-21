@@ -1368,13 +1368,21 @@ fn a_virtual_keyboard_key_released_after_the_grab_release_is_not_left_pressed() 
 }
 
 #[test]
-#[ignore = "再現する:IME が grab だけを release し、virtual-keyboard で押したキーの離したことを送らないと、アプリにはキーが押されたまま残る(フォーカスが動くまで)。直し方は C1S4 で決める"]
-fn a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_pressed() {
-    // virtual-keyboard で押す → grab を release → 離したことは来ない。
+fn a_virtual_keyboard_key_left_pressed_after_the_grab_release_is_released_with_the_virtual_keyboard(
+) {
+    // virtual-keyboard で押す → grab を release → 離したことは来ない。grab の release だけでは消さない(仕様は、
+    // grab の release が virtual-keyboard の押下を消すとは書いていない。遅れて正しい「離した」が届く形もある)。
     let seinas = Compositor::start_with_input("jn");
     let window = open_window(&seinas, "ウィンドウ");
     let mut ime = connect_ime(&seinas, &[]);
-    ime_lines(&mut ime, &[&format!("vk-press {KEY_X}")]);
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            &format!("vk-key a {KEY_X} press"),
+        ],
+    );
     assert_eq!(
         next_key_line(&window, "x pressed"),
         "window: key 45 pressed"
@@ -1382,12 +1390,303 @@ fn a_virtual_keyboard_key_without_a_release_after_the_grab_release_is_not_left_p
     ime.send_line("release");
     ime.wait_for_line("ime: released");
     wait_for_log(&seinas, "the input method released the keyboard");
-    // アプリから x が離れる(離したことか、leave が届く)なら、押されたまま残らない。
-    let lines = window.lines_within(std::time::Duration::from_millis(500));
+    let lines = window.lines_within(std::time::Duration::from_millis(300));
     assert!(
-        lines
+        !lines
             .iter()
             .any(|line| line == "window: key 45 released" || line == "window: keyboard leave"),
-        "x is left pressed: {lines:?}"
+        "{lines:?}"
     );
+    // virtual-keyboard が壊れたら(destroy)、押したままのキーの「離した」が届く。
+    ime_lines(&mut ime, &["vk-destroy a"]);
+    assert_eq!(
+        next_key_line(&window, "x released"),
+        "window: key 45 released"
+    );
+}
+
+/// ウィンドウに、`duration` の間に届いたキーとキーボードの行。
+fn key_lines(window: &TestClient, duration: std::time::Duration) -> Vec<String> {
+    window
+        .lines_within(duration)
+        .into_iter()
+        .filter(|line| {
+            line.starts_with("window: key ")
+                || line.starts_with("window: keyboard ")
+                || line.starts_with("window: modifiers ")
+        })
+        .collect()
+}
+
+/// 次に届く「離した」か leave の行(どちらが先かを見る)。
+fn next_release_or_leave(window: &TestClient, what: &str) -> String {
+    loop {
+        let line = window.next_line(what);
+        if line.ends_with(" released") || line == "window: keyboard leave" {
+            return line;
+        }
+    }
+}
+
+#[test]
+fn a_virtual_keyboard_destroyed_with_a_key_pressed_releases_it() {
+    let seinas = Compositor::start_with_input("ka");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            &format!("vk-key a {KEY_A} press"),
+        ],
+    );
+    assert_eq!(
+        next_key_line(&window, "a pressed"),
+        "window: key 30 pressed"
+    );
+    ime_lines(&mut ime, &["vk-destroy a"]);
+    assert_eq!(
+        next_key_line(&window, "a released"),
+        "window: key 30 released"
+    );
+    wait_for_log(
+        &seinas,
+        "released 1 key(s) left pressed by a virtual keyboard",
+    );
+}
+
+#[test]
+fn a_disconnected_ime_releases_the_keys_of_its_virtual_keyboard() {
+    let seinas = Compositor::start_with_input("kb");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(&mut ime, &[&format!("vk-press {KEY_X}")]);
+    assert_eq!(
+        next_key_line(&window, "x pressed"),
+        "window: key 45 pressed"
+    );
+    ime.process.0.kill().expect("stop the IME");
+    // leave の送り直しより先に、キーごとの「離した」が届く。
+    assert_eq!(
+        next_release_or_leave(&window, "x released"),
+        "window: key 45 released"
+    );
+}
+
+#[test]
+fn a_destroyed_input_method_releases_the_keys_of_its_virtual_keyboard() {
+    // input method の destroy で、認可が消える(この後の virtual-keyboard の「離した」は捨てる)。
+    let seinas = Compositor::start_with_input("kc");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(&mut ime, &[&format!("vk-press {KEY_X}")]);
+    assert_eq!(
+        next_key_line(&window, "x pressed"),
+        "window: key 45 pressed"
+    );
+    ime_lines(&mut ime, &["destroy-input-method"]);
+    assert_eq!(
+        next_release_or_leave(&window, "x released"),
+        "window: key 45 released"
+    );
+}
+
+#[test]
+fn the_release_key_releases_the_keys_of_the_virtual_keyboards() {
+    let mut seinas = Compositor::start_with_input("kd");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(&mut ime, &[&format!("vk-press {KEY_A}")]);
+    assert_eq!(
+        next_key_line(&window, "a pressed"),
+        "window: key 30 pressed"
+    );
+    // 緊急解除のキー。Alt と Shift は IME を通ってウィンドウに届き、物理のキーボードで押されたまま。
+    key(&mut seinas, KEY_LEFT_ALT, true);
+    key(&mut seinas, KEY_LEFT_SHIFT, true);
+    assert_eq!(next_key_line(&window, "alt"), "window: key 56 pressed");
+    loop {
+        if next_key_line(&window, "shift") == "window: key 42 pressed" {
+            break;
+        }
+    }
+    key(&mut seinas, KEY_F12, true);
+    // virtual-keyboard で押した a だけが離され、物理のキーボードで押している Alt と Shift は離されない。
+    assert_eq!(
+        next_release_or_leave(&window, "a released"),
+        "window: key 30 released"
+    );
+    assert_eq!(
+        next_release_or_leave(&window, "the leave"),
+        "window: keyboard leave"
+    );
+    lift_release_key(&mut seinas);
+}
+
+#[test]
+fn a_virtual_keyboard_key_is_released_once_when_the_destroy_and_the_disconnection_follow() {
+    let seinas = Compositor::start_with_input("ke");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            &format!("vk-key a {KEY_A} press"),
+        ],
+    );
+    assert_eq!(
+        next_key_line(&window, "a pressed"),
+        "window: key 30 pressed"
+    );
+    ime_lines(&mut ime, &["vk-destroy a"]);
+    assert_eq!(
+        next_key_line(&window, "a released"),
+        "window: key 30 released"
+    );
+    // 続けて接続が切れても、もう一度「離した」を送らない(記録は、片付けたときに外している)。
+    ime.process.0.kill().expect("stop the IME");
+    wait_for_log(&seinas, "the input method left");
+    let lines = key_lines(&window, std::time::Duration::from_millis(300));
+    assert!(
+        !lines.iter().any(|line| line == "window: key 30 released"),
+        "{lines:?}"
+    );
+    assert_eq!(
+        seinas.log().matches("released 1 key(s)").count(),
+        1,
+        "{}",
+        seinas.log()
+    );
+}
+
+#[test]
+fn a_key_held_on_the_physical_keyboard_is_not_released_with_a_virtual_keyboard() {
+    let mut seinas = Compositor::start_with_input("kf");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // IME が grab を手放すと、物理のキーボードのキーは、直接ウィンドウに届く(IME の virtual-keyboard を通らない)。
+    ime.send_line("release");
+    ime.wait_for_line("ime: released");
+    wait_for_log(&seinas, "the input method released the keyboard");
+    key(&mut seinas, KEY_X, true);
+    assert_eq!(
+        next_key_line(&window, "x pressed"),
+        "window: key 45 pressed"
+    );
+    // 別の virtual-keyboard も x を押してから、壊れる。物理の x は押されたままなので、離さない。
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            &format!("vk-key a {KEY_X} press"),
+            "vk-destroy a",
+        ],
+    );
+    let lines = key_lines(&window, std::time::Duration::from_millis(300));
+    assert!(
+        !lines.iter().any(|line| line == "window: key 45 released"),
+        "{lines:?}"
+    );
+    // 物理のキーボードで離すと、ふつうに届く。
+    key(&mut seinas, KEY_X, false);
+    assert_eq!(
+        next_key_line(&window, "x released"),
+        "window: key 45 released"
+    );
+}
+
+#[test]
+fn only_the_keys_of_the_broken_virtual_keyboard_are_released() {
+    const KEY_S: u32 = 31;
+    const KEY_D: u32 = 32;
+    let seinas = Compositor::start_with_input("kg");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // a は a と d を、b は d と s を押す。a が壊れたら、a だけが押しているもの(a)だけを離す。
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            "vk-new b",
+            "vk-keymap b",
+            &format!("vk-key a {KEY_A} press"),
+            &format!("vk-key a {KEY_D} press"),
+            &format!("vk-key b {KEY_D} press"),
+            &format!("vk-key b {KEY_S} press"),
+        ],
+    );
+    loop {
+        if next_key_line(&window, "s pressed") == "window: key 31 pressed" {
+            break;
+        }
+    }
+    ime_lines(&mut ime, &["vk-destroy a"]);
+    let lines = key_lines(&window, std::time::Duration::from_millis(300));
+    let released: Vec<&String> = lines
+        .iter()
+        .filter(|line| line.ends_with(" released"))
+        .collect();
+    assert_eq!(released, ["window: key 30 released"], "{lines:?}");
+}
+
+#[test]
+fn keys_are_not_released_after_the_focus_moved() {
+    let seinas = Compositor::start_with_input("kh");
+    let first = open_window(&seinas, "ウィンドウ 1");
+    let mut ime = connect_ime(&seinas, &[]);
+    ime_lines(
+        &mut ime,
+        &[
+            "vk-new a",
+            "vk-keymap a",
+            &format!("vk-key a {KEY_A} press"),
+        ],
+    );
+    assert_eq!(next_key_line(&first, "a pressed"), "window: key 30 pressed");
+    // 2 つ目のウィンドウにフォーカスが移る(1 つ目には leave が届き、押下はアプリの側で消える)。
+    let second = open_window(&seinas, "ウィンドウ 2");
+    loop {
+        if next_key_line(&first, "the leave") == "window: keyboard leave" {
+            break;
+        }
+    }
+    ime_lines(&mut ime, &["vk-destroy a"]);
+    let wait = std::time::Duration::from_millis(300);
+    let lines = key_lines(&second, wait);
+    assert!(
+        !lines.iter().any(|line| line.ends_with(" released")),
+        "{lines:?}"
+    );
+    let lines = key_lines(&first, wait);
+    assert!(
+        !lines.iter().any(|line| line.ends_with(" released")),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks() {
+    let seinas = Compositor::start_with_input("ki");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // キーは押さず、modifiers(Shift)だけを渡す。
+    ime_lines(&mut ime, &["vk-new a", "vk-keymap a", "vk-mods a 1"]);
+    common::wait_for("the shift modifier", || {
+        key_lines(&window, std::time::Duration::from_millis(50))
+            .iter()
+            .any(|line| line == "window: modifiers 1 0 0 0")
+            .then_some(())
+    });
+    ime_lines(&mut ime, &["vk-destroy a"]);
+    common::wait_for("the restored modifiers", || {
+        key_lines(&window, std::time::Duration::from_millis(50))
+            .iter()
+            .any(|line| line == "window: modifiers 0 0 0 0")
+            .then_some(())
+    });
 }

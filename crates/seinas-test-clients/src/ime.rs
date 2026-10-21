@@ -26,7 +26,7 @@
 //! キーと修飾キー)を送らずにためる)、`send`(ためた要求を、ためた順に送り、ためるのをやめる)、
 //! `commit-string TEXT`(commit_string だけを送り、commit は送らない)、`delete-surrounding BEFORE AFTER`
 //! (delete_surrounding_text だけを送り、commit は送らない)、`vk-new NAME`(名前 NAME の virtual-keyboard を
-//! もう 1 つ作る)、`vk-keymap NAME`(grab で届いた keymap を送る)、`vk-key NAME CODE press|release`、
+//! もう 1 つ作る)、`vk-keymap NAME`(grab で届いた keymap を送る)、`vk-key NAME CODE press|release`、`vk-mods NAME DEPRESSED`、
 //! `vk-destroy NAME`。
 //!
 //! 標準出力には、次の行を書く。
@@ -394,6 +394,18 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                             pressed.to_le_bytes(),
                         ];
                         wire.send(&message(id, 1, &body.concat()))?;
+                    } else if let ["vk-mods", name, depressed] = words[..] {
+                        // zwp_virtual_keyboard_v1.modifiers(押されている、ラッチ、ロック、グループ)
+                        let (Some(&id), Ok(depressed)) =
+                            (named.get(name), depressed.parse::<u32>())
+                        else {
+                            continue;
+                        };
+                        let body: Vec<u8> = [depressed, 0, 0, 0]
+                            .iter()
+                            .flat_map(|v| v.to_le_bytes())
+                            .collect();
+                        wire.send(&message(id, 2, &body))?;
                     } else if let ["vk-destroy", name] = words[..] {
                         if let Some(id) = named.remove(name) {
                             wire.send(&message(id, 3, &[]))?;
