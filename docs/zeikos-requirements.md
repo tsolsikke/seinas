@@ -4,6 +4,7 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 - Seinas の側の値は、2026-10-11 に Linux(WSL2)の上で、musl の静的ビルドを `strace -f` で取ったものです(4 つを同時に動かし、seinas は seinas-standalone を親にして入れ子で動かした)。取り方と、変更ごとの差分の記録は `docs/m3-syscalls.md` にあります。こちらは、その記録から「要るもの」を引いた表です。
 - 2026-10-21 に、下の「2026-10-21 に合わせ直したこと」の節と、表のうち時計・epoll・eventfd・timerfd・ppoll・ソケット・ロックファイル・memfd の封・スレッドの行を、zeikos の 253c8b39(2026-10-20)のソースと ADR に合わせました。ほかの行と「数の要約」は、10/11 のままです。
+- 2026-10-23 に、「fd の種類」の節と、「新しい課題の候補」の 13 を、zeikos の 6cfe9e8a(2026-10-23)の ADR-0091(fd の上限を 32 にした)と、seinas-standalone の `--no-ime-socket` に合わせました。
 - ZeikOS の側は、隣の zeikos のリポジトリの main(9666a4cce94c6e886d3c83b3b46ed99bd3f727fb)のソースを読んで判断しました。ビルドも実行もしていません。根拠は、ファイルと関数(と行)で書きます。断りの無いファイルは `kernel/src/syscall.rs` です。syscall の番号から関数への表は `dispatch()`(771〜1128 行)で、表に無い番号は `-ENOSYS` を返します(1123 行)。
 - 下の「まとまり」の欄は、ZeikOS の側の機能のまとまりの名前です。どの課題に当たるかは、Jira を正とします(下の「まとまりごとの一覧」)。
 
@@ -124,9 +125,9 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 
 | fd の種類 | seinas-standalone | seinas(入れ子) | seinas-taskbar | zeyes-min |
 | --- | --- | --- | --- | --- |
-| AF_UNIX の listen(ふだん・シェルの部品・IME) | 3 | 3 | — | — |
+| AF_UNIX の listen(ふだん・シェルの部品・IME) | 3(`--no-ime-socket` では 2) | 3 | — | — |
 | AF_UNIX の接続 | クライアントの数(この例で 3) | 親へ 1 + 子の数 | 1 | 1 |
-| ロックファイル(`<ソケット>.lock`。開いたまま) | 3 | 3 | — | — |
+| ロックファイル(`<ソケット>.lock`。開いたまま) | 3(`--no-ime-socket` では 2) | 3 | — | — |
 | memfd(keymap と、クライアントから受け取った pool) | 1 + pool の数(IME がつながると、virtual-keyboard の keymap の 1 と、候補ウィンドウの pool が増える) | keymap 2 + 自分の pool 1 | pool 1 | pool 1 |
 | epoll | 3(calloop、wayland-backend、その複製) | 3 | 1 | 1 |
 | eventfd | 1 | 1 | 1 | 1 |
@@ -134,7 +135,17 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | 普通のファイル(フォント、xkb) | 読んだら閉じる(フォントはマップしたまま) | 同じ | 同じ(フォント) | — |
 | /dev/fb0 | fbdev の構成で 1 | — | — | — |
 
-ZeikOS の 1 プロセスの fd は 16 まで(標準入出力を含む)です。2026-10-21 に ZeikOS の上で、クライアント 0 のコンポジタ(seinas-standalone、/dev/fb0)が開いた fd は 15 本でした(標準入出力 3、epoll 3、eventfd 1、timerfd 1、/dev/fb0 1、ロックファイル 3、listen 3。ZeikOS の側が測った値)。クライアント 1 つにつき、ソケットと pool の memfd で 2 本増えるので、クライアントが 1 つつながると 17 本になり、上限を越えます(→ 新しい課題の候補)。
+ZeikOS の 1 プロセスの fd は 32 まで(標準入出力を含む。zeikos の ADR-0091。2026-10-23 に 16 から上げた)です。2026-10-21 に ZeikOS の上で、クライアント 0 のコンポジタ(seinas-standalone、/dev/fb0)が開いた fd は 15 本でした(標準入出力 3、epoll 3、eventfd 1、timerfd 1、/dev/fb0 1、ロックファイル 3、listen 3。ZeikOS の側が測った値)。クライアント 1 つにつき、ソケットと pool の memfd で 2 本増えるので、タスクバーが 1 つつながると 17 本です。
+
+`--no-ime-socket`(IME のためのソケットを開かない。`docs/standalone.md`)を付けると、IME の listen とロックファイルの 2 本が減ります。同じ数え方(/dev/fb0 を開く構成、標準入出力を含む)で、次のとおりです。
+
+| コンポジタにつながるもの | 既定(ソケット 3 つ) | `--no-ime-socket`(ソケット 2 つ) |
+| --- | --- | --- |
+| クライアント 0 | 15 | 13 |
+| タスクバー 1 つ | 17 | 15 |
+
+- 2026-10-23 に Linux(WSL2)の上で、fake screen の seinas-standalone(/dev/fb0 を開かないので、1 本少ない)の `/proc/<pid>/fd` を数えて確かめました。既定はクライアント 0 で 14、タスクバー 1 つで 16、`--no-ime-socket` は 12 と 14 でした。2 つの違いは、IME の listen とロックファイルの 2 本だけです。タスクバーがつながって増えたのは、接続のソケット 1 本と pool の memfd 1 本でした。
+- 32 までの残りは、`--no-ime-socket` でタスクバー 1 つのとき 17 本です。pool を 1 つ使うクライアントなら、あと 8 つつなげます。
 
 ## 2026-10-21 に合わせ直したこと
 
@@ -210,7 +221,7 @@ ZeikOS の側に、epoll・eventfd・timerfd、待たない形のソケット、
 10. 入力の装置(マウスと、Linux の /dev/input/event* の形)。Seinas の側の、seinas-standalone が装置から入力を読む作りと合わせて決める。
 11. pread64(入れ子の構成だけ。低い)。
 12. IME の道:`$XDG_RUNTIME_DIR` の O_TMPFILE の一時ファイル(Smithay が IME の grab へ keymap を渡す形)と、クライアントから受け取った memfd でない fd の mmap。プロセスは IME の 1 本が増える(上の 5)。
-13. 1 プロセスの fd の数(16 まで)。クライアント 0 のコンポジタで 15 本で、クライアントが 1 つつながると 17 本になる(上の「fd の種類」)。
+13. 1 プロセスの fd の数。2026-10-23 の時点で、16 から 32 になった(zeikos の ADR-0091)。コンポジタは、タスクバーが 1 つつながって 17 本(`--no-ime-socket` で 15 本。上の「fd の種類」)。
 
 ## 壁紙
 

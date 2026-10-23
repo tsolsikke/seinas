@@ -4,6 +4,7 @@
 //!   入れたもの。名前に拡張子があれば、その前に入れる(ロックファイルは、拡張子を `.lock` に替えた名前になるので、
 //!   終わりに付けると取り合う)。
 //! - 指定したパスどうしでロックファイルがぶつかるときは、分かりやすいエラーで終わる。
+//! - `--no-ime-socket` を付けると、IME のためのソケットとロックファイルを作らない(ほかの 2 つは作る)。
 
 mod common;
 
@@ -153,4 +154,118 @@ fn a_given_path_that_would_share_the_lock_file_of_a_default_socket_is_refused() 
     assert!(log.contains("would share the lock file"), "{log}");
     assert!(log.contains("seinas-0.lock"), "{log}");
     assert!(!dir.join("seinas-0").exists() && !shell.exists());
+}
+
+/// IME の global(どのソケットにも出てはいけない)。
+const IME_GLOBALS: [&str; 2] = [
+    "zwp_input_method_manager_v2",
+    "zwp_virtual_keyboard_manager_v1",
+];
+
+/// ログに `line` が出るまで待つ。
+fn wait_for_log(dir: &Path, line: &str) {
+    wait_for(line, || {
+        fs::read_to_string(dir.join("log"))
+            .unwrap_or_default()
+            .contains(line)
+            .then_some(())
+    });
+}
+
+/// IME のソケットを開かないと決めたときにログへ出る行(この行の後には、もうソケットを作らない)。
+const NO_IME_LINE: &str = "the socket for the input method is not opened";
+
+#[test]
+fn no_ime_socket_opens_only_the_other_two_sockets_and_lock_files() {
+    let work = work_dir("kd");
+    let dir = &work.0;
+    let mut seinas = start(
+        dir,
+        &[
+            "--socket",
+            &dir.join("s.sock").to_string_lossy(),
+            "--no-ime-socket",
+        ],
+    );
+    let names = ["s.sock", "s-shell.sock", "s.lock", "s-shell.lock"];
+    wait_for("the two sockets", || {
+        names
+            .iter()
+            .all(|name| dir.join(name).exists())
+            .then_some(())
+    });
+    wait_for_log(dir, NO_IME_LINE);
+    assert!(
+        seinas.is_running(),
+        "{}",
+        fs::read_to_string(dir.join("log")).unwrap_or_default()
+    );
+    for name in ["s-ime.sock", "s-ime.lock"] {
+        assert!(!dir.join(name).exists(), "{name}");
+    }
+    // ふだんのソケットとシェルの部品のソケットは、いつもどおり使え、IME の global はどちらにも無い。
+    let on_app = globals(&dir.join("s.sock"));
+    assert!(on_app.iter().any(|g| g == "xdg_wm_base"), "{on_app:?}");
+    let on_shell = globals(&dir.join("s-shell.sock"));
+    assert!(
+        on_shell.iter().any(|g| g == "zwlr_layer_shell_v1"),
+        "{on_shell:?}"
+    );
+    for global in IME_GLOBALS {
+        assert!(!on_app.iter().any(|g| g == global), "{global}: {on_app:?}");
+        assert!(
+            !on_shell.iter().any(|g| g == global),
+            "{global}: {on_shell:?}"
+        );
+    }
+    drop(seinas);
+}
+
+#[test]
+fn no_ime_socket_does_not_open_the_default_ime_socket() {
+    // --socket が無いと、ソケットは XDG_RUNTIME_DIR の下の既定の名前で作る。
+    let work = work_dir("ke");
+    let dir = &work.0;
+    let mut seinas = start_with_env(dir, &["--no-ime-socket"], &[("XDG_RUNTIME_DIR", dir)]);
+    let names = [
+        "seinas-0",
+        "seinas-0-shell",
+        "seinas-0.lock",
+        "seinas-0-shell.lock",
+    ];
+    wait_for("the two sockets", || {
+        names
+            .iter()
+            .all(|name| dir.join(name).exists())
+            .then_some(())
+    });
+    wait_for_log(dir, NO_IME_LINE);
+    assert!(seinas.is_running());
+    for name in ["seinas-0-ime", "seinas-0-ime.lock"] {
+        assert!(!dir.join(name).exists(), "{name}");
+    }
+    drop(seinas);
+}
+
+#[test]
+fn the_ime_socket_and_no_ime_socket_are_refused_together() {
+    let work = work_dir("kf");
+    let dir = &work.0;
+    let socket = dir.join("s.sock");
+    let ime = dir.join("i.sock");
+    let mut seinas = start(
+        dir,
+        &[
+            "--socket",
+            &socket.to_string_lossy(),
+            "--ime-socket",
+            &ime.to_string_lossy(),
+            "--no-ime-socket",
+        ],
+    );
+    let status = seinas.0.wait().expect("seinas-standalone ends");
+    assert_eq!(status.code(), Some(2));
+    let log = fs::read_to_string(dir.join("log")).unwrap_or_default();
+    assert!(log.contains("cannot be used together"), "{log}");
+    assert!(!socket.exists() && !ime.exists());
 }

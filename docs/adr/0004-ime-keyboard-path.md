@@ -131,6 +131,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
   - input-method-v2 と virtual-keyboard の global は、IME のソケットからつないだクライアントにだけ見せる。シェルのソケットとふだんのソケットには見せない。
   - IME のソケットには、layer-shell と foreign-toplevel を見せない。候補ウィンドウ(input popup surface)に要る `wl_compositor`・`wl_shm` などのふつうの global は見せる。
   - ソケットは、ほかのソケットと同じく wayland-server の `ListeningSocket` で作る(ロックファイルで、生きている別のインスタンスのソケットを消さない)。
+  - 開かない構成(2026-10-23 に決めた):seinas-standalone は、`--no-ime-socket` で IME のソケットとロックファイルを作らない(既定は開く。入れ子の seinas は、いつも開く)。IME を使わない構成(ZeikOS にタスクバーを載せるときなど)で、fd を 2 本減らすため。このときは、input-method と virtual-keyboard の global も作らない。つなげるクライアントがいないので、作っても誰にも見えず、Smithay の状態を持つだけになるため。text-input-v3 の global は、いつもどおり全部のクライアントに見せる(IME がいないので、アプリが有効にしても何も届かない。1.4 の直接の経路)。シェルの部品のソケットは、開いたまま。
 - virtual-keyboard(A'):作れるのは、`get_input_method` を受け入れたクライアントだけ。ほかは、virtual-keyboard の `unauthorized` のエラーにする(2.5)。
   - 認可は、接続と、受け入れた IME の世代に結び付ける。seat は見ていない(Seinas の seat は 1 つだけなので、接続と世代で足りる。`create_virtual_keyboard` の seat の引数も見ずに Smithay へ渡す。2026-10-17 にコードに合わせて直した)。seat を増やすときは、seat も認可のキーに入れる必要がある(IME の世代と virtual-keyboard の待ち行列を seat ごとに持つ)。受け入れた input method が destroy されたとき、緊急解除で消したときに、認可も消え、それまでに作った virtual-keyboard からの要求も捨てる。新しく `get_input_method` を受け入れたら、世代を 1 つ進める。
   - 同じ接続からの 2 つ目の `get_input_method` を断っても(1.7)、1 つ目の認可は消さない。

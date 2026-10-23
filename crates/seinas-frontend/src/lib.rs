@@ -163,6 +163,9 @@ pub struct Config {
     /// 届いたキーを、修飾キーと keysym の名前でログに出すか(`--log-keys`。入れ子の構成で、どの組み合わせが
     /// Seinas まで届くかを確かめるため)。
     pub log_keys: bool,
+    /// IME のためのソケットを開くか。開かない構成(`--no-ime-socket`)では、input-method と virtual-keyboard の
+    /// global も作らない(つなげるクライアントがいないため。ADR 0004 の 1.6)。
+    pub ime_socket: bool,
 }
 
 /// キーボードの keymap(xkb の名前)と、押し続けたときの繰り返しの設定。
@@ -2129,8 +2132,12 @@ macro_rules! delegate_frontend {
                     );
                 // ウィンドウの一覧と操作も、シェルの部品にだけ見せる(ADR 0002)。
                 let foreign_toplevels = $crate::ForeignToplevelState::new::<Self>(display_handle);
-                // IME の道。input-method と virtual-keyboard は、キーボードがあるときだけ(ADR 0004)。
-                let ime = $crate::ImeState::new::<Self>(display_handle, keyboard.is_some());
+                // IME の道。input-method と virtual-keyboard は、キーボードがあり、IME のためのソケットを開くときだけ
+                // (ADR 0004)。
+                let ime = $crate::ImeState::new::<Self>(
+                    display_handle,
+                    keyboard.is_some() && config.ime_socket,
+                );
                 $crate::Frontend {
                     display_handle: display_handle.clone(),
                     compositor_state,

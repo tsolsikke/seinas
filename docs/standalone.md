@@ -50,6 +50,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`text-rendering.md` の「利用者が選んだフォント」) |
 | `--shell-socket PATH` | シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-shell` を入れたもの(名前に拡張子があれば、その前に入れる。`/tmp/seinas.sock` なら `/tmp/seinas-shell.sock`、`/tmp/wl` なら `/tmp/wl-shell`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。ここからつないだクライアントにだけ、layer-shell とウィンドウの一覧(foreign-toplevel)を見せる |
 | `--ime-socket PATH` | IME のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-ime` を入れたもの(`--shell-socket` と同じ形。`/tmp/seinas.sock` なら `/tmp/seinas-ime.sock`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、input-method と virtual-keyboard を見せる(`ime.md`)。3 つのソケットのロックファイルがぶつかる指定(`--socket /tmp/a.sock --shell-socket /tmp/a.other` など、拡張子の前が同じもの)は、`would share the lock file` のエラーで終わる。パスを指定しないソケット(`XDG_RUNTIME_DIR` の下の `seinas-0` など)も比べる |
+| `--no-ime-socket` | IME のためのソケットを開かない。ソケットもロックファイルも作らず、input-method と virtual-keyboard の global も作らない(`ime.md`)。IME を使わない構成で、fd を 2 本減らすためのもの。既定は開く。`--ime-socket` と一緒に付けると、`cannot be used together` のエラーで終わる |
 | `--fonts DIR` | フォントの置き場(ウィンドウのタイトルを描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(タイトルの文字が出ないだけ) |
 | `--test-input` | テスト用の入力インターフェースを開く(下の「テスト用の入力インターフェース」)。ふだんの起動では、付けない |
 | `--ping-timeout MS` | 閉じるように頼んだクライアントの pong を待つ時間(ミリ秒。既定は 5000)。過ぎたら応答なしにする(`window-placement.md` の「応答なし」)。テストで短くするためのもの |
@@ -73,6 +74,7 @@ seinas-standalone --socket /tmp/seinas/s.sock
 - ソケットとロックファイルは、`/tmp/seinas` の下にできます。ZeikOS は、`/tmp/seinas` をイメージに作ってあります。
   - listen のソケット:`s.sock`(ふだん)、`s-shell.sock`(シェルの部品)、`s-ime.sock`(IME)
   - ロックファイル:`s.lock`、`s-shell.lock`、`s-ime.lock`(パスの拡張子を `.lock` に替えたもの)
+  - IME を使わないときは、`seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket` と起動すると、`s-ime.sock` と `s-ime.lock` を作らず、fd が 2 本減ります(ログは `listening on …/s-ime.sock` の代わりに `the socket for the input method is not opened (--no-ime-socket)`)。v0.2.0 の release には、この引数はありません。
 - `--socket` を付けるので、`XDG_RUNTIME_DIR` は使いません(ZeikOS の `/etc/environment` の `XDG_RUNTIME_DIR=/tmp/seinas` は、そのままでよい)。
 - 置くファイルは、実行ファイル 1 つだけです。フォントと xkb のファイルは置きません(C1S4 の決定)。
   - フォントが無いので、起動のときに、フォントを読めないという WARN の行が出ます(既定のフォントの置き場は、作業中のディレクトリから見た `target/fonts` で、ZeikOS は相対のパスの open を断るため)。文字を描かないだけで、動き続けます。

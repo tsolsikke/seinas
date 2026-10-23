@@ -22,6 +22,8 @@
 //! - `--ime-socket PATH`: IME のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-ime` を入れたもの
 //!   (`--shell-socket` と同じ形。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、
 //!   input-method と virtual-keyboard を見せる(`docs/adr/0004-ime-keyboard-path.md` の 1.6)。
+//! - `--no-ime-socket`: IME のためのソケットを開かない(ソケットもロックファイルも作らず、input-method と
+//!   virtual-keyboard の global も作らない)。IME を使わない構成で、fd を 2 本減らすため。`--ime-socket` とは一緒に使えない。
 //! - `--fonts DIR`: フォントの置き場(タイトルを描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも
 //!   無ければ `target/fonts`(`tools/fetch-fonts.sh` が置く場所)。フォントが読めなくても動く
 //!   (タイトルの文字が出ないだけ)。
@@ -92,8 +94,8 @@ const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 /// 右のボタンの番号(Linuxの入力の決まり)。
 const RIGHT_BUTTON: u32 = 0x111;
 
-const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--ime-socket PATH] [--fonts DIR] [--font-config PATH]
-       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--ime-socket PATH] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--config PATH] [--log-keys]";
+const USAGE: &str = "usage: seinas-standalone [--device PATH] [--socket PATH] [--shell-socket PATH] [--ime-socket PATH | --no-ime-socket] [--fonts DIR] [--font-config PATH]
+       seinas-standalone --fake WIDTHxHEIGHT [--dump FILE] [--socket PATH] [--shell-socket PATH] [--ime-socket PATH | --no-ime-socket] [--fonts DIR] [--font-config PATH] [--test-input] [--ping-timeout MS] [--config PATH] [--log-keys]";
 
 struct Options {
     device: PathBuf,
@@ -102,6 +104,8 @@ struct Options {
     socket: Option<PathBuf>,
     shell_socket: Option<PathBuf>,
     ime_socket: Option<PathBuf>,
+    /// IME のためのソケットを開かないか(`--no-ime-socket`)。
+    no_ime_socket: bool,
     fonts: Option<PathBuf>,
     font_config: Option<PathBuf>,
     test_input: bool,
@@ -123,6 +127,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
         socket: std::env::var_os(SOCKET_ENV).map(PathBuf::from),
         shell_socket: None,
         ime_socket: None,
+        no_ime_socket: false,
         fonts: None,
         font_config: None,
         test_input: false,
@@ -147,6 +152,7 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
                 options.shell_socket = Some(PathBuf::from(value("--shell-socket")?))
             }
             "--ime-socket" => options.ime_socket = Some(PathBuf::from(value("--ime-socket")?)),
+            "--no-ime-socket" => options.no_ime_socket = true,
             "--fonts" => options.fonts = Some(PathBuf::from(value("--fonts")?)),
             "--font-config" => options.font_config = Some(PathBuf::from(value("--font-config")?)),
             "--test-input" => options.test_input = true,
@@ -164,6 +170,9 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
     }
     if options.dump.is_some() && options.fake.is_none() {
         return Err("--dump needs --fake".to_owned());
+    }
+    if options.no_ime_socket && options.ime_socket.is_some() {
+        return Err("--ime-socket and --no-ime-socket cannot be used together".to_owned());
     }
     Ok(options)
 }
@@ -382,7 +391,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
     }
 }
 
-/// 3 つのソケットのロックファイル(ソケットのパスの拡張子を `.lock` に替えたもの)がぶつかるなら、その説明。
+/// ソケット(3 つか、IME のものを開かないときは 2 つ)のロックファイル(ソケットのパスの拡張子を `.lock` に替えたもの)がぶつかるなら、その説明。
 /// `--shell-socket` や `--ime-socket` で、拡張子の前が同じパスを選んだときに起きる。
 fn lock_conflict(paths: &[&Path]) -> Option<String> {
     for (i, a) in paths.iter().enumerate() {
@@ -434,12 +443,13 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
                 false,
             ),
             log_keys: options.log_keys,
+            ime_socket: !options.no_ime_socket,
         },
     );
     let painter = Painter::new(width, height)?;
 
     // 源その1: クライアントの接続の受け付け。ふだんのソケットと、シェルの部品のためのソケットと、IME のための
-    // ソケット。
+    // ソケット(`--no-ime-socket` のときは開かない)。
     let shell_path = derived_socket_path(
         options.socket.as_ref(),
         options.shell_socket,
@@ -450,6 +460,7 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
         options.ime_socket,
         IME_SOCKET_SUFFIX,
     );
+    let open_ime = !options.no_ime_socket;
     // パスの指定が無いソケットは、XDG_RUNTIME_DIR の下の既定の名前で作るので、それも比べる。
     let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
     let shell_name = format!("{DEFAULT_SOCKET_NAME}{SHELL_SOCKET_SUFFIX}");
@@ -462,7 +473,9 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
     let paths: Vec<PathBuf> = [
         effective(options.socket.as_ref(), DEFAULT_SOCKET_NAME),
         effective(shell_path.as_ref(), &shell_name),
-        effective(ime_path.as_ref(), &ime_name),
+        open_ime
+            .then(|| effective(ime_path.as_ref(), &ime_name))
+            .flatten(),
     ]
     .into_iter()
     .flatten()
@@ -491,16 +504,20 @@ fn run(options: Options) -> Result<(), Box<dyn Error>> {
             Ok(PostAction::Continue)
         },
     )?;
-    let ime_listener = bind_socket(ime_path, &ime_name)?;
-    event_loop.handle().insert_source(
-        Generic::new(ime_listener, Interest::READ, Mode::Level),
-        |_, listener, state: &mut Standalone| {
-            while let Some(stream) = listener.accept()? {
-                state.frontend.accept_ime(stream);
-            }
-            Ok(PostAction::Continue)
-        },
-    )?;
+    if open_ime {
+        let ime_listener = bind_socket(ime_path, &ime_name)?;
+        event_loop.handle().insert_source(
+            Generic::new(ime_listener, Interest::READ, Mode::Level),
+            |_, listener, state: &mut Standalone| {
+                while let Some(stream) = listener.accept()? {
+                    state.frontend.accept_ime(stream);
+                }
+                Ok(PostAction::Continue)
+            },
+        )?;
+    } else {
+        info!("the socket for the input method is not opened (--no-ime-socket)");
+    }
 
     // 源その2: クライアントの要求の処理。
     let display_fd = display

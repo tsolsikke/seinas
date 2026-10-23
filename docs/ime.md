@@ -7,7 +7,7 @@ Seinas は、アプリの text-input-v3 と、IME の input-method-v2 を取り�
 | global | 見せる相手 | 作る条件 |
 | --- | --- | --- |
 | `zwp_text_input_manager_v3` | 全部のクライアント | いつも |
-| `zwp_input_method_manager_v2` | IME のためのソケット(`seinas-0-ime`)からつないだクライアントだけ | seat にキーボードがあるとき |
+| `zwp_input_method_manager_v2` | IME のためのソケット(`seinas-0-ime`)からつないだクライアントだけ | seat にキーボードがあり、IME のためのソケットを開くとき(seinas-standalone の `--no-ime-socket` では作らない) |
 | `zwp_virtual_keyboard_manager_v1` | 同じ | 同じ |
 
 IME の権限は、シェルの部品の権限と分けています(ADR 0004 の 1.6)。これは権限を分けることで、相手が誰かを確かめる認証ではありません。
@@ -19,6 +19,7 @@ IME の権限は、シェルの部品の権限と分けています(ADR 0004 の
 - Linux:ソケットは `XDG_RUNTIME_DIR`(0700)の下にあるので、つなげるのは同じ利用者のプロセスだけです。
 - ZeikOS:ソケットの名前はカーネルの表で、利用者の概念も、ファイルの権限の検査もありません。0700 は効かず、どのプロセスも IME のソケットにつなげます。効くのは、ソケットを分けた役割の分け方だけです。
 - ソケットとロックファイルが 1 つずつ増えるので、コンポジタの fd は 2 つ増えます(2026-10-15 に測った。seinas-standalone `--fake --test-input` で 13 から 15、入れ子の seinas で 15 から 17)。
+- IME を使わない構成では、seinas-standalone に `--no-ime-socket` を付けると、IME のためのソケットとロックファイルを作らず、input-method と virtual-keyboard の global も作りません(ADR 0004 の 1.6)。入れ子の seinas は、いつも開きます。
 
 キーボードの無い seat では、input-method と virtual-keyboard の global を作りません。Smithay 0.7.0 は、キーボードの無い seat への `get_input_method` と、virtual-keyboard の `key`・`modifiers` で、`unwrap` の panic で止まるためです。Seinas は、次のことで避けています。
 

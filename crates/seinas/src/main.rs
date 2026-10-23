@@ -215,6 +215,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 true,
             ),
             log_keys: options.log_keys,
+            ime_socket: true,
         },
     );
     let painter = Painter::new(WIDTH, HEIGHT)?;
