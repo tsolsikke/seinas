@@ -152,9 +152,12 @@ ZeikOS の 1 プロセスの fd は 32 まで(標準入出力を含む。zeikos 
 ZeikOS の側に、epoll・eventfd・timerfd、待たない形のソケット、memfd の封、CLOCK_REALTIME が入り、Seinas の origin/main(1ba9fd5)の seinas-standalone が、変更なしで ZeikOS の上で起動しました(クライアント 0。ZeikOS の側の確かめ)。上の表の行のほかに、次のことが分かっています。
 
 - 相対のパスの open は、ZeikOS が断ります。コンポジタの既定のフォントの置き場は、作業中のディレクトリから見た `target/fonts` なので、ZeikOS の上では、起動のときにフォントを読めないという WARN が出ます(文字を描かないだけで動き続ける)。フォントを置くときは、`--fonts` か `SEINAS_FONTS` に絶対のパスを渡します。
-- fd の複製:ZeikOS は、ソケットとパイプの端の複製で参照を数えていません(複製を閉じると端が閉じる)。2026-10-21 に、Linux の上で、musl の静的ビルドのコンポジタ(fake screen)とタスクバー(シェルの部品のソケットへつなぐ)を `strace -f` で取って調べました。
-  - コンポジタ:複製するのは epoll の fd だけです(calloop が `fcntl(F_DUPFD_CLOEXEC)` で 1 回。ZeikOS の側で対応済み)。ソケットの fd は、dup・dup2・dup3・F_DUPFD・F_DUPFD_CLOEXEC のどれでも複製しません。パイプは作りません。
-  - タスクバー:複製するのは、pool の memfd だけです(smithay-client-toolkit が `fcntl(F_DUPFD_CLOEXEC)` で 1 回)。ソケットは複製せず、パイプも作りません。memfd の複製で参照を数えるかは、ZeikOS の側に確かめてもらう点です。
+- fd の複製:2026-10-23 に、Linux の上で、musl の静的ビルドのコンポジタ(fake screen)とタスクバー(シェルの部品のソケットへつなぐ)を `strace -f -n -k -e trace=dup,dup2,dup3,fcntl` で取って調べました(2026-10-21 の記録の、複製している所を直した)。
+  - どちらも、複製は `fcntl(fd, F_DUPFD_CLOEXEC, 3)`(72 番)の 1 回だけです。すぐ後の `fcntl(新しい fd, F_SETFD, FD_CLOEXEC)` は、musl の `fcntl` が足すものです。dup(32)・dup2(33)・dup3(292)は、1 回も呼びません。ZeikOS には dup・dup2・dup3 がありませんが、Seinas は使わないので要りません。
+  - コンポジタ:複製するのは、wayland-server のバックエンドの epoll の fd だけです(Seinas 自身の `run` が、`poll_fd().try_clone_to_owned()` で複製する。`crates/seinas-standalone/src/main.rs`、入れ子は `crates/seinas/src/main.rs`)。ソケットの fd は複製しません。パイプは作りません。
+  - タスクバー:複製するのは、pool の memfd(smithay-client-toolkit が作る)だけです。複製しているのは wayland-backend の `rs::wire::write_to_buffers`(`wl_shm.create_pool` の fd の引数を書くときに、std の `try_clone_to_owned` で複製する)で、複製を `sendmsg` の SCM_RIGHTS で送った直後に閉じます。ソケットは複製せず、パイプも作りません。
+  - memfd・ソケット・パイプの端の複製で参照を数えることは、ZeikOS の側で直りました(zeikos の 30ceb33e。ADR-0064)。
+  - コンポジタが keymap の fd を送るとき(キーボードのある構成)も、同じ `write_to_buffers` を通るので、同じ形で `F_DUPFD_CLOEXEC` を呼ぶ見込みです(コードを読んだだけで、測っていない)。
 - SCM_RIGHTS を続けて送る場面:ZeikOS は、向きごとに 1 つまでしか fd を待たせられません。
   - 上の記録(キーボードの無い構成。クライアントはタスクバー 1 つ)では、タスクバーからコンポジタへ、pool の memfd を 1 つ、1 回だけ送りました。コンポジタからクライアントへは、fd を送りません(fd を付けない送信は `sendto(MSG_DONTWAIT|MSG_NOSIGNAL)`)。今の C1S4 の構成では、続けて 2 つ送る場面はありません。
   - 続けて送りうる場面(コードを読んで分かったもの。どれも今の ZeikOS の構成では起きない):キーボードを持つ構成(`--test-input`)で、コンポジタが wl_keyboard を作るたびに keymap の fd を送るとき(1 つのクライアントが wl_keyboard を続けて 2 つ作ると、同じ向きに 2 つ)。IME の virtual-keyboard のキーで、Smithay がフォーカスのあるクライアントへ keymap を送り直すとき。クライアントが pool を続けて 2 つ作るとき(今のタスクバー・壁紙・zeyes-min は、それぞれ 1 つ)。
