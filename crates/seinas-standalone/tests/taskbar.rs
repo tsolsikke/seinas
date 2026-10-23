@@ -6,11 +6,16 @@
 //! - ボタンを押すと、そのウィンドウが raise される。activated のウィンドウのボタンでは最小化し、最小化している
 //!   ウィンドウのボタンでは戻す。
 //! - シェルの部品のためのソケットでなければ、つなげない。
+//! - コンポジタより先に起こされても、コンポジタのソケットができるまで試し直してつなぐ。決めた回数を試しても
+//!   できなければ、`the compositor did not appear` のエラーで終わる。
 
 mod common;
 
+use std::{fs, os::unix::net::UnixListener};
+
 use common::{
-    bar_color, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, HEIGHT, WIDTH,
+    bar_color, compositor_dir, start_taskbar, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR,
+    BACKGROUND, HEIGHT, WIDTH,
 };
 
 /// タスクバーの高さと、ボタンの上の端・高さ・幅(ウィンドウが 2 つのとき、640 の幅で 200)。
@@ -200,4 +205,55 @@ fn the_clock_offset_comes_from_the_config_file_or_the_argument() {
     let _taskbar = seinas.connect_taskbar_to(&seinas.shell_socket(), &[]);
     wait_for_log("utc-offset must be UTC or from -12:00 to +14:00");
     wait_for_log("the clock is UTC+09:00 (from the default)");
+}
+
+#[test]
+fn a_taskbar_started_before_the_compositor_connects_when_the_socket_appears() {
+    // ZeikOS の起動の順序(`a | b` の左が先に起きる)と同じく、タスクバーを先に起こす。
+    let dir = compositor_dir("tg");
+    let mut taskbar = start_taskbar(&dir, &dir.join("wl-shell"), &["--utc-offset", "+00:00"]);
+    // 1 回目の接続に失敗したことを、ログで確かめてから、コンポジタを起こす(時間には頼らない)。
+    let log = || fs::read_to_string(dir.join("taskbar.log")).unwrap_or_default();
+    // 試し直さずに終わったら、すぐに落とす。
+    wait_for("the first try to fail", || {
+        let text = log();
+        let failed_once = text.contains("the compositor is not ready at");
+        assert!(failed_once || taskbar.is_running(), "{text}");
+        failed_once.then_some(())
+    });
+    assert!(taskbar.is_running(), "{}", log());
+    assert!(log().contains("(ENOENT: "), "{}", log());
+    let seinas = Compositor::start("tg");
+    seinas.wait_for_screen("the taskbar at the bottom", |shot| {
+        shot.pixel(0, TOP) == TASKBAR_BACKGROUND
+    });
+    assert!(
+        seinas
+            .taskbar_log()
+            .contains("connected to the compositor after"),
+        "{}",
+        seinas.taskbar_log()
+    );
+    assert!(taskbar.is_running());
+}
+
+#[test]
+fn a_taskbar_gives_up_when_the_compositor_does_not_appear() {
+    // 残ったソケットのファイル(listen する相手がいない。ECONNREFUSED)へつなごうとする。
+    let dir = compositor_dir("th");
+    let stale = dir.join("stale");
+    drop(UnixListener::bind(&stale).expect("bind a socket"));
+    let mut taskbar = start_taskbar(&dir, &stale, &["--connect-tries", "3"]);
+    let status = taskbar.0.wait().expect("the taskbar ends");
+    let log = fs::read_to_string(dir.join("taskbar.log")).unwrap_or_default();
+    let _ = fs::remove_dir_all(&dir);
+    assert_eq!(status.code(), Some(1), "{log}");
+    assert!(
+        log.contains("the compositor is not ready at") && log.contains("(ECONNREFUSED: "),
+        "{log}"
+    );
+    assert!(
+        log.contains("the compositor did not appear at") && log.contains("gave up after 3 tries"),
+        "{log}"
+    );
 }

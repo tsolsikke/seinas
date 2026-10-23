@@ -17,6 +17,20 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 | `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`docs/text-rendering.md` の「利用者が選んだフォント」)。コンポジタと同じファイルを読む |
 | `--utc-offset ±HH:MM` か `UTC` | 時計の時差。設定のファイルより優先する(下の「時計」) |
 | `--config PATH` | タスクバーの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/taskbar.conf`(`XDG_CONFIG_HOME` が無ければ `~/.config/seinas/taskbar.conf`) |
+| `--connect-tries N` | コンポジタのソケットがまだ無いときに、最初の接続を試す回数(最初の 1 回を含む。既定は 300。1 なら試し直さない)。下の「起動の順序」。テストで短くするためのもの |
+
+## 起動の順序
+
+タスクバーは、コンポジタより先に起こされても動きます。ZeikOS では、`/dev/fb0` を前景のプロセスしか開けないので、コンポジタを前景(zash の `a | b` の右側)にし、タスクバーを先に切り離して起動する側(左側)にします。タスクバーが先に起きるので、コンポジタのソケットがまだ無いことがあります(運用者の決定。2026-10-19)。
+
+- 最初の接続で、ソケットが無い(`ENOENT`)か、listen する相手がいない(`ECONNREFUSED`)か、接続のテーブルが満杯(`EAGAIN`)のときは、100 ms 眠ってから試し直します。合わせて 300 回(約 30 秒)まで試します。眠るのは `std::thread::sleep`(musl の静的ビルドでは、`clock_nanosleep(CLOCK_MONOTONIC, 0, …)`。230 番。ZeikOS も受ける)で、待つ間に CPU は使いません。
+  - `EAGAIN` は ZeikOS の connect が、接続のテーブルに空きが無いときに返すものです。Linux の blocking connect は、相手の backlog が満杯なら待つので、試し直して Linux の「待つ」に近づけます(回数の上限があるので、いつまでも待つことはない)。
+  - 1 回目に失敗したときに、ログに `the compositor is not ready at <パス> (<errno の名前>: <理由>); trying again every 100 ms, up to 300 tries` を出します。つなげたら `connected to the compositor after <回数> tries` を出します(1 回目でつなげたときは出さない)。
+  - 300 回試してもつなげなければ、`the compositor did not appear at <パス>: gave up after 300 tries (<最後の理由>)` のエラーで終わります(exit status 1)。
+  - ほかの理由の失敗(パスが長すぎる、権限が無いなど)と、`WAYLAND_DISPLAY` が無い・相対の名前なのに `XDG_RUNTIME_DIR` が無いときは、試し直さずに、すぐにエラーで終わります。`WAYLAND_SOCKET`(親から渡された接続)のときも、試し直しません。
+- 間隔を 100 ms にした理由:コンポジタのソケットができてから、タスクバーが出るまでの遅れを 0.1 秒までにするためです。1 回の試しは `socket` と `connect` の 2 つの syscall で、1 秒に 10 回なら、ほかのプロセスの邪魔になりません。
+- 上限を約 30 秒にした理由:コンポジタは、起きてからソケットを作るまでに、実行ファイル(約 9 MB)の読み込みと画面の準備をします。QEMU の上の ZeikOS ではこれに何秒かかるか測っていないので、十分に長くしました。一方、`WAYLAND_DISPLAY` の間違いやコンポジタの起動の失敗のときに、いつまでも待たずにエラーで終わるため、上限を置きます。
+- 試し直すのは、最初の接続だけです。一度つないだ後に接続が切れたときは、これまでどおり、`the connection to the compositor was lost` のエラーで終わります(つなぎ直さない)。
 
 ## 見た目と並べ方
 
@@ -67,11 +81,11 @@ musl で静的にリンクした `seinas-taskbar` を、`seinas-standalone` と 
 
 - プロセスは 1 つ、スレッドも 1 つです。
 - fd は、標準入出力の 3 つのほかに 5 つです:接続(Unix のソケット)、epoll、eventfd、timerfd、pool の memfd。ウィンドウの数が増えても変わりません。フォントのファイルは、読み込んだら閉じます(使うのは、UI のフォントとフォールバックのフォントの 2 つ)。
-- syscall の種類は 31 で、zeyes-min の種類に `open`(フォント)と `ppoll`(つないだ直後の往復を待つ)が加わります。`clock_gettime` は、Linux では vDSO で済むので strace に出ませんが、ZeikOS で vDSO が無ければ、`CLOCK_REALTIME` と `CLOCK_MONOTONIC` の syscall が要ります。
+- syscall の種類は 31 で、zeyes-min の種類に `open`(フォント)と `ppoll`(つないだ直後の往復を待つ)が加わります。コンポジタより先に起きて試し直すときは、`clock_nanosleep` が加わります(上の「起動の順序」。`socket`・`connect`・`close` は、つなぐときにも使うもの)。`clock_gettime` は、Linux では vDSO で済むので strace に出ませんが、ZeikOS で vDSO が無ければ、`CLOCK_REALTIME` と `CLOCK_MONOTONIC` の syscall が要ります。
 - コンポジタの側では、タスクバーは、ほかのシェルの部品と同じです(接続と pool の memfd で fd が 2 つ増える)。
 
 ## テスト
 
 - 並べ方、押した点からのボタンの選び方、押したときに頼むこと、時計の表示(既定の +09:00 と UTC)と次に起きるまでの時間、時差の読み方(範囲、15 分刻み、読めない値)、設定のファイル、時差を決める順は、`crates/seinas-taskbar` のユニットテストで確かめています。
 - 絵は、正解データ(`crates/seinas-taskbar/tests/golden.rs`)と比べます(`docs/golden.md`)。
-- 実際に動かして、`crates/seinas-standalone/tests/taskbar.rs` が、ピクセルで確かめます(画面の下にあって、configure の大きさが小さくなること、ウィンドウのボタンが並んで activated のものが分かること、押すと raise されること、閉じたウィンドウのボタンが消えること、ふだんのソケットではつなげないこと、時計の時差が設定のファイルと起動オプションで変わり、読めない値では既定で動くこと)。
+- 実際に動かして、`crates/seinas-standalone/tests/taskbar.rs` が、ピクセルで確かめます(画面の下にあって、configure の大きさが小さくなること、ウィンドウのボタンが並んで activated のものが分かること、押すと raise されること、閉じたウィンドウのボタンが消えること、ふだんのソケットではつなげないこと、時計の時差が設定のファイルと起動オプションで変わり、読めない値では既定で動くこと、コンポジタより先に起こしても、1 回目の接続に失敗した後に起こしたコンポジタへつなぐこと、上限まで試してもつなげなければ `the compositor did not appear` で終わること)。ソケットのパスの決め方と、試し直す失敗の種類は、`crates/seinas-taskbar` のユニットテストで確かめています。

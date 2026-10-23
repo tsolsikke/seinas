@@ -11,14 +11,17 @@
 //! - `--utc-offset ±HH:MM`(か `UTC`):時計の時差(無ければ設定のファイルの `utc-offset`、それも無ければ環境変数
 //!   `TZ` の簡単な形、それも無ければ +09:00)。
 //! - `--config PATH`:タスクバーの設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/taskbar.conf`)。
+//! - `--connect-tries N`:コンポジタのソケットがまだ無いときに、最初の接続を試す回数(最初の 1 回を含む。無ければ
+//!   [`CONNECT_TRIES`]。1 なら試し直さない)。間隔は [`CONNECT_INTERVAL`]。
 //!
 //! 決まりの説明は `docs/taskbar.md` にある。
 
-use std::{error::Error, path::PathBuf, process::ExitCode, sync::Arc};
+use std::{error::Error, os::unix::net::UnixStream, path::PathBuf, process::ExitCode, sync::Arc};
 
 use seinas_taskbar::{
-    action_for, button_at, choose_offset, clock_text, format_utc_offset, paint, read_config,
-    until_next_minute, wall_clock, Action, Entry, CONFIG_FILE, HEIGHT,
+    action_for, button_at, choose_offset, clock_text, format_utc_offset, not_ready_yet, paint,
+    read_config, socket_path, until_next_minute, wall_clock, Action, Entry, CONFIG_FILE,
+    CONNECT_INTERVAL, CONNECT_TRIES, HEIGHT,
 };
 use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
@@ -480,6 +483,8 @@ struct Options {
     utc_offset: Option<String>,
     /// タスクバーの設定のファイル(`--config`)。Noneなら、既定の場所。
     config: Option<PathBuf>,
+    /// 最初の接続を試す回数(`--connect-tries`。1 以上)。
+    connect_tries: u32,
 }
 
 fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, String> {
@@ -487,6 +492,7 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
     let mut font_config = None;
     let mut utc_offset = None;
     let mut config = None;
+    let mut connect_tries = CONNECT_TRIES;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().cloned().ok_or(format!("{arg} needs a value"));
@@ -495,6 +501,14 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
             "--font-config" => font_config = Some(PathBuf::from(value()?)),
             "--utc-offset" => utc_offset = Some(value()?),
             "--config" => config = Some(PathBuf::from(value()?)),
+            "--connect-tries" => {
+                let text = value()?;
+                connect_tries = text
+                    .parse()
+                    .ok()
+                    .filter(|&tries| tries >= 1)
+                    .ok_or(format!("invalid --connect-tries value: {text}"))?;
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -505,7 +519,65 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
         font_config,
         utc_offset,
         config,
+        connect_tries,
     })
+}
+
+/// コンポジタへつなぐ。コンポジタがまだ受けられないとき([`not_ready_yet`])は、[`CONNECT_INTERVAL`] ずつ眠って
+/// (`std::thread::sleep`。musl では clock_nanosleep)、合わせて `tries` 回まで試す。起動の順序で、コンポジタより先に起こされることがあるため
+/// (`docs/taskbar.md` の「起動の順序」)。試し直すのは、この最初の接続だけ(つないだ後に切れたら、終わる)。
+fn connect(tries: u32) -> Result<Connection, Box<dyn Error>> {
+    // 親が接続を渡してきたときは、試し直す相手がいない。
+    if std::env::var_os("WAYLAND_SOCKET").is_some() {
+        return Ok(Connection::connect_to_env()
+            .map_err(|e| format!("cannot connect to the compositor (WAYLAND_SOCKET): {e}"))?);
+    }
+    let path = socket_path(
+        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
+        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
+    )
+    .map_err(|e| format!("cannot connect to the compositor: {e}"))?;
+    let mut tried = 0;
+    let stream = loop {
+        tried += 1;
+        match UnixStream::connect(&path) {
+            Ok(stream) => break stream,
+            Err(e) if not_ready_yet(&e).is_some() && tried < tries => {
+                if tried == 1 {
+                    let reason = not_ready_yet(&e).unwrap_or_default();
+                    eprintln!(
+                        "seinas-taskbar: the compositor is not ready at {} ({reason}: {e}); trying again every {} ms, up to {tries} tries",
+                        path.display(),
+                        CONNECT_INTERVAL.as_millis()
+                    );
+                }
+                std::thread::sleep(CONNECT_INTERVAL);
+            }
+            Err(e) if not_ready_yet(&e).is_some() => {
+                return Err(format!(
+                    "the compositor did not appear at {}: gave up after {tried} tries ({e})",
+                    path.display()
+                )
+                .into())
+            }
+            Err(e) => {
+                return Err(format!(
+                    "cannot connect to the compositor at {}: {e}",
+                    path.display()
+                )
+                .into())
+            }
+        }
+    };
+    if tried > 1 {
+        eprintln!("seinas-taskbar: connected to the compositor after {tried} tries");
+    }
+    Ok(Connection::from_socket(stream).map_err(|e| {
+        format!(
+            "cannot connect to the compositor at {}: {e}",
+            path.display()
+        )
+    })?)
 }
 
 /// 時計の時差を、起動オプション・設定のファイル・環境変数 `TZ` から決め、決めたことと、読めなかったものを
@@ -544,8 +616,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         eprintln!("seinas-taskbar: {message}");
     }
 
-    let conn = Connection::connect_to_env()
-        .map_err(|e| format!("cannot connect to the compositor (WAYLAND_DISPLAY): {e}"))?;
+    let conn = connect(options.connect_tries)?;
     let (globals, event_queue) = registry_queue_init::<Taskbar>(&conn)?;
     let qh = event_queue.handle();
     let mut event_loop: EventLoop<Taskbar> = EventLoop::try_new()?;
@@ -655,6 +726,16 @@ mod tests {
         assert_eq!(options.config, Some(PathBuf::from("/c/taskbar.conf")));
         assert!(parse_options(&args(&["--bogus"]), None).is_err());
         assert!(parse_options(&args(&["--utc-offset"]), None).is_err());
+    }
+
+    #[test]
+    fn the_connect_tries_come_from_the_argument() {
+        let tries = |list: &[&str]| parse_options(&args(list), None).map(|o| o.connect_tries);
+        assert_eq!(tries(&[]), Ok(CONNECT_TRIES));
+        assert_eq!(tries(&["--connect-tries", "1"]), Ok(1));
+        assert!(tries(&["--connect-tries", "0"]).is_err());
+        assert!(tries(&["--connect-tries", "x"]).is_err());
+        assert!(tries(&["--connect-tries"]).is_err());
     }
 
     #[test]

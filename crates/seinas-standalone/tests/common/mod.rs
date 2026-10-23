@@ -333,6 +333,36 @@ pub fn workspace_bin(package: &str, name: &str) -> PathBuf {
     bin
 }
 
+/// [`Compositor`] の作業用の場所(印のファイルつき)を作る。`name` が同じなら、同じ場所になる。ふだんのソケットは
+/// この下の `wl`、シェルの部品のためのソケットは `wl-shell`(コンポジタより先に起こすタスクバーのテストが使う)。
+pub fn compositor_dir(name: &str) -> PathBuf {
+    // ソケットのパスには長さの上限(約100文字)があるので、短い場所に置く。
+    sweep_stale_dirs();
+    let dir = std::env::temp_dir().join(format!("seinas-{name}-{}", std::process::id()));
+    fs::create_dir_all(&dir).expect("create the working directory");
+    fs::write(dir.join(DIR_MARK), "").expect("mark the working directory");
+    dir
+}
+
+/// タスクバー(seinas-taskbar)を、引数 `args` で `socket` へつなぐ。標準エラーは `dir` の `taskbar.log` に書く。
+pub fn start_taskbar(dir: &Path, socket: &Path, args: &[&str]) -> Running {
+    let log = fs::File::create(dir.join("taskbar.log")).expect("create the taskbar log");
+    Running(
+        child_command(workspace_bin("seinas-taskbar", "seinas-taskbar"))
+            .args(args)
+            .arg("--fonts")
+            .arg(font_dir())
+            .env("WAYLAND_DISPLAY", socket)
+            .env_remove("SEINAS_FONTS")
+            // 時計の時差は、引数と設定のファイルで決める(外の TZ に左右されない)。
+            .env_remove("TZ")
+            .env("XDG_CONFIG_HOME", dir)
+            .stderr(log)
+            .spawn()
+            .expect("start seinas-taskbar"),
+    )
+}
+
 /// fake screen で動かしたseinas-standaloneと、その作業用の場所。
 pub struct Compositor {
     pub process: Running,
@@ -387,11 +417,7 @@ impl Compositor {
         args: &[&str],
         env: &[(&str, &str)],
     ) -> Self {
-        // ソケットのパスには長さの上限(約100文字)があるので、短い場所に置く。
-        sweep_stale_dirs();
-        let dir = std::env::temp_dir().join(format!("seinas-{name}-{}", std::process::id()));
-        fs::create_dir_all(&dir).expect("create the working directory");
-        fs::write(dir.join(DIR_MARK), "").expect("mark the working directory");
+        let dir = compositor_dir(name);
         let socket = dir.join("wl");
         let dump = dir.join("screen.ppm");
         let log = fs::File::create(dir.join("log")).expect("create the log file");
@@ -507,21 +533,7 @@ impl Compositor {
     /// タスクバー(seinas-taskbar)を、引数 `args` で `socket` へつなぐ。標準エラーは、作業用の場所の
     /// `taskbar.log` に書く。
     pub fn connect_taskbar_to(&self, socket: &Path, args: &[&str]) -> Running {
-        let log = fs::File::create(self.dir.join("taskbar.log")).expect("create the taskbar log");
-        Running(
-            child_command(workspace_bin("seinas-taskbar", "seinas-taskbar"))
-                .args(args)
-                .arg("--fonts")
-                .arg(font_dir())
-                .env("WAYLAND_DISPLAY", socket)
-                .env_remove("SEINAS_FONTS")
-                // 時計の時差は、引数と設定のファイルで決める(外の TZ に左右されない)。
-                .env_remove("TZ")
-                .env("XDG_CONFIG_HOME", &self.dir)
-                .stderr(log)
-                .spawn()
-                .expect("start seinas-taskbar"),
-        )
+        start_taskbar(&self.dir, socket, args)
     }
 
     /// タスクバーを、シェルの部品のためのソケットへつなぐ。時計は UTC。

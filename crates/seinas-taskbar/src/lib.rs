@@ -3,7 +3,12 @@
 //! バイナリ(`src/main.rs`)が、layer-shell と foreign-toplevel のクライアントとして動き、ここの関数で
 //! 描いて、ポインターの位置からボタンを選ぶ。決まりの説明は `docs/taskbar.md` にある。
 
-use std::{path::Path, time::Duration};
+use std::{
+    ffi::OsStr,
+    io,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use seinas_text::{Canvas, Line, TextPainter};
 
@@ -391,9 +396,80 @@ pub fn offset_from_tz(tz: &str) -> Option<i32> {
     Some(sign * (hours * 3600 + minutes * 60))
 }
 
+/// コンポジタへの最初の接続を試し直す間隔と、試す回数(最初の 1 回を含む)の既定。合わせて 30 秒ほど待つ
+/// (`docs/taskbar.md` の「起動の順序」)。
+pub const CONNECT_INTERVAL: Duration = Duration::from_millis(100);
+pub const CONNECT_TRIES: u32 = 300;
+
+/// つなぐソケットのパス。`display`(`WAYLAND_DISPLAY`)が絶対パスならそのまま、そうでなければ `runtime_dir`
+/// (`XDG_RUNTIME_DIR`。絶対パスに限る)の下(wayland-client の `Connection::connect_to_env` と同じ決まり)。
+pub fn socket_path(
+    display: Option<&OsStr>,
+    runtime_dir: Option<&OsStr>,
+) -> Result<PathBuf, String> {
+    let display = Path::new(display.ok_or("WAYLAND_DISPLAY is not set")?);
+    if display.is_absolute() {
+        return Ok(display.to_owned());
+    }
+    match runtime_dir.map(Path::new) {
+        Some(dir) if dir.is_absolute() => Ok(dir.join(display)),
+        Some(_) => Err("XDG_RUNTIME_DIR is not an absolute path".to_owned()),
+        None => Err(format!(
+            "XDG_RUNTIME_DIR is not set (needed for WAYLAND_DISPLAY={})",
+            display.display()
+        )),
+    }
+}
+
+/// 接続の失敗が、コンポジタがまだ受けられないためなら、その errno の名前。このときだけ、試し直す。
+///
+/// - `ENOENT`:ソケットがまだ無い。
+/// - `ECONNREFUSED`:ソケットはあるが、listen する相手がいない。
+/// - `EAGAIN`:ZeikOS で、接続のテーブルが満杯(Linux の blocking connect は、相手の backlog が満杯なら待つ)。
+pub fn not_ready_yet(error: &io::Error) -> Option<&'static str> {
+    match error.raw_os_error()? {
+        libc::ENOENT => Some("ENOENT"),
+        libc::ECONNREFUSED => Some("ECONNREFUSED"),
+        libc::EAGAIN => Some("EAGAIN"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_socket_path_follows_wayland_display_and_xdg_runtime_dir() {
+        let path = |display: Option<&str>, dir: Option<&str>| {
+            socket_path(display.map(OsStr::new), dir.map(OsStr::new))
+        };
+        assert_eq!(
+            path(Some("/tmp/s-shell.sock"), None),
+            Ok(PathBuf::from("/tmp/s-shell.sock"))
+        );
+        assert_eq!(
+            path(Some("seinas-0-shell"), Some("/run/user/1000")),
+            Ok(PathBuf::from("/run/user/1000/seinas-0-shell"))
+        );
+        assert!(path(None, Some("/run/user/1000")).is_err());
+        assert!(path(Some("seinas-0-shell"), None).is_err());
+        assert!(path(Some("seinas-0-shell"), Some("run")).is_err());
+    }
+
+    #[test]
+    fn only_a_missing_socket_no_listener_or_a_full_table_is_tried_again() {
+        let reason = |errno| not_ready_yet(&io::Error::from_raw_os_error(errno));
+        assert_eq!(reason(libc::ENOENT), Some("ENOENT"));
+        assert_eq!(reason(libc::ECONNREFUSED), Some("ECONNREFUSED"));
+        assert_eq!(reason(libc::EAGAIN), Some("EAGAIN"));
+        assert_eq!(reason(libc::EACCES), None);
+        assert_eq!(reason(libc::ENAMETOOLONG), None);
+        assert_eq!(
+            not_ready_yet(&io::Error::from(io::ErrorKind::NotFound)),
+            None
+        );
+    }
 
     #[test]
     fn buttons_share_the_width_up_to_a_limit() {
