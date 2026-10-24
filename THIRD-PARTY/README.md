@@ -101,7 +101,8 @@ muslのライセンス文は、musl 1.2.5のソースの `COPYRIGHT` です。
 ## Rustの標準ライブラリ
 
 Rustでビルドした実行ファイルには、Rustの標準ライブラリ(MIT OR Apache-2.0)が入ります。
-musl向けの静的ビルドでは、Rustに同梱のlibunwind(Apache-2.0 WITH LLVM-exception)も入ります。
+musl向けの静的ビルドでは、Rustに同梱のlibunwind(Apache-2.0 WITH LLVM-exception AND NCSA)も入ります。
+ライセンス文と著作権表示は `rust-std/` にあります(取った所は `rust-std/README.md`)。
 
 ## 配布物に入れるもの
 

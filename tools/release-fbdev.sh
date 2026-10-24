@@ -19,12 +19,10 @@ export LC_ALL=C
 tag=${1:?usage: tools/release-fbdev.sh <tag>}
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
+. tools/release-lib.sh
 
-# 作業ツリーに変更が残っていると、どのソースから作ったかが分からなくなる。
-if [ -n "$(git status --porcelain)" ]; then
-    echo "作業ツリーに変更があります。コミットするか、元に戻してから作ってください。" >&2
-    exit 1
-fi
+# 作業ツリーに変更が無く、HEAD が push 済み(origin の main と同じ)であること。
+release_require_pushed
 commit=$(git rev-parse HEAD)
 
 # いつも同じ条件で作るため、musl向けの成果物を消してから作り直す(Cのライブラリも作り直す)。
@@ -39,10 +37,10 @@ rm -rf "$out"
 mkdir -p "$out"
 cp "$binary" "$out/seinas-fbdev"
 
-# 第三者のライセンス文を、1つのアーカイブにまとめる。中身の並びと日時をそろえ、同じ中身なら同じアーカイブになるようにする。
+# 第三者のライセンス文を、1つのアーカイブにまとめる(tools/release-lib.sh の release_pack)。
 notices=seinas-fbdev-$tag-third-party
 python3 tools/release-notices.py seinas-fbdev "$binary" "$out/$notices" > /dev/null
-tar -C "$out" --sort=name --owner=0 --group=0 --numeric-owner --mtime="@0" -cf - "$notices" | gzip -n > "$out/$notices.tar.gz"
+release_pack "$out" "$notices"
 rm -r "$out/$notices"
 
 (cd "$out" && sha256sum seinas-fbdev "$notices.tar.gz" > SHA256SUMS)
@@ -75,7 +73,7 @@ ZeikOS 側の仕組みに合わせた変更は入れていません(Linux のプ
 ## ライセンス
 
 - Seinas 自身のコードは MIT ライセンスです(アーカイブの中の \`LICENSE\`)。
-- 第三者のソフトウェア(pixman、musl、Rust のクレート、Rust の標準ライブラリ)は、それぞれのライセンスに従います。本文と著作権表示は \`$notices.tar.gz\` にあります。
+- 第三者のソフトウェア(pixman、musl、Rust のクレート、Rust の標準ライブラリ、libunwind)は、それぞれのライセンスに従います。本文と著作権表示は \`$notices.tar.gz\` にあります。
 NOTES
 
 echo "できたもの($out):"

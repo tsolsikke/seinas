@@ -24,7 +24,7 @@ ZeikOS の CI は pixman の musl 向けのライブラリを作れないので�
 
 ## 手順
 
-1. `main` を最新にし、作業ツリーに変更が無いことを確かめます(スクリプトも確かめます)。
+1. `main` を最新にして push し、作業ツリーに変更が無いことを確かめます(スクリプトも、作業ツリーと、HEAD が origin の `main` と同じことを確かめ、違えば止まります)。
 2. アセットを作ります。musl 向けの成果物(C のライブラリを含む)を消してから作り直すので、数分かかります。
 
 ```bash
@@ -50,7 +50,7 @@ gh release view v0.1.0
 
 `tools/release-fbdev.sh` は、次を順に行います。
 
-1. 作業ツリーに変更が無いことを確かめ、コミットのハッシュを控える。
+1. 作業ツリーに変更が無く、HEAD が origin の `main` と同じ(push 済み)であることを確かめ、コミットのハッシュを控える。release のタグは GitHub にあるコミットに付くので、push する前のコミットからは作らない(`git ls-remote` で読むだけで、GitHub には書かない)。
 2. `target/x86_64-unknown-linux-musl` と `target/musl-libs` を消し、`tools/build-musl.sh` で作り直す(`docs/musl-static.md`)。
 3. `tools/elf-report.sh` で、静的 PIE であることを確かめる。`tools/third-party.py --check` で、ライセンス文の置き場が最新であることを確かめる。
 4. `tools/release-notices.py` で、`seinas-fbdev` に入る第三者のライセンス文を集め、アーカイブにする。
@@ -60,10 +60,10 @@ gh release view v0.1.0
 
 - Rust のクレート: `cargo tree -p seinas-fbdev -e normal,no-proc-macro --target x86_64-unknown-linux-musl` で、この実行ファイルに入るものだけを選びます(ワークスペース全体で解決すると、`seinas-fbdev` には入らない Wayland 系のクレートまで数えてしまうので、そうしません)。ライセンス文は `THIRD-PARTY/licenses/` と `licenses-upstream/` からコピーします。
 - C のライブラリ: `THIRD-PARTY/c-libraries/` からコピーします。リンクの指定があっても、使われないものは実行ファイルに入らないので、実行ファイルのシンボル(`nm`)を見て、実際に入っているものだけを入れます。`seinas-fbdev` には pixman と musl が入り、libxkbcommon は入りません。
-- Rust の標準ライブラリと libunwind は、一覧に書きます。
+- Rust の標準ライブラリと libunwind: `THIRD-PARTY/rust-std/` のライセンス文(標準ライブラリの `COPYRIGHT-library.html` と、libunwind の `LICENSE.TXT`)をコピーします。`THIRD-PARTY/rust-std/RUSTC-VERSION` が今の `rustc -V` と違うか、ファイルが欠けていれば止まります(`THIRD-PARTY/rust-std/README.md`)。
 - Seinas 自身の `LICENSE` も入れます。
 
-アーカイブは、中身の並びと日時をそろえて作るので、同じ中身なら同じファイルになります。
+アーカイブは、中身の並びと日時をそろえて作るので、同じ中身なら同じファイルになります。tar と gzip はパイプでつながず、tar の出力をファイルに書いてから gzip するので、どちらが失敗してもスクリプトは止まります(`/bin/sh` には pipefail が無いため。`tools/release-lib.sh`)。
 
 ## パスを残さないこと
 

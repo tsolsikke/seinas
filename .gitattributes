@@ -2,3 +2,5 @@
 crates/*/tests/golden/*.ppm binary
 crates/*/tests/golden/*.pgm binary
 crates/*/tests/golden/*.bin binary
+# 上流からコピーしたライセンス文は、中身を変えずに置くので、行末の空白の確かめ(git diff --check)をしない。
+THIRD-PARTY/rust-std/* -whitespace
