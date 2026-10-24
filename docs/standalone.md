@@ -64,27 +64,73 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 
 ## ZeikOS の上で起動する
 
-ZeikOS の上では、release の `seinas-standalone`(`docs/release.md` の「seinas-standalone の release」)を、変更を入れずに、そのまま動かします(2026-10-21 の時点の形。クライアントは 0 で、コンポジタだけを起動する)。
+ZeikOS の上では、release の `seinas-standalone`(コンポジタ)と `seinas-taskbar`(タスクバー)を、変更を入れずに、そのまま動かします(`docs/release.md` の「seinas-standalone の release」。v0.3.0 から、タスクバーも入る)。
+
+### 置くファイル(v0.3.0)
+
+release `v0.3.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じです(2026-10-24 に、`tools/release-standalone.sh` と同じ手順で作って確かめた。CI の musl のビルドと同じバイト)。
+
+| release の上の名前 | 置き場(ZeikOS のイメージ) | 大きさ(バイト) | SHA-256 |
+| --- | --- | --- | --- |
+| `seinas-standalone` | `/bin/linux/seinas-standalone` | 9,074,264 | `68d3d3e3a94cd0c13c5e51fc31ef53870737393c2c1e3b9af0d9e04b61506a83` |
+| `seinas-standalone-v0.3.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 67,997 | `1fff0478bc19d285839eff17f61b08981bc0e40e88ae530aeff7fba49b44ea2a` |
+| `seinas-taskbar` | `/bin/linux/seinas-taskbar` | 4,966,232 | `4328035d9d04a9e1acbdda0471d54771b522f77c3cf67ee131bb8073b13c37a2` |
+| `seinas-taskbar-v0.3.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 57,048 | `2db60ce438fd4b7dffca5846f8f36e798ae73979e64b47166086553fa042704b` |
+
+- 置き場の名前は、v0.2.0 と同じく、ZeikOS の側が決めます(上の表の置き場は、v0.2.0 の `/bin/linux/seinas-standalone` に合わせた例)。取り込みは ZeikOS の側が行います。
+- ほかに置くものはありません。フォントと xkb のファイルは置きません(下の「フォントと xkb」)。
+- ZeikOS は、ソケットとロックファイルの置き場の `/tmp/seinas` を、イメージに作ってあります。
+
+### 起動のしかた
+
+zash で、タスクバーを `a | b` の左に、コンポジタを右に置いて起動します。ZeikOS では `/dev/fb0` を前景のプロセスしか開けないので、コンポジタを前景(右側)にします。左側のタスクバーが先に起き、コンポジタのソケットができるまで待ってつなぎます(`docs/taskbar.md` の「起動の順序」)。
 
 ```text
-seinas-standalone --socket /tmp/seinas/s.sock
+export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock
+/bin/linux/seinas-taskbar | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket
 ```
 
-- 画面は、引数が無ければ `/dev/fb0` です(ZeikOS では、前面のプロセスだけが開けます)。
-- ソケットとロックファイルは、`/tmp/seinas` の下にできます。ZeikOS は、`/tmp/seinas` をイメージに作ってあります。
-  - listen のソケット:`s.sock`(ふだん)、`s-shell.sock`(シェルの部品)、`s-ime.sock`(IME)
-  - ロックファイル:`s.lock`、`s-shell.lock`、`s-ime.lock`(パスの拡張子を `.lock` に替えたもの)
-  - IME を使わないときは、`seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket` と起動すると、`s-ime.sock` と `s-ime.lock` を作らず、fd が 2 本減ります(ログは `listening on …/s-ime.sock` の代わりに `the socket for the input method is not opened (--no-ime-socket)`)。v0.2.0 の release には、この引数はありません。
-- `--socket` を付けるので、`XDG_RUNTIME_DIR` は使いません(ZeikOS の `/etc/environment` の `XDG_RUNTIME_DIR=/tmp/seinas` は、そのままでよい)。
-- 置くファイルは、実行ファイル 1 つだけです。フォントと xkb のファイルは置きません(C1S4 の決定)。
-  - フォントが無いので、起動のときに、フォントを読めないという WARN の行が出ます(既定のフォントの置き場は、作業中のディレクトリから見た `target/fonts` で、ZeikOS は相対のパスの open を断るため)。文字を描かないだけで、動き続けます。
-  - ふだんの起動(`--test-input` なし)では、キーボードを作らないので、xkb のファイルは読みません。
-- 起動が済んだことは、ログ(標準エラー)の次の行で分かります。
-  - `listening on /tmp/seinas/s.sock`、`listening on /tmp/seinas/s-shell.sock`、`listening on /tmp/seinas/s-ime.sock`
+- `WAYLAND_DISPLAY` は、タスクバーがつなぐ、シェルの部品のためのソケットです。絶対パスにしているので、`XDG_RUNTIME_DIR` は使いません。相対の名前(`s-shell.sock`)でも、ZeikOS の `/etc/environment` の `XDG_RUNTIME_DIR=/tmp/seinas` の下になるので同じです。
+- コンポジタは、`--socket` で場所を決めるので、`WAYLAND_DISPLAY` と `XDG_RUNTIME_DIR` を読みません。シェルの部品のためのソケットは、`--socket` のパスから `/tmp/seinas/s-shell.sock` になります。
+- `--no-ime-socket` で、IME のためのソケットを開きません(IME を使わない構成。fd が 2 本減る)。コンポジタの fd は、タスクバーがつながって 15 本です(`docs/zeikos-requirements.md` の「fd の種類」)。
+- パイプは、起動の順序を決めるためだけに使います。タスクバーは標準出力に何も書かず、コンポジタは標準入力を読みません(`--test-input` を付けないため)。ログはどちらも標準エラーです。
+- どちらも `--fonts` と `--config` を付けません。タスクバーの時計は、既定の +09:00 です(`TZ` も設定のファイルも無いため)。
+
+### フォントと xkb
+
+- フォントは置きません。同梱のフォントは 3 本とも 4 MiB を越え、今の ZeikOS の ext2 では読めないためです(`docs/zeikos-requirements.md` の「4 MiB を越えるファイル」)。
+- フォントが無くても、どちらも動きます(2026-10-24 に、Linux で、フォントの置き場が無く、作業中のディレクトリが `/` の形で確かめた)。
+  - コンポジタ:ウィンドウのタイトルの文字を描きません。起動のときに、フォントを読めないという WARN の行を出します(タスクバーと同じく、既定の置き場が相対のパスのため)。
+  - タスクバー:地の色とボタンの地は描き、ボタンの文字と時計の文字を描きません。起動のときに、`cannot read the font target/fonts/BIZUDPGothic-Regular.ttf: …` と `cannot read the font target/fonts/unifont_jp-18.0.01.otf: …` の 2 行を出します(既定の置き場は、作業中のディレクトリから見た `target/fonts` で、ZeikOS は相対のパスの open を断る)。
+- xkb のファイルは置きません。コンポジタは、ふだんの起動(`--test-input` なし)ではキーボードを作らず、タスクバーはキーボードを使わないので、どちらも xkb のファイルを読みません。
+
+### 起動が済んだことの見分け方
+
+- コンポジタ(標準エラー):
+  - `listening on /tmp/seinas/s.sock`、`listening on /tmp/seinas/s-shell.sock`、`the socket for the input method is not opened (--no-ime-socket)`
   - `screen: 1280x800 (…)`(大きさは、ZeikOS の画面のもの)
   - `presented the first frame (1280x800)`(最初の 1 枚を画面へ present し終えたときに、1 回だけ。target は `seinas_standalone`)
-- 最初の 1 枚は、コンポジタの背景の色(`191e28`)だけの絵です。
-- 止めるには、前面の子を止める ZeikOS の手段(Ctrl+C)を使います。終わるときのクリーンアップはしていません(下の「今の制限」)。
+- タスクバー(標準エラー。`seinas-taskbar:` で始まる):
+  - `the clock is UTC+09:00 (from the default)` と、上のフォントの 2 行
+  - コンポジタより先に起きたとき:`the compositor is not ready at /tmp/seinas/s-shell.sock (ECONNREFUSED: …); trying again every 100 ms for up to 30000 ms`、つないだら `connected to the compositor after <回数> tries`
+  - 最初の往復の答えを待ったとき:`connected; waiting up to 30000 ms …` と `the compositor answered the first round trip`
+- 画面:背景の色(`191e28`)の下の端に、高さ 40 ピクセルのタスクバー(地の色 `20242c`)が出ます。
+- タスクバーがつなげないときは、30 秒(接続)か 30 秒(最初の往復)で、名前つきのエラー(`the compositor did not appear …`、`the compositor did not answer the first round trip …`)で終わります。
+
+### ZeikOS の側に要るもの(タスクバー)
+
+コンポジタだけ(v0.2.0)のときに無かったもので、タスクバーをつなぐと要るものです。詳しくは `docs/zeikos-requirements.md` と `docs/taskbar.md` の「ZeikOS の上で動かすときの前提」にあります。
+
+- `ppoll`(271 番。timeout の timespec と sigmask は NULL):wayland-client の registry の往復で 1 回使います。
+- `poll`(7 番):最初の往復を、期限つきで待つのに使います(timeout は 0 と、期限の残りのミリ秒)。
+- 共有メモリー:タスクバーの pool は、`ftruncate(fd, 256000)` で始まり、2 枚目のバッファを取ると `ftruncate(fd, 512000)` に伸びます(1280 の幅で、1 枚 204,800 バイト)。コンポジタは、伸ばしたときに、前のマッピングを `munmap` してから `mmap` し直します(Smithay 0.7.0 は mremap を使わない)。
+- `clock_gettime(CLOCK_REALTIME)`(時計)と `clock_nanosleep(CLOCK_MONOTONIC)`(つなぐのを待つ間)。
+
+### 止め方
+
+前面のコンポジタを、ZeikOS の手段(Ctrl+C)で止めます。タスクバーは、接続が切れて `the connection to the compositor was lost` で終わります。終わるときのクリーンアップ(ソケットのファイルとロックファイルを消す、など)はしていません(下の「今の制限」)。
+
+コンポジタだけを起動するときは、今までどおり `seinas-standalone --socket /tmp/seinas/s.sock`(v0.2.0 の形)でも動きます。
 
 ## 公開するもの
 

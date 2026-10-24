@@ -106,18 +106,23 @@ sha256sum --check SHA256SUMS
 
 ## seinas-standalone の release
 
-ZeikOS の上で Seinas のコンポジタを動かすために、`seinas-standalone`(musl 向けの静的 PIE)も、同じ形の release として配ります。手順は、上の seinas-fbdev と同じで、スクリプトが `tools/release-standalone.sh` に替わります。
+ZeikOS の上で Seinas のコンポジタとタスクバーを動かすために、`seinas-standalone` と `seinas-taskbar`(どちらも musl 向けの静的 PIE)も、同じ形の release として配ります(タスクバーは v0.3.0 から。v0.2.0 はコンポジタだけ)。手順は、上の seinas-fbdev と同じで、スクリプトが `tools/release-standalone.sh` に替わります。
 
 | ファイル | 中身 |
 | --- | --- |
-| `seinas-standalone` | 実行ファイル(x86-64 の Linux、musl、静的 PIE)。`tools/build-musl.sh` の出力と同じもので、strip はしない(CI の SHA-256 と同じバイトにするため) |
-| `seinas-standalone-<タグ>-third-party.tar.gz` | この実行ファイルに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
-| `SHA256SUMS` | 上の2つの SHA-256 |
+| `seinas-standalone` | コンポジタの実行ファイル(x86-64 の Linux、musl、静的 PIE)。`tools/build-musl.sh` の出力と同じもので、strip はしない(CI の SHA-256 と同じバイトにするため) |
+| `seinas-standalone-<タグ>-third-party.tar.gz` | コンポジタに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
+| `seinas-taskbar` | タスクバーの実行ファイル(同じく、strip はしない) |
+| `seinas-taskbar-<タグ>-third-party.tar.gz` | タスクバーに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
+| `SHA256SUMS` | 上の4つの SHA-256 |
 
 ```bash
-tools/release-standalone.sh v0.2.0
+tools/release-standalone.sh v0.3.0
 ```
+
+- 第三者のライセンス文は、実行ファイルごとに集めます(`tools/release-notices.py`)。タスクバーには、pixman と libxkbcommon は入りません(Rust のクレートと musl、Rust の標準ライブラリと libunwind)。
+- release の Title は `Seinas <タグ>` です(v0.2.0 は `seinas-standalone v0.2.0`)。
 
 - タグはリポジトリ全体に付くので、seinas-fbdev と seinas-standalone を同じバージョンで出すときは、同じタグの release に両方を置くこともできます。別々に出すときは、バージョンを上げてから切ります(上の「タグの決め方」)。
 - コンポジタは、最初の 1 枚を画面へ present し終えたときに、標準エラーのログへ `presented the first frame (<幅>x<高さ>)` を 1 回だけ出します(target は `seinas_standalone`。ZeikOS の側の確かめが、この行を探す)。文言を変えるときは、ZeikOS の側に知らせます。
-- ZeikOS の上での起動のしかたと、置くファイルは `docs/standalone.md` の「ZeikOS の上で起動する」にあります。
+- ZeikOS の上での起動のしかたと、置くファイル(名前・大きさ・SHA-256)は `docs/standalone.md` の「ZeikOS の上で起動する」にあります。
