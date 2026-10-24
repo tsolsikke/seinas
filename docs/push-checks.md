@@ -55,6 +55,9 @@ tools/pre-push.sh
 - `--dry-run` で、選んだ段と、ファイルごとの段だけを出します。
 - 終わりに、段と、かかった秒数と、落ちた確かめを出します。落ちたものがあれば、終わりの値は 1 です。
 - code 以上の段は、ZeikOS の QEMU と重ならないように、`tools/zeikos-lock.sh` でホストのロック(`/tmp/zeikos-qemu.lock` の排他)を取ってから動きます。ZeikOS が QEMU を使っている間は、`waiting for ZeikOS's QEMU` を 1 行出して待ちます(最長 90 分。zeikos のリポジトリの ADR-0089)。docs の段と `--dry-run` は、ロックを取りません。
+  - ロックは、`tools/zeikos-lock.sh` が fd 9 に開いたロックのファイルで持ち、コマンドとその子孫に受け継がれます。コマンドが終わっても子孫が残っていれば、その子孫が終わるまでロックは外れません(作業が続いたままロックが外れて、ZeikOS の QEMU と重なる形を避けるため)。そのときは `the command ended, but these processes still hold /tmp/zeikos-qemu.lock; the lock stays until they end: <pid>(<コマンド名>) …` を 1 行出すので、その pid を確かめて止めてください。
+  - 中から呼ばれたとき(pre-push の中の `tools/build-musl.sh` など)は、環境変数 `SEINAS_HOLDS_QEMU_LOCK` の fd 番号が、ロックのファイル(同じ inode)を指し、排他のロックを持っていることを確かめてから、取り直さずに動きます(`tools/zeikos-lock.sh --held`)。確かめられなければ(偽の値、ロックを持っていない fd など)、ふつうにロックを取ります。
+  - `tools/zeikos-lock-test.sh` が、これらの振る舞い(取る・外す、入れ子、偽の環境変数、上限での終わり方、残った子孫)を、本物のロックに触らずに、コピーしたスクリプトで確かめます。`tools/zeikos-lock.sh` を変えたときに動かしてください。
 
 push の後は、CI を待って確かめます。
 

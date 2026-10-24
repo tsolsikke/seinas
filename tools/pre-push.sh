@@ -97,7 +97,7 @@ fi
 
 # code 以上の段は重い作業なので、ZeikOS の QEMU と重ならないように、ホストのロックの中で起こし直す
 # (tools/zeikos-lock.sh。zeikos の ADR-0089)。段は決まったものを渡す。
-if ! $dry_run && [ "$(rank "$tier")" -ge 2 ] && [ "${SEINAS_HOLDS_QEMU_LOCK:-}" != 1 ]; then
+if ! $dry_run && [ "$(rank "$tier")" -ge 2 ] && ! "$root/tools/zeikos-lock.sh" --held; then
     exec "$root/tools/zeikos-lock.sh" "$root/tools/pre-push.sh" --base "$base" --tier "$tier"
 fi
 

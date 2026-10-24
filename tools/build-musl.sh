@@ -15,7 +15,7 @@ set -eu
 
 root=$(cd "$(dirname "$0")/.." && pwd)
 # 重い作業なので、ZeikOS の QEMU と重ならないように、ホストのロックの中で動かす(tools/zeikos-lock.sh)。
-if [ "${SEINAS_HOLDS_QEMU_LOCK:-}" != 1 ]; then
+if ! "$root/tools/zeikos-lock.sh" --held; then
     exec "$root/tools/zeikos-lock.sh" "$root/tools/build-musl.sh" "$@"
 fi
 libs="$root/target/musl-libs/lib"
