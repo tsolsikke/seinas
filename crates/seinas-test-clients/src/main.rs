@@ -183,7 +183,7 @@ fn main() -> ExitCode {
         eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration] [--pointer] [--move-on-press] [--ignore-close] [--size WxH] [--color RRGGBB]");
         eprintln!("       test-client layer [--layer NAME] [--anchor LIST] [--size WxH] [--exclusive N] [--margin T,R,B,L] [--color RRGGBB] [--namespace NAME]");
         eprintln!("       test-client toplevels [--ext|--ext-only] [--output-after]");
-        eprintln!("       test-client ime [--swallow KEY] [--popup WxH] [--popup-text] [--virtual-keyboard-only]");
+        eprintln!("       test-client ime [--swallow KEY] [--popup WxH] [--popup-text] [--virtual-keyboard-only] [--no-builtin-keymap]");
         eprintln!("       test-client globals");
         return ExitCode::from(2);
     };

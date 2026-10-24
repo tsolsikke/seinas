@@ -1690,3 +1690,23 @@ fn modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks() {
             .then_some(())
     });
 }
+
+#[test]
+fn a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_later() {
+    // seat で最初の keymap が届く前は、Smithay が virtual-keyboard の modifiers と key を NoKeymap のエラーで断り、
+    // アプリへは何も渡さない。断られたものを記録すると、接続が切れた後の片付けで、渡していない modifiers や
+    // 「離した」を送り、事実と違うログを出してしまう。
+    let seinas = Compositor::start_with_input("kj");
+    let _window = open_window(&seinas, "ウィンドウ");
+    // built-in の virtual-keyboard に keymap を送らない IME は、grab の modifiers を送り直したところで切られる。
+    let mut ime = connect_ime(&seinas, &["--no-builtin-keymap"]);
+    // 接続が切られるので、synced は待たない。
+    ime.send_line("vk-new a");
+    ime.send_line(&format!("vk-key a {KEY_A} press"));
+    wait_for_log(&seinas, "sent before keymap.");
+    // 別のクライアントで往復して、切れた接続の片付けが済んだ後にする(時間には頼らない)。
+    let other = seinas.connect_test_client(&["window", "--title", "other"]);
+    other.wait_for_line("window: drawn");
+    let log = seinas.log();
+    assert!(!log.contains("left pressed by a virtual keyboard"), "{log}");
+}

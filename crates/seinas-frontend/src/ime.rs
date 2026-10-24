@@ -692,8 +692,12 @@ where
             VirtualKeyboardUserData<D>,
             D,
         >>::request(state, client, resource, request, data, dhandle, data_init);
+        // Smithay が断った要求(seat に virtual-keyboard の keymap がまだ無いときの NoKeymap のエラーなど)は、アプリへ
+        // 渡していないので記録しない。断るとクライアントを切るので、切られていないときだけ記録する。
         if let Some((key, time)) = note {
-            note_vk_input(state, client.id(), resource.id(), key, time);
+            if client_alive(dhandle, &client.id()) {
+                note_vk_input(state, client.id(), resource.id(), key, time);
+            }
         }
     }
     fn destroyed(
@@ -768,6 +772,17 @@ fn vk_authorized<D: FrontendHost>(state: &mut D, client: &Client, object: &Objec
         }
     };
     generation.is_some() && generation == ime.authorized(&id)
+}
+
+/// クライアント `client` が、まだ切られていないか。プロトコルエラーで切ったクライアントのオブジェクトは、接続を
+/// 片付けるまで生きているものとして残る(wayland-backend 0.3.17。`Resource::is_alive` は真のまま)が、全部の
+/// クライアントの一覧からは、すぐに外れる。
+fn client_alive(dhandle: &DisplayHandle, client: &ClientId) -> bool {
+    let mut alive = false;
+    dhandle
+        .backend_handle()
+        .with_all_clients(|id| alive |= id == *client);
+    alive
 }
 
 /// いまのキーボードのフォーカス。

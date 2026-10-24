@@ -151,6 +151,7 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `only_the_keys_of_the_broken_virtual_keyboard_are_released` | 2 つの virtual-keyboard が押しているとき、壊れた方だけが押しているキーだけを離す |
 | `keys_are_not_released_after_the_focus_moved` | フォーカスが別のウィンドウへ動いた後に壊れても、どちらのウィンドウにも離したことを送らない |
 | `modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks` | キーを押さずに modifiers だけを渡した virtual-keyboard が壊れると、modifiers が物理のキーボードの状態に戻る |
+| `a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_later` | seat で最初の keymap が届く前に、Smithay が断った virtual-keyboard の modifiers は記録せず、接続が切れた後に、渡していない modifiers を送り直さない(ログに `left pressed by a virtual keyboard` を出さない) |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |

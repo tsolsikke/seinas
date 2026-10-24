@@ -14,6 +14,7 @@
 //!   カーソルの矩形を `ime: popup rectangle X Y W H` の形で書く。
 //! - `--popup-text`: 候補ウィンドウに、候補(変換中の文字と、そのカタカナ)を白い文字で書く(スクリーンショットのため)。
 //! - `--virtual-keyboard-only`: get_input_method を頼まずに virtual-keyboard を作る(認可の無いクライアントのまね)。
+//! - `--no-builtin-keymap`: built-in の virtual-keyboard に keymap を送らない(seat に keymap がまだ無いときの確かめ)。
 //!   断られたら `ime: protocol error …` を書いて終わる。
 //! - `--swallow KEY`: evdev の番号 KEY のキーを、文字を出さずに使う(押下も解放も、何も返さない。半角/全角の
 //!   ように、IME の状態だけを変えるキーのまね)。何度でも付けられる。
@@ -80,6 +81,8 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut popup_size = None;
     let mut popup_text = false;
     let mut virtual_keyboard_only = false;
+    // built-in の virtual-keyboard に keymap を送らない(seat に keymap がまだ無いときの確かめ)。
+    let mut no_builtin_keymap = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -92,6 +95,7 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             }
             "--popup-text" => popup_text = true,
             "--virtual-keyboard-only" => virtual_keyboard_only = true,
+            "--no-builtin-keymap" => no_builtin_keymap = true,
             "--popup" => {
                 let size = args.next().ok_or("--popup needs WxH")?;
                 popup_size = Some(crate::layer::parse_size(size)?);
@@ -236,14 +240,16 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     std::os::unix::fs::FileExt::read_exact_at(&file, &mut copy, 0)
                         .map_err(|e| format!("cannot read the keymap: {e}"))?;
                     keymap_copy = Some((format, copy));
-                    wire.send_with_fd(
-                        &message(
-                            keyboard,
-                            0,
-                            &[format.to_le_bytes(), size.to_le_bytes()].concat(),
-                        ),
-                        fd.as_raw_fd(),
-                    )?;
+                    if !no_builtin_keymap {
+                        wire.send_with_fd(
+                            &message(
+                                keyboard,
+                                0,
+                                &[format.to_le_bytes(), size.to_le_bytes()].concat(),
+                            ),
+                            fd.as_raw_fd(),
+                        )?;
+                    }
                     let id = wire.new_id();
                     wire.send(&message(WL_DISPLAY, 0, &id.to_le_bytes()))?;
                     ready_sync = Some(id);
