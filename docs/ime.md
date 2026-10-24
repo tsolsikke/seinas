@@ -49,7 +49,7 @@ Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas �
 
 - 接続断:IME のクライアントが去った(接続を切った、input method と grab を destroy した)とき。
 - input method の destroy:IME が `zwp_input_method_v2` だけを destroy し、grab を残したときも、その世代の grab・virtual-keyboard の認可・候補ウィンドウを片付けて、直接の道に戻します(仕様では、input method の destroy は子の grab と候補ウィンドウも破棄する。ADR 0004 の 1.5)。ログに `the input method was destroyed; its keyboard grab is ignored and keys go straight to the applications` を出します。古い grab のオブジェクトが残っている間は、新しい IME を断ります(`the destroyed input method still has a keyboard grab`)。片付けと、`wl_keyboard` の leave と enter の送り直しは、順が違っても 1 回だけです。
-- 緊急解除:Seinas のショートカット(既定は Alt+Shift+F12。入れ子(WSLg)では、運用者が届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認。`seinas.conf` の `ime-release` で変えられる。`docs/config.md`)を押したとき。IME のクライアントの接続を切ります。ログに `the input method was released with the emergency key; its connection is closed and keys go straight to the applications` を出します。
+- 緊急解除:Seinas のショートカット(既定は Alt+Shift+F12。入れ子(WSLg)では、運用者が届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認。`seinas.conf` の `ime-release` で変えられる。`docs/config.md`)を押したとき。IME のクライアントの接続を切ります。IME のためのソケットを開かない構成(`--no-ime-socket`)では、このキーを予約せず、アプリへ渡します(ADR 0004 の 1.8)。ログに `the input method was released with the emergency key; its connection is closed and keys go straight to the applications` を出します。
   - IME の側からは、ただの切断に見えます。Seinas は接続を閉じるだけで、`wl_display.error` は送りません(ADR 0004 の 1.5)。IME は、読むと接続の終わり(EOF)、送ると EPIPE になります。切断の理由の文(`a client disconnected: ProtocolError { … }`)は、Seinas のログにだけ出ます。
   - 物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけで発動します。IME が virtual-keyboard で送ったキーは、ショートカットの判定を通らないので、発動しません。
   - 押し続けても 1 回だけです(同じキーを離すまで、繰り返しの押下は使って捨てる)。
@@ -151,6 +151,8 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `only_the_keys_of_the_broken_virtual_keyboard_are_released` | 2 つの virtual-keyboard が押しているとき、壊れた方だけが押しているキーだけを離す |
 | `keys_are_not_released_after_the_focus_moved` | フォーカスが別のウィンドウへ動いた後に壊れても、どちらのウィンドウにも離したことを送らない |
 | `modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks` | キーを押さずに modifiers だけを渡した virtual-keyboard が壊れると、modifiers が物理のキーボードの状態に戻る |
+| `the_release_key_goes_to_the_window_without_the_ime_socket` | `--no-ime-socket` の構成では、Alt+Shift+F12 の押下と解放が、全部ウィンドウへ届く(緊急解除のキーを予約しない) |
+| `the_release_key_is_reserved_while_no_ime_is_connected` | IME のためのソケットを開く構成では、IME がつながっていなくても F12 を渡さず(Alt と Shift は渡る)、続けて F12 だけを押せば届く |
 | `a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_later` | seat で最初の keymap が届く前に、Smithay が断った virtual-keyboard の modifiers は記録せず、接続が切れた後に、渡していない modifiers を送り直さない(ログに `left pressed by a virtual keyboard` を出さない) |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |

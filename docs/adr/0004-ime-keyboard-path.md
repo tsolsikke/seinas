@@ -154,6 +154,8 @@ text-input と `wl_keyboard` の leave は、別のもの:
 - 理由:IME が止まっていても、ショートカット(と、作り直した後の緊急解除の操作)が効くようにするため。
 - 今の一覧:ウィンドウの切り替え(既定は Alt+Tab と Alt+Shift+Tab。入れ子の構成では Alt+F6 と Alt+Shift+F6 も。`seinas.conf` で変えられる。`docs/config.md`)と、切り替えの最中の Esc(取り消し)。Seinas が使ったキーは、離したことも、どこへも渡さない。
 - 緊急解除(1.5):既定は Alt+Shift+F12(入れ子では確かめた。ZeikOS では未確認)。`seinas.conf` の `ime-release` で変えられる。
+  - 予約するか(2026-10-24 に決めた):IME のためのソケットを開く構成では、IME がつながっていなくても予約する(今のまま。押せばログに `no input method is running` を出す)。開かない構成(seinas-standalone の `--no-ime-socket`。1.6)では予約せず、押下も解放もアプリへ渡す(IME がつなげないので、解除するものが無いため)。予約するかは起動のときの設定だけで決まり、IME の接続と切断では変わらない(起動のログに `the release key for the input method is not reserved …` を出す)。
+  - 予約したキーは、押したときに Seinas が使ったことを覚え、離したことも渡さない(ほかのショートカットと同じ)。先にアプリへ渡した Alt と Shift は、押下も解放も渡る。押し続けて同じキーの押下が続いても、緊急解除は 1 回だけ働く(2 回目からは、ログに、もう解除したことを出す)。
 - Seinas が予約するキーと、IME の切り替えのキーの分け方は、統合の前に決める(3 の申し送り)。
 
 ### 1.9 virtual-keyboard で戻ったキー

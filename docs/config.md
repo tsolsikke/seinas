@@ -25,7 +25,7 @@ ime-release = Alt+Shift+F12
 | --- | --- | --- |
 | `switch-next` | 次のウィンドウへ切り替えるキー | `Alt+Tab`。入れ子の構成(`seinas`)では `Alt+Tab, Alt+F6` |
 | `switch-prev` | 前のウィンドウへ切り替えるキー | `Alt+Shift+Tab`。入れ子の構成では `Alt+Shift+Tab, Alt+Shift+F6` |
-| `ime-release` | IME の緊急解除のキー(IME の接続を切り、次のキーから直接アプリへ渡す。押し続けても 1 回だけ) | `Alt+Shift+F12`(どの構成でも。入れ子の WSLg では届くことを確かめた(2026-10-15)。ZeikOS では未確認) |
+| `ime-release` | IME の緊急解除のキー(IME の接続を切り、次のキーから直接アプリへ渡す。押し続けても 1 回だけ)。seinas-standalone の `--no-ime-socket` の構成では予約せず、アプリへ渡す | `Alt+Shift+F12`(どの構成でも。入れ子の WSLg では届くことを確かめた(2026-10-15)。ZeikOS では未確認) |
 
 - キーの書き方:修飾キー(`Alt`・`Shift`・`Ctrl`・`Super`)と、キーの名前を `+` でつなぎます。キーの名前は、xkb の keysym の名前(`Tab`、`F6`、`Escape`、`a` など。大文字と小文字は区別しない)で、終わりに 1 つだけ書きます。
 - `,` で区切って、いくつでも書けます。書いたキーは、既定のキーと置き換わります(足すのではありません)。入れ子で Alt+F6 を残したまま別のキーを足すときは、`Alt+F6` も書きます。

@@ -50,7 +50,7 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 | `--font-config PATH` | フォントの設定のファイル。無ければ `$XDG_CONFIG_HOME/seinas/fonts.conf`(`text-rendering.md` の「利用者が選んだフォント」) |
 | `--shell-socket PATH` | シェルの部品(タスクバーなど)のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-shell` を入れたもの(名前に拡張子があれば、その前に入れる。`/tmp/seinas.sock` なら `/tmp/seinas-shell.sock`、`/tmp/wl` なら `/tmp/wl-shell`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-shell`)。ここからつないだクライアントにだけ、layer-shell とウィンドウの一覧(foreign-toplevel)を見せる |
 | `--ime-socket PATH` | IME のためのソケットの場所。無ければ、ふだんのソケットのパスの名前に `-ime` を入れたもの(`--shell-socket` と同じ形。`/tmp/seinas.sock` なら `/tmp/seinas-ime.sock`。`--socket` が無ければ `XDG_RUNTIME_DIR` の下の `seinas-0-ime`)。ここからつないだクライアントにだけ、input-method と virtual-keyboard を見せる(`ime.md`)。3 つのソケットのロックファイルがぶつかる指定(`--socket /tmp/a.sock --shell-socket /tmp/a.other` など、拡張子の前が同じもの)は、`would share the lock file` のエラーで終わる。パスを指定しないソケット(`XDG_RUNTIME_DIR` の下の `seinas-0` など)も比べる |
-| `--no-ime-socket` | IME のためのソケットを開かない。ソケットもロックファイルも作らず、input-method と virtual-keyboard の global も作らない(`ime.md`)。IME を使わない構成で、fd を 2 本減らすためのもの。既定は開く。`--ime-socket` と一緒に付けると、`cannot be used together` のエラーで終わる |
+| `--no-ime-socket` | IME のためのソケットを開かない。ソケットもロックファイルも作らず、input-method と virtual-keyboard の global も作らない(`ime.md`)。IME の緊急解除のキー(既定は Alt+Shift+F12)も予約せず、アプリへ渡す。IME を使わない構成で、fd を 2 本減らすためのもの。既定は開く。`--ime-socket` と一緒に付けると、`cannot be used together` のエラーで終わる |
 | `--fonts DIR` | フォントの置き場(ウィンドウのタイトルを描くのに使う)。無ければ環境変数 `SEINAS_FONTS`、それも無ければ `target/fonts`(作業中のディレクトリから見た位置)。フォントが読めなくても動く(タイトルの文字が出ないだけ) |
 | `--test-input` | テスト用の入力インターフェースを開く(下の「テスト用の入力インターフェース」)。ふだんの起動では、付けない |
 | `--ping-timeout MS` | 閉じるように頼んだクライアントの pong を待つ時間(ミリ秒。既定は 5000)。過ぎたら応答なしにする(`window-placement.md` の「応答なし」)。テストで短くするためのもの |

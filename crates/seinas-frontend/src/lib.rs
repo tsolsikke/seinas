@@ -291,6 +291,20 @@ pub trait FrontendHost:
     fn redraw_needed(&mut self);
 }
 
+/// Seinas のショートカットの一覧([`Config::switch_keys`])。IME のためのソケットを開かない構成([`Config::ime_socket`]
+/// が偽)では、IME の緊急解除のキーを予約せず、アプリへ渡す(IME がつなげないので、解除するものが無いため。
+/// ADR 0004 の 1.5)。予約するかは、起動のときの設定だけで決まり、IME の接続と切断では変わらない。
+pub fn shortcuts_for(config: &Config) -> Shortcuts {
+    if config.ime_socket {
+        return Shortcuts::switching(&config.switch_keys);
+    }
+    info!("the release key for the input method is not reserved and goes to the applications (the socket for the input method is not opened)");
+    Shortcuts::switching(&SwitchKeys {
+        release_input_method: Vec::new(),
+        ..config.switch_keys.clone()
+    })
+}
+
 /// フロントエンドを作る。[`delegate_frontend!`] が、状態の型に実装する。
 pub trait BuildFrontend: SeatHandler + Sized {
     fn build_frontend(display_handle: &DisplayHandle, config: Config) -> Frontend<Self>;
@@ -2151,7 +2165,7 @@ macro_rules! delegate_frontend {
                     seat,
                     pointer,
                     keyboard,
-                    shortcuts: $crate::Shortcuts::switching(&config.switch_keys),
+                    shortcuts: $crate::shortcuts_for(&config),
                     switcher: None,
                     switch_hold: Default::default(),
                     switcher_image: None,

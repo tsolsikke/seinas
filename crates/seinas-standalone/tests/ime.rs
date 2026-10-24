@@ -1710,3 +1710,81 @@ fn a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_
     let log = seinas.log();
     assert!(!log.contains("left pressed by a virtual keyboard"), "{log}");
 }
+
+/// 緊急解除のキーの組(Alt、Shift、F12)を、押してから逆の順に離す。
+fn press_and_lift_release_key(seinas: &mut Compositor) {
+    press_release_key(seinas);
+    lift_release_key(seinas);
+}
+
+/// ウィンドウの、次の `count` 個のキーの行(keyboard の enter・leave は除く)。
+fn key_events(window: &TestClient, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|_| loop {
+            let line = next_key_line(window, "a key");
+            if line.starts_with("window: key ") {
+                break line;
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn the_release_key_goes_to_the_window_without_the_ime_socket() {
+    // IME のためのソケットを開かない構成では、緊急解除のキーを予約しない。
+    let mut seinas = Compositor::start_with_input_and("kk", &["--no-ime-socket"]);
+    let window = open_window(&seinas, "ウィンドウ");
+    press_and_lift_release_key(&mut seinas);
+    assert_eq!(
+        key_events(&window, 6),
+        [
+            "window: key 56 pressed",
+            "window: key 42 pressed",
+            "window: key 88 pressed",
+            "window: key 88 released",
+            "window: key 42 released",
+            "window: key 56 released",
+        ]
+    );
+    let log = seinas.log();
+    assert!(
+        log.contains("the release key for the input method is not reserved"),
+        "{log}"
+    );
+    assert!(
+        !log.contains("the emergency release key was pressed"),
+        "{log}"
+    );
+}
+
+#[test]
+fn the_release_key_is_reserved_while_no_ime_is_connected() {
+    // IME のためのソケットを開く構成では、IME がつながっていなくても予約する(F12 の押下も解放も渡さない)。
+    let mut seinas = Compositor::start_with_input("kl");
+    let window = open_window(&seinas, "ウィンドウ");
+    press_and_lift_release_key(&mut seinas);
+    // 修飾キーは押下も解放も渡り、F12 は渡らない。続けて F12 だけを押すと、ふつうに渡る。
+    tap(&mut seinas, KEY_F12);
+    assert_eq!(
+        key_events(&window, 6),
+        [
+            "window: key 56 pressed",
+            "window: key 42 pressed",
+            "window: key 42 released",
+            "window: key 56 released",
+            "window: key 88 pressed",
+            "window: key 88 released",
+        ]
+    );
+    wait_for_log(
+        &seinas,
+        "the emergency release key was pressed, but no input method is running",
+    );
+    assert!(
+        !seinas
+            .log()
+            .contains("the release key for the input method is not reserved"),
+        "{}",
+        seinas.log()
+    );
+}
