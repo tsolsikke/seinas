@@ -17,6 +17,7 @@ push の前に行う確かめを、変更の種類に応じた段に分けます
 | --- | --- | --- |
 | `cargo fmt --all -- --check` | CI | 0.4 秒 |
 | `cargo clippy --workspace --all-targets --locked -- -D warnings` | CI | 2 秒 |
+| `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked`(rustdoc の警告を止める。2026-10-24 に足した) | CI | 5 秒 |
 | `cargo test --workspace --locked`(golden を含む) | CI | 29 秒(golden だけなら 1 秒) |
 | 古い言い方の grep(`docs/terminology.md`) | 運用者の指示 | 1 秒 |
 | `python3 tools/third-party.py --check` | CI | 0.4 秒 |
@@ -34,7 +35,7 @@ push の前に行う確かめを、変更の種類に応じた段に分けます
 | 段 | 選ぶ変更 | 行う確かめ |
 | --- | --- | --- |
 | docs | 文書だけ(`*.md`、`docs/`、`LICENSE`) | 差分の空白(`git diff --check`)、新しく書いた行の課題のキー、古い言い方(「使わない語」の表の語は落とす。対応表の語は表示するだけ)、コミットメッセージの形 |
-| code | コード(上と下のどれにも当たらないもの。`crates/` の多く、`tools/` のほとんど) | 上に加えて、fmt・clippy・ホストのテスト(golden を含む)・テストの後に残ったプロセスの確かめ(`tools/check-leftovers.py`) |
+| code | コード(上と下のどれにも当たらないもの。`crates/` の多く、`tools/` のほとんど) | 上に加えて、fmt・clippy・rustdoc(警告を止める)・ホストのテスト(golden を含む)・テストの後に残ったプロセスの確かめ(`tools/check-leftovers.py`) |
 | visual | 見た目に関わるもの(`seinas-render`・`seinas-text`・`seinas-fbdev` の全体、`seinas-frontend` の `decoration.rs`・`title_bar.rs`・`lib.rs`、`seinas-taskbar` と `seinas-wallpaper` の `lib.rs`、`tests/golden/`・`tests/golden.rs`) | 上に加えて、golden の決まり(既存の正解データの作り直しと `src/` の変更が、同じコミットに無いか) |
 | full | 依存・ビルド(`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`.github/`、`THIRD-PARTY/`、`tools/build-musl.sh` などのビルドと依存の道具) | 上に加えて、third-party の確かめ、依存の検査、musl の静的ビルドとテスト、SHA-256 |
 

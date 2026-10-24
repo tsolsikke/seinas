@@ -38,8 +38,8 @@ pub use decoration::{
     clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
     paint_title_bar, title_text, TitleButton, TitleButtons, TitleLook, ACTIVE_BAR, ACTIVE_TITLE,
     CLOSE_BUTTON_SIZE, HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON,
-    INACTIVE_BAR, INACTIVE_TITLE, MIN_VISIBLE_BAR, NOT_RESPONDING, TITLE_BAR_HEIGHT,
-    TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
+    INACTIVE_BAR, INACTIVE_TITLE, MAX_BUTTONS_WIDTH, MIN_VISIBLE_BAR, NOT_RESPONDING,
+    TITLE_BAR_HEIGHT, TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use ime::{
@@ -48,7 +48,7 @@ pub use ime::{
 pub use ime_popup::popup_location;
 pub use interaction::{
     part_at, Command, Configure, Cursor, Deliver, Interaction, Measure, Outcome, Part,
-    DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON,
+    DOUBLE_CLICK_MS, DRAG_SLACK, LEFT_BUTTON, RESTORE_DRAG_SLACK,
 };
 pub use key_binding::{
     default_config_file, describe, parse_shortcut, read_switch_keys, switch_keys_from, CONFIG_FILE,

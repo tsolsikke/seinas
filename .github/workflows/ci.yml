@@ -22,6 +22,10 @@ jobs:
         run: cargo fmt --all -- --check
       - name: clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: rustdoc(警告を止める)
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
       # 取得したフォントは、キャッシュに入れておく。配布元が止まっていても、キャッシュがあれば先へ進める。
       # キャッシュから戻したファイルも、次の手順がSHA-256を確かめ、合わなければ取り直す。
       - name: フォントのキャッシュ

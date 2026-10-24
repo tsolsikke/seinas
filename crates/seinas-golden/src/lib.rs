@@ -145,7 +145,7 @@ impl Image {
     }
 }
 
-/// 許す差。今は、どの対象も [`Tolerance::EXACT`](完全一致)で比べる。
+/// 許す差。今は、どの対象も完全一致([`Tolerance::EXACT`])で比べる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Tolerance {
     /// ちがってよいピクセルの数。

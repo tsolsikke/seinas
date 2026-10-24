@@ -192,6 +192,8 @@ step "コミットメッセージの形" check_messages
 if [ "$(rank "$tier")" -ge 2 ]; then
     step "fmt" cargo fmt --all -- --check
     step "clippy" cargo clippy --workspace --all-targets --locked -- -D warnings
+    # rustdoc の警告(壊れたリンク、private へのリンク)も止める。
+    step "rustdoc" env RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked
     # golden も、ふだんの cargo test で動く(1 秒ほど)。
     step "ホストのテスト(golden を含む)" cargo test --workspace --locked
 fi
