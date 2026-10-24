@@ -396,10 +396,12 @@ pub fn offset_from_tz(tz: &str) -> Option<i32> {
     Some(sign * (hours * 3600 + minutes * 60))
 }
 
-/// コンポジタへの最初の接続を試し直す間隔と、試す回数(最初の 1 回を含む)の既定。合わせて 30 秒ほど待つ
-/// (`docs/taskbar.md` の「起動の順序」)。
+/// コンポジタへの最初の接続を試し直す間隔と、試し直す期限の既定(最初の試しから)。期限は単調増加の時計で
+/// 判定する(`docs/taskbar.md` の「起動の順序」)。
 pub const CONNECT_INTERVAL: Duration = Duration::from_millis(100);
-pub const CONNECT_TRIES: u32 = 300;
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+/// つないだ後の最初の往復(`wl_display.sync`)の答えを待つ期限の既定(つないだ時から)。
+pub const ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// つなぐソケットのパス。`display`(`WAYLAND_DISPLAY`)が絶対パスならそのまま、そうでなければ `runtime_dir`
 /// (`XDG_RUNTIME_DIR`。絶対パスに限る)の下(wayland-client の `Connection::connect_to_env` と同じ決まり)。

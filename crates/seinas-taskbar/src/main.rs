@@ -11,17 +11,31 @@
 //! - `--utc-offset ±HH:MM`(か `UTC`):時計の時差(無ければ設定のファイルの `utc-offset`、それも無ければ環境変数
 //!   `TZ` の簡単な形、それも無ければ +09:00)。
 //! - `--config PATH`:タスクバーの設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/taskbar.conf`)。
-//! - `--connect-tries N`:コンポジタのソケットがまだ無いときに、最初の接続を試す回数(最初の 1 回を含む。無ければ
-//!   [`CONNECT_TRIES`]。1 なら試し直さない)。間隔は [`CONNECT_INTERVAL`]。
+//! - `--connect-timeout MS`:コンポジタのソケットがまだ無いときに、最初の接続を試し直す期限(ミリ秒。無ければ
+//!   [`CONNECT_TIMEOUT`])。間隔は [`CONNECT_INTERVAL`]。
+//! - `--round-trip-timeout MS`:つないだ後の最初の往復の答えを待つ期限(ミリ秒。無ければ [`ROUND_TRIP_TIMEOUT`])。
+//!   どちらもテストで短くするためのもの。
 //!
 //! 決まりの説明は `docs/taskbar.md` にある。
 
-use std::{error::Error, os::unix::net::UnixStream, path::PathBuf, process::ExitCode, sync::Arc};
+use std::{
+    error::Error,
+    fmt::Display,
+    io,
+    os::{
+        fd::{AsRawFd, RawFd},
+        unix::net::UnixStream,
+    },
+    path::PathBuf,
+    process::ExitCode,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use seinas_taskbar::{
     action_for, button_at, choose_offset, clock_text, format_utc_offset, not_ready_yet, paint,
     read_config, socket_path, until_next_minute, wall_clock, Action, Entry, CONFIG_FILE,
-    CONNECT_INTERVAL, CONNECT_TRIES, HEIGHT,
+    CONNECT_INTERVAL, CONNECT_TIMEOUT, HEIGHT, ROUND_TRIP_TIMEOUT,
 };
 use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
@@ -55,10 +69,10 @@ use smithay_client_toolkit::{
     },
 };
 use wayland_client::{
-    backend::ObjectData,
+    backend::{ObjectData, WaylandError},
     globals::registry_queue_init,
-    protocol::{wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, QueueHandle,
+    protocol::{wl_callback, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    Connection, Dispatch, QueueHandle,
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
@@ -483,8 +497,9 @@ struct Options {
     utc_offset: Option<String>,
     /// タスクバーの設定のファイル(`--config`)。Noneなら、既定の場所。
     config: Option<PathBuf>,
-    /// 最初の接続を試す回数(`--connect-tries`。1 以上)。
-    connect_tries: u32,
+    /// 最初の接続を試し直す期限(`--connect-timeout`)と、最初の往復を待つ期限(`--round-trip-timeout`)。
+    connect_timeout: Duration,
+    round_trip_timeout: Duration,
 }
 
 fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, String> {
@@ -492,7 +507,8 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
     let mut font_config = None;
     let mut utc_offset = None;
     let mut config = None;
-    let mut connect_tries = CONNECT_TRIES;
+    let mut connect_timeout = CONNECT_TIMEOUT;
+    let mut round_trip_timeout = ROUND_TRIP_TIMEOUT;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().cloned().ok_or(format!("{arg} needs a value"));
@@ -501,14 +517,8 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
             "--font-config" => font_config = Some(PathBuf::from(value()?)),
             "--utc-offset" => utc_offset = Some(value()?),
             "--config" => config = Some(PathBuf::from(value()?)),
-            "--connect-tries" => {
-                let text = value()?;
-                connect_tries = text
-                    .parse()
-                    .ok()
-                    .filter(|&tries| tries >= 1)
-                    .ok_or(format!("invalid --connect-tries value: {text}"))?;
-            }
+            "--connect-timeout" => connect_timeout = millis(arg, &value()?)?,
+            "--round-trip-timeout" => round_trip_timeout = millis(arg, &value()?)?,
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -519,14 +529,25 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
         font_config,
         utc_offset,
         config,
-        connect_tries,
+        connect_timeout,
+        round_trip_timeout,
     })
 }
 
+/// 期限の引数の値(ミリ秒。1 以上)。
+fn millis(arg: &str, text: &str) -> Result<Duration, String> {
+    text.parse()
+        .ok()
+        .filter(|&ms| ms >= 1)
+        .map(Duration::from_millis)
+        .ok_or(format!("invalid {arg} value: {text}"))
+}
+
 /// コンポジタへつなぐ。コンポジタがまだ受けられないとき([`not_ready_yet`])は、[`CONNECT_INTERVAL`] ずつ眠って
-/// (`std::thread::sleep`。musl では clock_nanosleep)、合わせて `tries` 回まで試す。起動の順序で、コンポジタより先に起こされることがあるため
-/// (`docs/taskbar.md` の「起動の順序」)。試し直すのは、この最初の接続だけ(つないだ後に切れたら、終わる)。
-fn connect(tries: u32) -> Result<Connection, Box<dyn Error>> {
+/// (`std::thread::sleep`。musl では clock_nanosleep)、最初の試しから `timeout` の間、試し直す(単調増加の時計で
+/// 判定する)。起動の順序で、コンポジタより先に起こされることがあるため(`docs/taskbar.md` の「起動の順序」)。
+/// 試し直すのは、この最初の接続だけ(つないだ後に切れたら、終わる)。
+fn connect(timeout: Duration) -> Result<Connection, Box<dyn Error>> {
     // 親が接続を渡してきたときは、試し直す相手がいない。
     if std::env::var_os("WAYLAND_SOCKET").is_some() {
         return Ok(Connection::connect_to_env()
@@ -537,37 +558,39 @@ fn connect(tries: u32) -> Result<Connection, Box<dyn Error>> {
         std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
     )
     .map_err(|e| format!("cannot connect to the compositor: {e}"))?;
+    let deadline = Instant::now() + timeout;
     let mut tried = 0;
     let stream = loop {
         tried += 1;
-        match UnixStream::connect(&path) {
+        let e = match UnixStream::connect(&path) {
             Ok(stream) => break stream,
-            Err(e) if not_ready_yet(&e).is_some() && tried < tries => {
-                if tried == 1 {
-                    let reason = not_ready_yet(&e).unwrap_or_default();
-                    eprintln!(
-                        "seinas-taskbar: the compositor is not ready at {} ({reason}: {e}); trying again every {} ms, up to {tries} tries",
-                        path.display(),
-                        CONNECT_INTERVAL.as_millis()
-                    );
-                }
-                std::thread::sleep(CONNECT_INTERVAL);
-            }
-            Err(e) if not_ready_yet(&e).is_some() => {
-                return Err(format!(
-                    "the compositor did not appear at {}: gave up after {tried} tries ({e})",
-                    path.display()
-                )
-                .into())
-            }
-            Err(e) => {
-                return Err(format!(
-                    "cannot connect to the compositor at {}: {e}",
-                    path.display()
-                )
-                .into())
-            }
+            Err(e) => e,
+        };
+        let Some(reason) = not_ready_yet(&e) else {
+            return Err(format!(
+                "cannot connect to the compositor at {}: {e}",
+                path.display()
+            )
+            .into());
+        };
+        let now = Instant::now();
+        if now >= deadline {
+            return Err(format!(
+                "the compositor did not appear at {} within {} ms ({reason}: {e}; tried {tried} times)",
+                path.display(),
+                timeout.as_millis()
+            )
+            .into());
         }
+        if tried == 1 {
+            eprintln!(
+                "seinas-taskbar: the compositor is not ready at {} ({reason}: {e}); trying again every {} ms for up to {} ms",
+                path.display(),
+                CONNECT_INTERVAL.as_millis(),
+                timeout.as_millis()
+            );
+        }
+        std::thread::sleep(CONNECT_INTERVAL.min(deadline - now));
     };
     if tried > 1 {
         eprintln!("seinas-taskbar: connected to the compositor after {tried} tries");
@@ -578,6 +601,113 @@ fn connect(tries: u32) -> Result<Connection, Box<dyn Error>> {
             path.display()
         )
     })?)
+}
+
+/// 最初の往復(`wl_display.sync`)の答えが届いたか。
+struct FirstRoundTrip {
+    done: bool,
+}
+
+impl Dispatch<wl_callback::WlCallback, ()> for FirstRoundTrip {
+    fn event(
+        state: &mut Self,
+        _: &wl_callback::WlCallback,
+        event: wl_callback::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let wl_callback::Event::Done { .. } = event {
+            state.done = true;
+        }
+    }
+}
+
+/// 初期化の段階 `stage` で接続が失敗したことを、元の原因つきの文にする。プロトコルエラーなら、その中身を書く。
+fn failed_during(conn: &Connection, stage: &str, error: impl Display) -> String {
+    let cause = match conn.protocol_error() {
+        Some(e) => format!(
+            "protocol error {} on {}@{}: {}",
+            e.code, e.object_interface, e.object_id, e.message
+        ),
+        None => error.to_string(),
+    };
+    format!("the connection to the compositor failed during {stage}: {cause}")
+}
+
+/// つないだ後、同じ接続で最初の往復(`wl_display.sync`)の答えを、`timeout` まで待つ(単調増加の時計で判定する)。
+///
+/// wayland-client の `registry_queue_init` の往復(`Connection::roundtrip`)には期限が無いので、その前に、期限つきで
+/// 1 回往復する。`prepare_read` と、期限つきの `poll` で待つ。切断・プロトコルエラーは、試し直さずにすぐ返す。
+fn first_round_trip(conn: &Connection, timeout: Duration) -> Result<(), String> {
+    const STAGE: &str = "the first round trip";
+    let deadline = Instant::now() + timeout;
+    let mut queue = conn.new_event_queue::<FirstRoundTrip>();
+    conn.display().sync(&queue.handle(), ());
+    let mut state = FirstRoundTrip { done: false };
+    let mut waited = false;
+    loop {
+        queue
+            .dispatch_pending(&mut state)
+            .map_err(|e| failed_during(conn, STAGE, e))?;
+        if state.done {
+            if waited {
+                eprintln!("seinas-taskbar: the compositor answered the first round trip");
+            }
+            return Ok(());
+        }
+        match conn.flush() {
+            Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(failed_during(conn, STAGE, e)),
+            Ok(()) => {}
+        }
+        let Some(guard) = queue.prepare_read() else {
+            continue;
+        };
+        let fd = guard.connection_fd().as_raw_fd();
+        if !readable(fd, Duration::ZERO)? {
+            if !waited {
+                waited = true;
+                eprintln!(
+                    "seinas-taskbar: connected; waiting up to {} ms for the compositor to answer the first round trip",
+                    timeout.as_millis()
+                );
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() || !readable(fd, remaining)? {
+                return Err(format!(
+                    "the compositor did not answer the first round trip within {} ms (the initialization timed out)",
+                    timeout.as_millis()
+                ));
+            }
+        }
+        match guard.read() {
+            Err(WaylandError::Io(e)) if e.kind() == io::ErrorKind::WouldBlock => {}
+            Err(e) => return Err(failed_during(conn, STAGE, e)),
+            Ok(_) => {}
+        }
+    }
+}
+
+/// `fd` が読めるようになるまで、`timeout` まで待つ(`poll`。読めるか、相手が閉じたらtrue)。
+fn readable(fd: RawFd, timeout: Duration) -> Result<bool, String> {
+    let ms = timeout.as_nanos().div_ceil(1_000_000).min(i32::MAX as u128) as i32;
+    let mut pollfd = libc::pollfd {
+        fd,
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    loop {
+        // SAFETY: pollfd は、書き込める 1 つの pollfd を指している。
+        let ready = unsafe { libc::poll(&mut pollfd, 1, ms) };
+        if ready >= 0 {
+            return Ok(ready > 0);
+        }
+        let e = io::Error::last_os_error();
+        if e.kind() != io::ErrorKind::Interrupted {
+            return Err(format!("cannot wait for the compositor: {e}"));
+        }
+    }
 }
 
 /// 時計の時差を、起動オプション・設定のファイル・環境変数 `TZ` から決め、決めたことと、読めなかったものを
@@ -616,8 +746,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         eprintln!("seinas-taskbar: {message}");
     }
 
-    let conn = connect(options.connect_tries)?;
-    let (globals, event_queue) = registry_queue_init::<Taskbar>(&conn)?;
+    let conn = connect(options.connect_timeout)?;
+    first_round_trip(&conn, options.round_trip_timeout)?;
+    let (globals, event_queue) = registry_queue_init::<Taskbar>(&conn)
+        .map_err(|e| failed_during(&conn, "the registry round trip", e))?;
     let qh = event_queue.handle();
     let mut event_loop: EventLoop<Taskbar> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
@@ -729,13 +861,23 @@ mod tests {
     }
 
     #[test]
-    fn the_connect_tries_come_from_the_argument() {
-        let tries = |list: &[&str]| parse_options(&args(list), None).map(|o| o.connect_tries);
-        assert_eq!(tries(&[]), Ok(CONNECT_TRIES));
-        assert_eq!(tries(&["--connect-tries", "1"]), Ok(1));
-        assert!(tries(&["--connect-tries", "0"]).is_err());
-        assert!(tries(&["--connect-tries", "x"]).is_err());
-        assert!(tries(&["--connect-tries"]).is_err());
+    fn the_timeouts_come_from_the_arguments() {
+        let timeouts = |list: &[&str]| {
+            parse_options(&args(list), None).map(|o| (o.connect_timeout, o.round_trip_timeout))
+        };
+        assert_eq!(timeouts(&[]), Ok((CONNECT_TIMEOUT, ROUND_TRIP_TIMEOUT)));
+        assert_eq!(
+            timeouts(&["--connect-timeout", "250", "--round-trip-timeout", "40"]),
+            Ok((Duration::from_millis(250), Duration::from_millis(40)))
+        );
+        for bad in [
+            &["--connect-timeout", "0"][..],
+            &["--connect-timeout", "x"],
+            &["--round-trip-timeout", "-1"],
+            &["--round-trip-timeout"],
+        ] {
+            assert!(timeouts(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

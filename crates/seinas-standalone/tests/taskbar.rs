@@ -6,12 +6,19 @@
 //! - ボタンを押すと、そのウィンドウが raise される。activated のウィンドウのボタンでは最小化し、最小化している
 //!   ウィンドウのボタンでは戻す。
 //! - シェルの部品のためのソケットでなければ、つなげない。
-//! - コンポジタより先に起こされても、コンポジタのソケットができるまで試し直してつなぐ。決めた回数を試しても
+//! - コンポジタより先に起こされても、コンポジタのソケットができるまで試し直してつなぐ。期限まで試しても
 //!   できなければ、`the compositor did not appear` のエラーで終わる。
+//! - つないだ後の最初の往復は、期限内に遅れて答えがあれば起動する。答えが無ければ `the initialization timed out`
+//!   で終わる。往復の途中の切断とプロトコルエラーは、段階と原因を書いて、試し直さずに終わる。
 
 mod common;
 
-use std::{fs, os::unix::net::UnixListener};
+use std::{
+    fs,
+    io::{Read, Write},
+    os::unix::net::UnixListener,
+    time::Duration,
+};
 
 use common::{
     bar_color, compositor_dir, start_taskbar, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR,
@@ -243,17 +250,152 @@ fn a_taskbar_gives_up_when_the_compositor_does_not_appear() {
     let dir = compositor_dir("th");
     let stale = dir.join("stale");
     drop(UnixListener::bind(&stale).expect("bind a socket"));
-    let mut taskbar = start_taskbar(&dir, &stale, &["--connect-tries", "3"]);
-    let status = taskbar.0.wait().expect("the taskbar ends");
+    let mut taskbar = start_taskbar(&dir, &stale, &["--connect-timeout", "300"]);
+    let code = exit_code(&mut taskbar);
     let log = fs::read_to_string(dir.join("taskbar.log")).unwrap_or_default();
     let _ = fs::remove_dir_all(&dir);
-    assert_eq!(status.code(), Some(1), "{log}");
+    assert_eq!(code, Some(1), "{log}");
     assert!(
         log.contains("the compositor is not ready at") && log.contains("(ECONNREFUSED: "),
         "{log}"
     );
     assert!(
-        log.contains("the compositor did not appear at") && log.contains("gave up after 3 tries"),
+        log.contains("the compositor did not appear at") && log.contains(" within 300 ms ("),
+        "{log}"
+    );
+}
+
+/// コンポジタのプロセスを止める(`SIGSTOP`)か、動かし直す(`SIGCONT`)。止めている間、listen のソケットは残るので、
+/// connect は通るが、答えは返らない。
+fn signal(seinas: &Compositor, signal: libc::c_int) {
+    let pid = seinas.process.0.id() as libc::pid_t;
+    // SAFETY: 自分が起こした子のプロセスへ、シグナルを送るだけ。
+    assert_eq!(unsafe { libc::kill(pid, signal) }, 0);
+}
+
+/// タスクバーが終わるのを待ち、終わりの値とログを返す。
+fn taskbar_ends(seinas: &Compositor, taskbar: &mut common::Running) -> (Option<i32>, String) {
+    (exit_code(taskbar), seinas.taskbar_log())
+}
+
+/// タスクバーが終わるのを待ち、終わりの値を返す。終わらなければ、待つ上限で落ちる(待ち続けない)。
+fn exit_code(taskbar: &mut common::Running) -> Option<i32> {
+    wait_for("the taskbar to end", || {
+        taskbar.0.try_wait().expect("look at the taskbar")
+    })
+    .code()
+}
+
+#[test]
+fn a_taskbar_starts_when_the_first_round_trip_is_answered_late() {
+    let seinas = Compositor::start("ti");
+    signal(&seinas, libc::SIGSTOP);
+    let mut taskbar = seinas.connect_taskbar();
+    // 答えを待ち始めたことを、ログで確かめてから、コンポジタを動かし直す(時間には頼らない)。
+    wait_for("the taskbar to wait for the first round trip", || {
+        let log = seinas.taskbar_log();
+        assert!(taskbar.is_running(), "{log}");
+        log.contains(
+            "connected; waiting up to 30000 ms for the compositor to answer the first round trip",
+        )
+        .then_some(())
+    });
+    signal(&seinas, libc::SIGCONT);
+    seinas.wait_for_screen("the taskbar at the bottom", |shot| {
+        shot.pixel(0, TOP) == TASKBAR_BACKGROUND
+    });
+    let log = seinas.taskbar_log();
+    assert!(
+        log.contains("the compositor answered the first round trip"),
+        "{log}"
+    );
+    assert!(taskbar.is_running(), "{log}");
+}
+
+#[test]
+fn a_taskbar_ends_with_a_timeout_when_the_first_round_trip_is_not_answered() {
+    let seinas = Compositor::start("tj");
+    signal(&seinas, libc::SIGSTOP);
+    let mut taskbar =
+        seinas.connect_taskbar_to(&seinas.shell_socket(), &["--round-trip-timeout", "500"]);
+    let (code, log) = taskbar_ends(&seinas, &mut taskbar);
+    signal(&seinas, libc::SIGCONT);
+    assert_eq!(code, Some(1), "{log}");
+    assert!(
+        log.contains(
+            "seinas-taskbar: the compositor did not answer the first round trip within 500 ms (the initialization timed out)"
+        ),
+        "{log}"
+    );
+}
+
+/// テストの側の listener に 1 つだけつながせ、最初の要求を読んでから `answer` を書いて閉じる。終わった後、2 つ目の
+/// 接続が来ていない(試し直していない)ことを確かめて、タスクバーのログを返す。
+fn serve_once(name: &str, answer: &[u8]) -> (Option<i32>, String) {
+    let dir = compositor_dir(name);
+    let path = dir.join("fake");
+    let listener = UnixListener::bind(&path).expect("bind a socket");
+    let mut taskbar = start_taskbar(&dir, &path, &[]);
+    let (mut stream, _) = listener.accept().expect("accept the taskbar");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("set a read timeout");
+    let mut request = [0u8; 64];
+    let read = stream.read(&mut request).expect("read the first request");
+    assert!(read >= 8, "a short request: {read}");
+    stream.write_all(answer).expect("write the answer");
+    drop(stream);
+    let code = exit_code(&mut taskbar);
+    listener.set_nonblocking(true).expect("set non-blocking");
+    let again = listener.accept();
+    let log = fs::read_to_string(dir.join("taskbar.log")).unwrap_or_default();
+    let _ = fs::remove_dir_all(&dir);
+    assert!(again.is_err(), "the taskbar connected again: {log}");
+    (code, log)
+}
+
+/// `wl_display.error`(object 1、opcode 0)のイベントのバイト列。
+fn display_error(code: u32, message: &str) -> Vec<u8> {
+    let mut text = message.as_bytes().to_vec();
+    text.push(0);
+    let length = text.len() as u32;
+    while !text.len().is_multiple_of(4) {
+        text.push(0);
+    }
+    let size = (8 + 4 + 4 + 4 + text.len()) as u32;
+    let mut bytes = Vec::new();
+    for word in [1, size << 16, 1, code, length] {
+        bytes.extend_from_slice(&u32::to_le_bytes(word));
+    }
+    bytes.extend_from_slice(&text);
+    bytes
+}
+
+#[test]
+fn a_disconnection_during_the_first_round_trip_is_named_with_its_stage_and_cause() {
+    let (code, log) = serve_once("tk", &[]);
+    assert_eq!(code, Some(1), "{log}");
+    let line = log
+        .lines()
+        .find(|line| {
+            line.contains("the connection to the compositor failed during the first round trip: ")
+        })
+        .unwrap_or_else(|| panic!("{log}"));
+    // 原因(OS のエラーなど)が、段階の後に続く。
+    assert!(
+        line.len() > line.find("round trip: ").unwrap() + 12,
+        "{line}"
+    );
+}
+
+#[test]
+fn a_protocol_error_during_the_first_round_trip_is_not_hidden_by_a_retry() {
+    let (code, log) = serve_once("tl", &display_error(3, "a test protocol error"));
+    assert_eq!(code, Some(1), "{log}");
+    assert!(
+        log.contains(
+            "the connection to the compositor failed during the first round trip: protocol error 3 on wl_display@1: a test protocol error"
+        ),
         "{log}"
     );
 }
