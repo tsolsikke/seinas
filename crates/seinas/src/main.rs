@@ -25,7 +25,13 @@
 
 mod parent;
 
-use std::{cell::RefCell, error::Error, path::PathBuf, rc::Rc, time::Instant};
+use std::{
+    cell::RefCell,
+    error::Error,
+    path::PathBuf,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use seinas_frontend::{
     check_pings, font_dir, geometry::Size, reap_dead_clients, BuildFrontend, Config, Frontend,
@@ -152,9 +158,13 @@ struct Options {
     config: Option<PathBuf>,
     /// 届いたキーを、修飾キーと keysym の名前でログに出す(`--log-keys`)。
     log_keys: bool,
+    /// 閉じるように頼んだクライアントの pong を待つ時間(`--ping-timeout MS`。テストで短くするためのもの)。None なら
+    /// 既定。
+    ping_timeout: Option<Duration>,
 }
 
-const USAGE: &str = "usage: seinas [--fonts DIR] [--font-config PATH] [--config PATH] [--log-keys]";
+const USAGE: &str =
+    "usage: seinas [--fonts DIR] [--font-config PATH] [--config PATH] [--log-keys] [--ping-timeout MS]";
 
 /// 引数を読む。
 fn parse_options(mut args: impl Iterator<Item = String>) -> Result<Options, String> {
@@ -170,6 +180,14 @@ fn parse_options(mut args: impl Iterator<Item = String>) -> Result<Options, Stri
             "--font-config" => options.font_config = Some(value("--font-config")?),
             "--config" => options.config = Some(value("--config")?),
             "--log-keys" => options.log_keys = true,
+            "--ping-timeout" => {
+                let text = value("--ping-timeout")?;
+                let ms = text
+                    .to_str()
+                    .and_then(|text| text.parse().ok())
+                    .ok_or_else(|| format!("invalid --ping-timeout value: {}", text.display()))?;
+                options.ping_timeout = Some(Duration::from_millis(ms));
+            }
             other => return Err(format!("unknown argument: {other} ({USAGE})")),
         }
     }
@@ -204,7 +222,9 @@ fn main() -> Result<(), Box<dyn Error>> {
             keyboard: Some(KeyboardConfig::default()),
             font_dir: font_dir(options.fonts),
             font_config: options.font_config,
-            ping_timeout: seinas_frontend::DEFAULT_PING_TIMEOUT,
+            ping_timeout: options
+                .ping_timeout
+                .unwrap_or(seinas_frontend::DEFAULT_PING_TIMEOUT),
             // 入れ子の構成なので、切り替えの既定に Alt+F6 と Alt+Shift+F6 を足す(親の側の Windows が Alt+Tab を
             // 先に使うため)。
             switch_keys: seinas_frontend::read_switch_keys(
@@ -288,14 +308,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     while !state.exit {
-        // 何か起きるまで待つ(親の Wayland の接続、子のソケットと接続)。決まった間隔では起きない。pong の期限が
-        // あれば、そこまでで起きる。描く歩調は、親の frame コールバックで決まる。
-        let deadline = state
-            .frontend
-            .pings
-            .next_deadline()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
-        event_loop.dispatch(deadline, &mut state)?;
         // 子がcommitしたのに親のframeコールバックを待っていないとき(最初の1回など)は、ここで描く。親が前の絵を
         // まだ使っていれば、親の frame コールバックが届いたときに描く(`parent.rs`)。
         if state.needs_redraw {
@@ -313,6 +325,20 @@ fn main() -> Result<(), Box<dyn Error>> {
             error!("failed to flush the clients: {e}");
         }
         conn.flush()?;
+        // 何か起きるまで待つ(親の Wayland の接続、子のソケットと接続)。決まった間隔では起きない。pong の期限が
+        // あれば、そこまでで起きる。描く歩調は、親の frame コールバックで決まる。上で再描画が要るようになり(応答なし
+        // の印など)、親へすぐ出せるときは、待たずに描く。親の frame コールバックを待っているときは、それで起きる。
+        let redraw = (state.needs_redraw && state.parent.can_present()).then_some(Duration::ZERO);
+        let deadline = state
+            .frontend
+            .pings
+            .next_deadline()
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let timeout = match (redraw, deadline) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        event_loop.dispatch(timeout, &mut state)?;
     }
     info!("exiting");
     Ok(())

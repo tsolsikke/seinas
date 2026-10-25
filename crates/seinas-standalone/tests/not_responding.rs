@@ -187,3 +187,30 @@ fn an_ordinary_client_still_closes() {
     assert_eq!(close_ground(&seinas.shot(), (0, 0)), ACTIVE_BAR);
     assert!(back.process.is_running());
 }
+
+#[test]
+fn the_nested_compositor_shows_the_mark_without_waiting_for_input() {
+    // 入れ子の Seinas(`seinas`)も、印を付けたら、次の入力を待たずに再描画する。前は、印を付けた後に次の出来事まで
+    // 眠り、ポインターを動かすまで印が見えなかった。親(このテストの seinas-standalone)の画面で見る。入れ子の
+    // Seinas のウィンドウは、親の左上に置かれ、コンテンツは親のタイトルバーの下から始まる。
+    let mut seinas = Compositor::start_with_input("ne");
+    let nested = seinas.start_nested(&["--ping-timeout", &TIMEOUT_MS.to_string()]);
+    let frozen = seinas.connect_test_client_at(
+        &nested.socket,
+        &["window", "--title", "frozen", "--ignore-ping"],
+    );
+    frozen.wait_for_line("window: drawn");
+    let origin = (0, BAR);
+    seinas.wait_for_screen("the nested window", |shot| {
+        bar_color(shot, origin.0, origin.1, WINDOW_WIDTH) == Some(ACTIVE_BAR)
+    });
+    // 閉じるボタンを押した後、期限(300 ミリ秒)より前にポインターを外へ動かし、その後は何も送らない。
+    click_close(&mut seinas, origin);
+    frozen.wait_for_line("window: close");
+    seinas.wait_for_screen("the mark drawn without more input", |shot| {
+        close_ground(shot, origin) == UNRESPONSIVE_CLOSE_BUTTON
+    });
+    assert!(nested.log().contains("did not answer a ping in 300 ms"));
+    drop(frozen);
+    drop(nested);
+}
