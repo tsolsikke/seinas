@@ -7,6 +7,7 @@ members = [
     "crates/seinas-text",
     "crates/seinas-config",
     "crates/seinas-theme",
+    "crates/seinas-icons",
     "crates/seinas-golden",
     "crates/seinas-frontend",
     "crates/seinas",

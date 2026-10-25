@@ -14,6 +14,13 @@ pub mod color {
 
     /// 選んでいるものを示す色(Alt+Tab の一覧のいまの候補、最大化の予告の枠)。
     pub const SELECTION: Rgb = [0x2f, 0x6f, 0xb5];
+    /// アクセント(前面のタスクの印、トーチの炎)。見本の画像から読んだ値。
+    pub const ACCENT: Rgb = [0xf0, 0x93, 0x11];
+    /// 主な文字と、補助の文字。
+    pub const TEXT: Rgb = [0xf8, 0xf8, 0xf8];
+    pub const SUBTLE_TEXT: Rgb = [0x90, 0x9c, 0xb0];
+    /// 区切りの線。
+    pub const SEPARATOR: Rgb = [0x2f, 0x3d, 0x52];
 }
 
 /// Alt+Tab の一覧(コンポジタの中で描く)。
@@ -28,42 +35,46 @@ pub mod switcher {
 
 /// タスクバー(`seinas-taskbar`)。
 pub mod taskbar {
-    use super::Rgb;
+    use super::{color, Rgb};
 
     /// 高さ(ピクセル)。exclusive zone も、この高さにする。
     pub const HEIGHT: i32 = 40;
-    /// ボタンの上の端と高さ。
-    pub const BUTTON_TOP: i32 = 4;
-    pub const BUTTON_HEIGHT: i32 = 32;
-    /// 左の端と、ボタンどうしの空き。
-    pub const LEFT_MARGIN: i32 = 4;
-    pub const BUTTON_GAP: i32 = 4;
-    /// ボタンの幅の上限。
-    pub const BUTTON_MAX_WIDTH: i32 = 200;
-    /// ボタンの中の、タイトルの左右の空き。
-    pub const TEXT_PADDING: i32 = 10;
-    /// 文字の大きさ(ピクセル)。
-    pub const TEXT_SIZE: f32 = 14.0;
-    /// 右の端の、時計の場所の幅。
-    pub const CLOCK_WIDTH: i32 = 72;
-    /// ボタンの下の端の、印の高さと幅。
-    pub const INDICATOR_HEIGHT: i32 = 3;
-    pub const ACTIVE_INDICATOR_WIDTH: i32 = 24;
-    pub const INDICATOR_WIDTH: i32 = 8;
+    /// 地と、上の端の 1 ピクセルの線。
+    pub const BACKGROUND: Rgb = [0x0f, 0x1b, 0x2f];
+    pub const TOP_LINE: Rgb = [0x21, 0x30, 0x4a];
 
-    /// タスクバーの地。
-    pub const BACKGROUND: Rgb = [0x20, 0x24, 0x2c];
-    /// activated のウィンドウのボタンの地。
-    pub const ACTIVE_BUTTON: Rgb = [0x3a, 0x40, 0x4c];
-    /// ポインターが乗っているボタンの地。
-    pub const HOT_BUTTON: Rgb = [0x2e, 0x33, 0x3d];
-    /// activated のウィンドウの印。
-    pub const ACTIVE_INDICATOR: Rgb = [0x4c, 0xc2, 0xff];
-    /// そのほかの、開いているウィンドウの印。
-    pub const INDICATOR: Rgb = [0x8a, 0x90, 0x9c];
-    /// 文字の色と、最小化しているウィンドウのタイトルの色。
-    pub const TEXT: Rgb = [0xf0, 0xf2, 0xf5];
-    pub const MINIMIZED_TEXT: Rgb = [0x9a, 0x9f, 0xa8];
+    /// アイコンの大きさ(正方形)。縦は中央に置く。
+    pub const ICON_SIZE: i32 = 24;
+    /// トーチとタスクの当たりの範囲(正方形。縦は中央)と、その角の丸み。
+    pub const HIT_SIZE: i32 = 36;
+    pub const HIT_RADIUS: f32 = 4.0;
+    /// アイコンの間隔(中心から中心)。入りきらないときは、[`MIN_PITCH`] まで詰める。
+    pub const PITCH: i32 = 40;
+    pub const MIN_PITCH: i32 = 36;
+    /// ポインターが乗ったときと、押したときの、当たりの範囲の地。
+    pub const HOT: Rgb = [0x1d, 0x2a, 0x40];
+    pub const PRESSED: Rgb = [0x24, 0x34, 0x4d];
+
+    /// 前面のタスクの印(アイコンの真下の線)の長さと太さと色。下の端から [`MARK_GAP`] 上に置く。
+    pub const ACTIVE_MARK_WIDTH: i32 = 24;
+    pub const MARK_HEIGHT: i32 = 3;
+    pub const MARK_GAP: i32 = 3;
+    pub const ACTIVE_MARK: Rgb = color::ACCENT;
+    /// 背面のタスクの印(点)の径と色。中心の高さは、前面の線と同じ。
+    pub const DOT_DIAMETER: f32 = 5.0;
+    pub const DOT: Rgb = [0x81, 0x90, 0xab];
+
+    /// 左の端と右の端の空き。時計の場所の幅と、まとまりとの間の空き。
+    pub const LEFT_MARGIN: i32 = 8;
+    pub const RIGHT_MARGIN: i32 = 14;
+    pub const CLOCK_WIDTH: i32 = 100;
+    pub const CLOCK_GAP: i32 = 8;
+    /// 時計と日付の文字の大きさと色。2 段の各々の行の上の端と高さ(文字は、行の中で縦の中央)。
+    pub const TEXT_SIZE: f32 = 14.0;
+    pub const TEXT: Rgb = color::TEXT;
+    pub const CLOCK_TIME_TOP: i32 = 2;
+    pub const CLOCK_DATE_TOP: i32 = 20;
+    pub const CLOCK_LINE_HEIGHT: i32 = 18;
 }
 
 /// ウィンドウのタイトルバー(コンポジタの飾り)。

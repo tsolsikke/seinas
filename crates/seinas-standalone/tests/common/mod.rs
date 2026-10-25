@@ -357,10 +357,19 @@ pub fn start_taskbar(dir: &Path, socket: &Path, args: &[&str]) -> Running {
             // 時計の時差は、引数と設定のファイルで決める(外の TZ に左右されない)。
             .env_remove("TZ")
             .env("XDG_CONFIG_HOME", dir)
+            // アプリのアイコンは、テスト用のアイコンの置き場だけから探す(機械に置かれたアイコンに左右されない)。
+            .env("XDG_DATA_HOME", dir.join("no-data"))
+            .env("XDG_DATA_DIRS", test_icons())
+            .env("HOME", dir)
             .stderr(log)
             .spawn()
             .expect("start seinas-taskbar"),
     )
+}
+
+/// テスト用のアイコンの置き場(データの置き場の形。`tools/make-test-icons.py` が作る)。
+pub fn test_icons() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../seinas-icons/tests/data/share")
 }
 
 /// fake screen で動かしたseinas-standaloneと、その作業用の場所。

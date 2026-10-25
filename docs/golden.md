@@ -14,7 +14,7 @@ ADR 0001(`docs/adr/0001-replaceable-boundaries.md`)の決定 4 の実装です�
 | S. 切り替えの一覧 | `seinas-frontend` | 日本語・長いタイトルの切り詰め・最小化の印・タイトルの無いウィンドウ(1280x720 の出力)、320x240 の出力に 20 個(隠れた数の行)、フォントなし。3 ケース | PPM |
 | D. fbdev の blit | `seinas-fbdev` | XRGB、ARGB、XBGR、RGBX、オフセットと行の余白つき。5 ケース | raw(バッファのバイト列) |
 | E. layer surface の重なり | `seinas-standalone`(`tests/golden_layers.rs`) | 160x120 の fake screen に、background・bottom・top(exclusive zone あり・なし)・overlay の layer surface と、ウィンドウを 1 つ出した画面の全体。1 ケース | PPM |
-| F. タスクバー | `seinas-taskbar` | 3 つのウィンドウ(activated、ポインターが乗っているもの、長いタイトルの切り詰め)と時計、最小化しているウィンドウと時刻が取れないときの `--:--`、ウィンドウなし、フォントなし。4 ケース | PPM |
+| F. タスクバー | `seinas-taskbar` | トーチとタスク 4 つ(前面の線、背面の点、ポインターが乗っているもの、既定のアイコン)と 2 段の時計、最小化しているタスクと時刻が取れないときの `--:--`、押しているトーチ、入りきらないほどのタスク、フォントなし。5 ケース | PPM |
 
 正解データは、各 crate の `tests/golden/` にあります(説明は `crates/seinas-text/tests/golden/README.md`)。テストは `tests/golden.rs`(`harness = false`)で、ふだんの `cargo test` で動きます。
 入力はテストのコードに書いてあり、保存するのは出力だけです。

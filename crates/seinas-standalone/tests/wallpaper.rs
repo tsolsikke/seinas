@@ -18,8 +18,8 @@ use common::{wait_for, Compositor, Shot, BACKGROUND, BAR, HEIGHT, WIDTH};
 /// テスト用のクライアントのウィンドウの色(橙)。
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 /// タスクバーの高さと地の色。
-const TASKBAR: usize = 40;
-const TASKBAR_BACKGROUND: [u8; 3] = [0x20, 0x24, 0x2c];
+const TASKBAR: usize = seinas_theme::taskbar::HEIGHT as usize;
+const TASKBAR_BACKGROUND: [u8; 3] = seinas_theme::taskbar::BACKGROUND;
 /// 設定で使う色。
 const BLUE: [u8; 3] = [0x33, 0x66, 0x99];
 

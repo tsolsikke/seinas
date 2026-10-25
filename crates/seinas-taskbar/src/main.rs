@@ -15,6 +15,10 @@
 //!   [`CONNECT_TIMEOUT`])。間隔は [`CONNECT_INTERVAL`]。
 //! - `--round-trip-timeout MS`:つないだ後の最初の往復の答えを待つ期限(ミリ秒。無ければ [`ROUND_TRIP_TIMEOUT`])。
 //!   どちらもテストで短くするためのもの。
+//! - `--fixed-time SECONDS`:時計を、この UNIX 時刻に止める(正解の画像を取るためのもの。時計は進まない)。
+//!
+//! アプリのアイコンは、データの置き場(`XDG_DATA_HOME`・`XDG_DATA_DIRS`)から探す(`seinas-icons`。PNG は、まだ読まず、
+//! 既定のアイコンを出す)。
 //!
 //! 決まりの説明は `docs/taskbar.md` にある。
 
@@ -32,10 +36,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use seinas_icons::{Found, Icon, IconCache};
 use seinas_taskbar::{
-    action_for, button_at, choose_offset, clock_text, format_utc_offset, not_ready_yet, paint,
-    read_config, socket_path, until_next_minute, wall_clock, Action, Entry, CONFIG_FILE,
-    CONNECT_INTERVAL, CONNECT_TIMEOUT, HEIGHT, ROUND_TRIP_TIMEOUT,
+    action_for, choose_offset, clock_for, format_utc_offset, layout, not_ready_yet, paint,
+    read_config, socket_path, until_next_minute, wall_clock, Action, Clock, Entry, Pointer, Target,
+    CONFIG_FILE, CONNECT_INTERVAL, CONNECT_TIMEOUT, HEIGHT, ICON_SIZE, ROUND_TRIP_TIMEOUT,
 };
 use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
@@ -114,13 +119,17 @@ struct Taskbar {
     dirty: bool,
     exit: bool,
     pointer: Option<wl_pointer::WlPointer>,
-    /// ポインターが乗っているボタン。
-    hot: Option<usize>,
+    /// ポインターが乗っているものと、押しているもの。
+    hot: Pointer,
     toplevels: Vec<Toplevel>,
     text: TextPainter,
-    /// 時計の時差(秒)と、いま出している文字。
+    /// アプリのアイコン(app_id ごとに 1 回だけ探す)と、トーチのアイコン。
+    icons: IconCache,
+    torch: Icon,
+    /// 時計の時差(秒)と、いま出しているもの。`fixed_time` があれば、時計はその時刻に止める。
     offset: i32,
-    clock: String,
+    clock: Clock,
+    fixed_time: Option<Duration>,
 }
 
 impl Taskbar {
@@ -150,7 +159,15 @@ impl Taskbar {
         }
         let (width, stride) = (self.width, self.width * 4);
         let entries = self.entries();
-        let pixels = paint(&mut self.text, width, &entries, self.hot, &self.clock);
+        let pixels = paint(
+            &mut self.text,
+            width,
+            &entries,
+            &self.icons,
+            &self.torch,
+            self.hot,
+            &self.clock,
+        );
         let buffer = match self.buffer.take() {
             Some(buffer) if buffer.height() == HEIGHT && buffer.stride() == stride => buffer,
             _ => match self
@@ -199,11 +216,16 @@ impl Taskbar {
         self.dirty = false;
     }
 
+    /// いまの時刻(止めていれば、その時刻)。
+    fn now(&self) -> Option<Duration> {
+        self.fixed_time.or_else(wall_clock)
+    }
+
     /// 時計を読み直す。表示が変わったら再描画する。
     fn update_clock(&mut self) {
-        let text = clock_text(wall_clock(), self.offset);
-        if text != self.clock {
-            self.clock = text;
+        let clock = clock_for(self.now(), self.offset);
+        if clock != self.clock {
+            self.clock = clock;
             self.redraw();
         }
     }
@@ -365,12 +387,25 @@ impl PointerHandler for Taskbar {
             }
             let count = self.shown().len();
             let (x, y) = event.position;
-            let hot = match event.kind {
+            let mut pointer = self.hot;
+            pointer.hot = match event.kind {
                 Leave { .. } => None,
-                _ => button_at(self.width, count, x, y),
+                _ => layout(self.width, count).target_at(x, y),
             };
-            if hot != self.hot {
-                self.hot = hot;
+            match event.kind {
+                Press {
+                    button: LEFT_BUTTON,
+                    ..
+                } => pointer.pressed = pointer.hot,
+                Release {
+                    button: LEFT_BUTTON,
+                    ..
+                }
+                | Leave { .. } => pointer.pressed = None,
+                _ => {}
+            }
+            if pointer != self.hot {
+                self.hot = pointer;
                 self.redraw();
             }
             if let (
@@ -378,10 +413,16 @@ impl PointerHandler for Taskbar {
                     button: LEFT_BUTTON,
                     ..
                 },
-                Some(index),
-            ) = (&event.kind, hot)
+                Some(target),
+            ) = (&event.kind, pointer.hot)
             {
-                self.press(index);
+                match target {
+                    // メニューはまだ無い。
+                    Target::Torch => {
+                        eprintln!("seinas-taskbar: the torch was pressed (no menu yet)")
+                    }
+                    Target::Task(index) => self.press(index),
+                }
             }
         }
     }
@@ -469,18 +510,34 @@ impl Dispatch2<ZwlrForeignToplevelHandleV1, Taskbar> for HandleData {
                 let (activated, minimized) = toplevel.states.unwrap_or_default();
                 toplevel.entry = Entry {
                     // タイトルが無ければ app_id。
-                    title: if title.is_empty() { app_id } else { title },
+                    title: if title.is_empty() {
+                        app_id.clone()
+                    } else {
+                        title
+                    },
+                    app_id: app_id.clone(),
                     activated,
                     minimized,
                 };
                 toplevel.shown = true;
+                // アイコンは、app_id ごとに初めてのときだけ探す。PNG は、まだ読まない(`seinas-icons`)。
+                match state.icons.load(&app_id) {
+                    Some(Found::File(path)) => eprintln!(
+                        "seinas-taskbar: the icon of {app_id}: {} (PNG icons are not read yet; the default icon is used)",
+                        path.display()
+                    ),
+                    Some(Found::Missing) => eprintln!(
+                        "seinas-taskbar: no icon for {app_id}; the default icon is used"
+                    ),
+                    None => {}
+                }
                 state.redraw();
             }
             Event::Closed => {
                 handle.destroy();
                 state.toplevels.remove(index);
-                // 順が変わったので、ポインターの下のボタンは、次に動いたときに決め直す。
-                state.hot = None;
+                // 順が変わったので、ポインターの下のものは、次に動いたときに決め直す。
+                state.hot = Pointer::default();
                 state.redraw();
             }
             _ => {}
@@ -500,6 +557,8 @@ struct Options {
     /// 最初の接続を試し直す期限(`--connect-timeout`)と、最初の往復を待つ期限(`--round-trip-timeout`)。
     connect_timeout: Duration,
     round_trip_timeout: Duration,
+    /// 時計を止める時刻(`--fixed-time`。UNIX 時刻)。
+    fixed_time: Option<Duration>,
 }
 
 fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, String> {
@@ -509,6 +568,7 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
     let mut config = None;
     let mut connect_timeout = CONNECT_TIMEOUT;
     let mut round_trip_timeout = ROUND_TRIP_TIMEOUT;
+    let mut fixed_time = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().cloned().ok_or(format!("{arg} needs a value"));
@@ -519,6 +579,13 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
             "--config" => config = Some(PathBuf::from(value()?)),
             "--connect-timeout" => connect_timeout = millis(arg, &value()?)?,
             "--round-trip-timeout" => round_trip_timeout = millis(arg, &value()?)?,
+            "--fixed-time" => {
+                let text = value()?;
+                let seconds = text
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid --fixed-time value: {text}"))?;
+                fixed_time = Some(Duration::from_secs(seconds));
+            }
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -531,6 +598,7 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
         config,
         connect_timeout,
         round_trip_timeout,
+        fixed_time,
     })
 }
 
@@ -795,23 +863,34 @@ fn run() -> Result<(), Box<dyn Error>> {
         dirty: false,
         exit: false,
         pointer: None,
-        hot: None,
+        hot: Pointer::default(),
         toplevels: Vec::new(),
         text,
+        icons: IconCache::from_env(ICON_SIZE as u32),
+        torch: seinas_icons::torch(ICON_SIZE as u32),
         offset,
-        clock: clock_text(wall_clock(), offset),
+        clock: clock_for(options.fixed_time.or_else(wall_clock), offset),
+        fixed_time: options.fixed_time,
     };
-    // 時計は、分が変わった少し後に起きて再描画する。時刻が取れないときは、60 秒ごとに読み直す。
-    event_loop
-        .handle()
-        .insert_source(
-            Timer::from_duration(until_next_minute(wall_clock())),
-            |_, _, state: &mut Taskbar| {
-                state.update_clock();
-                TimeoutAction::ToDuration(until_next_minute(wall_clock()))
-            },
-        )
-        .map_err(|e| format!("cannot start the clock: {e}"))?;
+    // 時計は、分が変わった少し後に起きて再描画する。時刻が取れないときは、60 秒ごとに読み直す。時刻を止めて
+    // いるときは、起きない。
+    if let Some(fixed) = options.fixed_time {
+        eprintln!(
+            "seinas-taskbar: the clock is fixed at {} seconds",
+            fixed.as_secs()
+        );
+    } else {
+        event_loop
+            .handle()
+            .insert_source(
+                Timer::from_duration(until_next_minute(wall_clock())),
+                |_, _, state: &mut Taskbar| {
+                    state.update_clock();
+                    TimeoutAction::ToDuration(until_next_minute(wall_clock()))
+                },
+            )
+            .map_err(|e| format!("cannot start the clock: {e}"))?;
+    }
     while !state.exit {
         event_loop
             .dispatch(None, &mut state)

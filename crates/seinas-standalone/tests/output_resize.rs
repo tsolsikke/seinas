@@ -18,8 +18,8 @@ use common::{wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, BAR, HEIGHT, WI
 /// テスト用のクライアントのウィンドウの色(橙)と、壁紙の色、タスクバーの高さと地の色。
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 const BLUE: [u8; 3] = [0x33, 0x66, 0x99];
-const TASKBAR: usize = 40;
-const TASKBAR_BACKGROUND: [u8; 3] = [0x20, 0x24, 0x2c];
+const TASKBAR: usize = seinas_theme::taskbar::HEIGHT as usize;
+const TASKBAR_BACKGROUND: [u8; 3] = seinas_theme::taskbar::BACKGROUND;
 
 /// 次の configure の行(`WxH [状態]`)。状態は名前の順に並べ直す。ほかの行は読み飛ばす。
 fn next_configure(client: &TestClient, what: &str) -> String {

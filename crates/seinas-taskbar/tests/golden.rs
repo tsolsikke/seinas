@@ -1,18 +1,38 @@
 //! タスクバーの絵を、正解データ(tests/golden/)と比べる。決まりは docs/golden.md にある。
 //!
-//! `paint` は Wayland を使わない関数なので、それだけを呼ぶ。
+//! `paint` は Wayland を使わない関数なので、それだけを呼ぶ。アプリのアイコンは、テスト用のアイコンの置き場
+//! (`crates/seinas-icons/tests/data/share`。`tools/make-test-icons.py` が作る)から読む。
 
 use std::path::Path;
 
 use seinas_golden::{Image, Runner, Tolerance};
-use seinas_taskbar::{paint, Entry, HEIGHT, NO_CLOCK};
+use seinas_icons::IconCache;
+use seinas_taskbar::{paint, Clock, Entry, Pointer, Target, HEIGHT, ICON_SIZE};
 use seinas_text::{FontFiles, TextPainter};
 
-fn entry(title: &str, activated: bool, minimized: bool) -> Entry {
+fn entry(app_id: &str, activated: bool, minimized: bool) -> Entry {
     Entry {
-        title: title.to_owned(),
+        title: app_id.to_owned(),
+        app_id: app_id.to_owned(),
         activated,
         minimized,
+    }
+}
+
+/// テスト用のアイコンを読んだ置き場。
+fn icons(entries: &[Entry]) -> IconCache {
+    let share = Path::new(env!("CARGO_MANIFEST_DIR")).join("../seinas-icons/tests/data/share");
+    let mut cache = IconCache::new(ICON_SIZE as u32, vec![share], None);
+    for entry in entries {
+        cache.load(&entry.app_id);
+    }
+    cache
+}
+
+fn clock(time: &str, date: Option<&str>) -> Clock {
+    Clock {
+        time: time.to_owned(),
+        date: date.map(str::to_owned),
     }
 }
 
@@ -21,40 +41,87 @@ fn bar(
     painter: &mut TextPainter,
     width: i32,
     entries: &[Entry],
-    hot: Option<usize>,
-    clock: &str,
+    pointer: Pointer,
+    clock: &Clock,
 ) -> Image {
-    let pixels = paint(painter, width, entries, hot, clock);
+    let torch = seinas_icons::torch(ICON_SIZE as u32);
+    let pixels = paint(
+        painter,
+        width,
+        entries,
+        &icons(entries),
+        &torch,
+        pointer,
+        clock,
+    );
     Image::from_bgrx(width as usize, HEIGHT as usize, &pixels)
 }
 
-/// 1 つのケース:名前、幅、並べるウィンドウ、ポインターが乗っているボタン、時計の文字。
-type Case<'a> = (&'a str, i32, &'a [Entry], Option<usize>, &'a str);
+/// 1 つのケース:名前、幅、並べるウィンドウ、ポインター、時計。
+type Case<'a> = (&'a str, i32, &'a [Entry], Pointer, Clock);
 
 fn main() {
     let mut run = Runner::new(env!("CARGO_MANIFEST_DIR"), "seinas-taskbar");
 
-    // activated のもの、ポインターが乗っているもの、長いタイトル。
-    let three = [
-        entry("zeyes", true, false),
-        entry("一つ目のウィンドウ", false, false),
-        entry(
-            "とても長いタイトルのウィンドウです。どこまでも続きます",
-            false,
-            false,
+    // 前面(activated)のもの、背面のもの、アイコンの無いもの(既定のアイコン)。ポインターは 2 つ目のタスクの上。
+    let four = [
+        entry("seinas.test.files", true, false),
+        entry("seinas.test.terminal", false, false),
+        entry("seinas.test.notes", false, false),
+        entry("seinas.test.missing", false, false),
+    ];
+    let hot_second = Pointer {
+        hot: Some(Target::Task(1)),
+        pressed: None,
+    };
+    // 最小化しているもの(背面の点)と、時刻が取れないとき(1 段の --:--)。
+    let minimized = [
+        entry("seinas.test.files", false, true),
+        entry("seinas.test.settings", true, false),
+    ];
+    // トーチを押している。
+    let torch_pressed = Pointer {
+        hot: Some(Target::Torch),
+        pressed: Some(Target::Torch),
+    };
+    // 入りきらないほどのタスク(間隔を詰め、入らないものは出さない)。
+    let many: Vec<Entry> = (0..12)
+        .map(|i| entry("seinas.test.notes", i == 0, false))
+        .collect();
+
+    // F1〜F3、F5: フォントの要るもの。
+    let cases: [Case; 4] = [
+        (
+            "f1-four-tasks",
+            640,
+            &four,
+            hot_second,
+            clock("12:34", Some("2026/10/26")),
+        ),
+        (
+            "f2-minimized-and-no-clock",
+            480,
+            &minimized,
+            Pointer::default(),
+            Clock::unknown(),
+        ),
+        (
+            "f3-torch-pressed",
+            320,
+            &[],
+            torch_pressed,
+            clock("09:05", Some("2026/01/02")),
+        ),
+        (
+            "f5-too-many-tasks",
+            480,
+            &many,
+            Pointer::default(),
+            clock("23:59", Some("2026/12/31")),
         ),
     ];
-    // 最小化しているものと、時刻が取れないときの表示。
-    let minimized = [entry("zeyes", false, true), entry("端末", true, false)];
-
-    // F1〜F3: フォントの要るもの。
-    let cases: [Case; 3] = [
-        ("f1-three-windows", 480, &three, Some(1), "12:34"),
-        ("f2-minimized-and-no-clock", 480, &minimized, None, NO_CLOCK),
-        ("f3-no-windows", 320, &[], None, "09:05"),
-    ];
     let mut painter: Option<TextPainter> = None;
-    for (name, width, entries, hot, clock) in cases {
+    for (name, width, entries, pointer, clock) in cases {
         run.with_fonts(name, |run, fonts: &Path| {
             let painter = painter.get_or_insert_with(|| {
                 let (painter, problems) = TextPainter::load(&FontFiles::in_dir(fonts));
@@ -67,17 +134,23 @@ fn main() {
             run.image(
                 name,
                 Tolerance::EXACT,
-                bar(painter, width, entries, hot, clock),
+                bar(painter, width, entries, pointer, &clock),
             );
         });
     }
 
-    // F4: フォントの要らないもの(ボタンの地と印だけ)。
+    // F4: フォントの要らないもの(アイコンと印と地だけ。時計の文字は出ない)。
     let mut no_fonts = TextPainter::without_fonts();
     run.image(
         "f4-no-fonts",
         Tolerance::EXACT,
-        bar(&mut no_fonts, 480, &three, Some(1), "12:34"),
+        bar(
+            &mut no_fonts,
+            640,
+            &four,
+            hot_second,
+            &clock("12:34", Some("2026/10/26")),
+        ),
     );
 
     run.finish();

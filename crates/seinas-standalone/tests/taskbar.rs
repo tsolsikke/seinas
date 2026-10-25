@@ -2,9 +2,10 @@
 //!
 //! 決まり(`docs/taskbar.md`):
 //! - タスクバーは画面の下に固定され、exclusive zone で通常のウィンドウと重ならない。
-//! - 開いているウィンドウを、map した順にボタンで並べ、activated のウィンドウのボタンは地の色が違う。
-//! - ボタンを押すと、そのウィンドウが raise される。activated のウィンドウのボタンでは最小化し、最小化している
-//!   ウィンドウのボタンでは戻す。
+//! - トーチと、開いているウィンドウ(タスク)のアイコンを、map した順に中央に並べる。activated のウィンドウの
+//!   アイコンの下にはオレンジの線、そのほか(最小化しているものを含む)には点を付ける(`docs/ui-spec.md`)。
+//! - タスクを押すと、そのウィンドウが raise される。activated のウィンドウのタスクでは最小化し、最小化している
+//!   ウィンドウのタスクでは戻す。トーチを押すと、ログに 1 行出す(メニューはまだ無い)。
 //! - シェルの部品のためのソケットでなければ、つなげない。
 //! - コンポジタより先に起こされても、コンポジタのソケットができるまで試し直してつなぐ。期限まで試しても
 //!   できなければ、`the compositor did not appear` のエラーで終わる。
@@ -25,15 +26,13 @@ use common::{
     BACKGROUND, HEIGHT, WIDTH,
 };
 
-/// タスクバーの高さと、ボタンの上の端・高さ・幅(ウィンドウが 2 つのとき、640 の幅で 200)。
-const TASKBAR: usize = 40;
-const BUTTON_TOP: usize = 4;
-const BUTTON_WIDTH: usize = 200;
-/// ボタンの左の端。
-const BUTTONS: [usize; 2] = [4, 208];
-/// タスクバーの地と、activated のウィンドウのボタンの地(seinas-taskbar の色)。
-const TASKBAR_BACKGROUND: [u8; 3] = [0x20, 0x24, 0x2c];
-const ACTIVE_BUTTON: [u8; 3] = [0x3a, 0x40, 0x4c];
+use seinas_theme::taskbar::{
+    ACTIVE_MARK, BACKGROUND as TASKBAR_BACKGROUND, DOT, HEIGHT as TASKBAR_HEIGHT, MARK_GAP,
+    MARK_HEIGHT, PITCH, TOP_LINE,
+};
+
+/// タスクバーの高さ。
+const TASKBAR: usize = TASKBAR_HEIGHT as usize;
 /// テスト用のクライアントのウィンドウの幅と、2 つ目のスロットの位置。
 const WINDOW_WIDTH: usize = 200;
 const STEP: usize = 32;
@@ -41,16 +40,23 @@ const STEP: usize = 32;
 /// タスクバーの上の端の y。
 const TOP: usize = HEIGHT - TASKBAR;
 
-/// ボタン `index` の地の色(左上の隅。文字も印も来ない所)。
-fn button_ground(shot: &Shot, index: usize) -> [u8; 3] {
-    shot.pixel(BUTTONS[index] + 1, TOP + BUTTON_TOP + 1)
+/// タスクが `count` 個のとき、`index` 番目(トーチが 0、タスク `i` が `i + 1`)のアイコンの中心の x。640 の幅では、
+/// まとまりは時計の場所にかからず、ちょうど中央に並ぶ。
+fn center(count: usize, index: usize) -> usize {
+    let pitch = PITCH as usize;
+    (WIDTH - (count + 1) * pitch) / 2 + index * pitch + pitch / 2
 }
 
-/// ボタン `index` の中に、地の色でないピクセル(タイトルの文字)があるか。
-fn button_has_text(shot: &Shot, index: usize) -> bool {
-    let ground = button_ground(shot, index);
-    (TOP + BUTTON_TOP..TOP + BUTTON_TOP + 24)
-        .any(|y| (BUTTONS[index] + 10..BUTTONS[index] + 80).any(|x| shot.pixel(x, y) != ground))
+/// タスク `index` の印の色(線か点の中ほど。印が無ければタスクバーの地)。
+fn mark(shot: &Shot, count: usize, index: usize) -> [u8; 3] {
+    let y = TASKBAR_HEIGHT - MARK_GAP - MARK_HEIGHT + 1;
+    shot.pixel(center(count, index + 1), TOP + y as usize)
+}
+
+/// タスク `index` のアイコンが描かれているか(アイコンの範囲に、地の色でないピクセルがあるか)。
+fn has_icon(shot: &Shot, count: usize, index: usize) -> bool {
+    let x = center(count, index + 1);
+    (TOP + 10..TOP + 30).any(|y| (x - 10..x + 10).any(|x| shot.pixel(x, y) != TASKBAR_BACKGROUND))
 }
 
 fn open_window(seinas: &Compositor, title: &str) -> TestClient {
@@ -59,12 +65,24 @@ fn open_window(seinas: &Compositor, title: &str) -> TestClient {
     window
 }
 
+/// タスク `index` を押して離す。
+fn press_task(seinas: &mut Compositor, count: usize, index: usize) {
+    seinas.pointer(&format!(
+        "motion {} {}",
+        center(count, index + 1),
+        TOP + TASKBAR / 2
+    ));
+    seinas.pointer("press");
+    seinas.pointer("release");
+}
+
 #[test]
 fn the_taskbar_sits_at_the_bottom_and_shrinks_the_usable_area() {
     let seinas = Compositor::start("ta");
     let _taskbar = seinas.connect_taskbar();
     seinas.wait_for_screen("the taskbar at the bottom", |shot| {
-        shot.pixel(0, TOP) == TASKBAR_BACKGROUND
+        shot.pixel(0, TOP) == TOP_LINE
+            && shot.pixel(0, TOP + 1) == TASKBAR_BACKGROUND
             && shot.pixel(WIDTH - 1, HEIGHT - 1) != [0x19, 0x1e, 0x28]
             && shot.pixel(WIDTH / 2, TOP - 1) == [0x19, 0x1e, 0x28]
     });
@@ -95,27 +113,21 @@ fn the_taskbar_lists_the_windows_and_raises_the_one_pressed() {
     let _taskbar = seinas.connect_taskbar();
     let _first = open_window(&seinas, "一つ目");
     let _second = open_window(&seinas, "二つ目");
-    // 2 つのボタンが、タイトルつきで並ぶ。activated の 2 つ目のボタンだけ、地の色が違う。
-    seinas.wait_for_screen("two buttons, the second activated", |shot| {
-        button_ground(shot, 0) == TASKBAR_BACKGROUND
-            && button_ground(shot, 1) == ACTIVE_BUTTON
-            && button_has_text(shot, 0)
-            && button_has_text(shot, 1)
+    // 2 つのタスクが、アイコンつきで並ぶ。activated の 2 つ目にはオレンジの線、1 つ目には点。
+    seinas.wait_for_screen("two tasks, the second activated", |shot| {
+        mark(shot, 2, 0) == DOT
+            && mark(shot, 2, 1) == ACTIVE_MARK
+            && has_icon(shot, 2, 0)
+            && has_icon(shot, 2, 1)
     });
 
-    // 1 つ目のボタンを押すと、1 つ目のウィンドウが raise され、ボタンの地も入れ替わる。
-    seinas.pointer(&format!(
-        "motion {} {}",
-        BUTTONS[0] + BUTTON_WIDTH / 2,
-        TOP + 20
-    ));
-    seinas.pointer("press");
-    seinas.pointer("release");
+    // 1 つ目のタスクを押すと、1 つ目のウィンドウが raise され、印も入れ替わる。
+    press_task(&mut seinas, 2, 0);
     seinas.wait_for_screen("the first window raised", |shot| {
         bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
             && bar_color(shot, STEP, STEP, WINDOW_WIDTH) != Some(ACTIVE_BAR)
-            && button_ground(shot, 0) == ACTIVE_BUTTON
-            && button_ground(shot, 1) != ACTIVE_BUTTON
+            && mark(shot, 2, 0) == ACTIVE_MARK
+            && mark(shot, 2, 1) == DOT
     });
 }
 
@@ -124,10 +136,13 @@ fn a_closed_window_leaves_the_taskbar() {
     let seinas = Compositor::start("tc");
     let _taskbar = seinas.connect_taskbar();
     let first = open_window(&seinas, "一つ目");
-    seinas.wait_for_screen("one button", |shot| button_ground(shot, 0) == ACTIVE_BUTTON);
+    seinas.wait_for_screen("one task", |shot| mark(shot, 1, 0) == ACTIVE_MARK);
     drop(first);
-    seinas.wait_for_screen("no buttons", |shot| {
-        button_ground(shot, 0) == TASKBAR_BACKGROUND && !button_has_text(shot, 0)
+    // タスクが無くなると、トーチだけが中央に残り、タスクの場所は空く。
+    seinas.wait_for_screen("no tasks", |shot| {
+        mark(shot, 1, 0) == TASKBAR_BACKGROUND
+            && !has_icon(shot, 1, 0)
+            && shot.pixel(center(0, 0), TOP + TASKBAR / 2) != TASKBAR_BACKGROUND
     });
 }
 
@@ -153,37 +168,21 @@ fn the_taskbar_minimizes_and_restores_a_window() {
     let mut seinas = Compositor::start_with_input("te");
     let _taskbar = seinas.connect_taskbar();
     let _first = open_window(&seinas, "一つ目");
-    let indicator = |shot: &Shot| shot.pixel(BUTTONS[0] + BUTTON_WIDTH / 2, TOP + BUTTON_TOP + 30);
-    seinas.wait_for_screen("the window and its button", |shot| {
-        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
-            && button_ground(shot, 0) == ACTIVE_BUTTON
+    seinas.wait_for_screen("the window and its task", |shot| {
+        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR) && mark(shot, 1, 0) == ACTIVE_MARK
     });
-    let press_button = |seinas: &mut Compositor| {
-        seinas.pointer(&format!(
-            "motion {} {}",
-            BUTTONS[0] + BUTTON_WIDTH / 2,
-            TOP + 20
-        ));
-        seinas.pointer("press");
-        seinas.pointer("release");
-    };
 
-    // activated のウィンドウのボタンを押すと、最小化する。ウィンドウは描かれず、ボタンの地と印が消える
-    // (地の色を見るため、ポインターはボタンの外へ出しておく)。
-    press_button(&mut seinas);
+    // activated のウィンドウのタスクを押すと、最小化する。ウィンドウは描かれず、印は点になる(最小化していても、
+    // 開いているウィンドウなので点を付ける)。印を見るため、ポインターはタスクの外へ出しておく。
+    press_task(&mut seinas, 1, 0);
     seinas.pointer("motion 400 200");
     seinas.wait_for_screen("the window minimized", |shot| {
-        shot.pixel(2, 30) == BACKGROUND
-            && button_ground(shot, 0) == TASKBAR_BACKGROUND
-            && indicator(shot) == TASKBAR_BACKGROUND
-            && button_has_text(shot, 0)
+        shot.pixel(2, 30) == BACKGROUND && mark(shot, 1, 0) == DOT && has_icon(shot, 1, 0)
     });
     // もう一度押すと、戻って activated になる。
-    press_button(&mut seinas);
+    press_task(&mut seinas, 1, 0);
     seinas.wait_for_screen("the window restored", |shot| {
-        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
-            && button_ground(shot, 0) == ACTIVE_BUTTON
-            && indicator(shot) != TASKBAR_BACKGROUND
+        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR) && mark(shot, 1, 0) == ACTIVE_MARK
     });
 }
 
@@ -232,7 +231,7 @@ fn a_taskbar_started_before_the_compositor_connects_when_the_socket_appears() {
     assert!(log().contains("(ENOENT: "), "{}", log());
     let seinas = Compositor::start("tg");
     seinas.wait_for_screen("the taskbar at the bottom", |shot| {
-        shot.pixel(0, TOP) == TASKBAR_BACKGROUND
+        shot.pixel(0, TOP) == TOP_LINE && shot.pixel(0, TOP + 1) == TASKBAR_BACKGROUND
     });
     assert!(
         seinas
@@ -302,7 +301,7 @@ fn a_taskbar_starts_when_the_first_round_trip_is_answered_late() {
     });
     signal(&seinas, libc::SIGCONT);
     seinas.wait_for_screen("the taskbar at the bottom", |shot| {
-        shot.pixel(0, TOP) == TASKBAR_BACKGROUND
+        shot.pixel(0, TOP) == TOP_LINE && shot.pixel(0, TOP + 1) == TASKBAR_BACKGROUND
     });
     let log = seinas.taskbar_log();
     assert!(
@@ -398,4 +397,52 @@ fn a_protocol_error_during_the_first_round_trip_is_not_hidden_by_a_retry() {
         ),
         "{log}"
     );
+}
+
+/// 既定のアイコンの中の色(`seinas-icons` の `DEFAULT_ICON_BODY`)。
+fn seinas_icons_default_body() -> [u8; 3] {
+    [0x22, 0x30, 0x4a]
+}
+
+/// タスクバーのログに `text` が出るまで待つ。
+fn wait_for_taskbar_log(seinas: &Compositor, text: &str) {
+    wait_for(text, || seinas.taskbar_log().contains(text).then_some(()));
+}
+
+#[test]
+fn the_taskbar_shows_app_icons_a_fixed_clock_and_logs_the_torch() {
+    let mut seinas = Compositor::start_with_input("tg");
+    // 見本の画像と同じ時刻(2026-10-26 20:45 +09:00)に止める。
+    let _taskbar = seinas.connect_taskbar_to(
+        &seinas.shell_socket(),
+        &["--utc-offset", "+09:00", "--fixed-time", "1793015100"],
+    );
+    wait_for_taskbar_log(&seinas, "the clock is fixed at 1793015100 seconds");
+    // .desktop の Icon から、テスト用のアイコンの置き場のフォルダーのアイコンを見つける。
+    let _files = seinas.connect_test_client(&["window", "--app-id", "seinas.test.files"]);
+    wait_for_taskbar_log(&seinas, "the icon of seinas.test.files: ");
+    assert!(seinas.taskbar_log().contains("seinas-test-folder.png"));
+    // アイコンの無い app_id は、既定のアイコン。
+    let _missing = seinas.connect_test_client(&["window", "--app-id", "seinas.test.missing"]);
+    wait_for_taskbar_log(
+        &seinas,
+        "no icon for seinas.test.missing; the default icon is used",
+    );
+    // PNG は、まだ読まないので、どちらも既定のアイコン(中ほど、アイコンの左上から (12, 14) は、中の色)。
+    let body = seinas_icons_default_body();
+    seinas.wait_for_screen("the default icons", |shot| {
+        shot.pixel(center(2, 1), TOP + 8 + 14) == body
+            && shot.pixel(center(2, 2), TOP + 8 + 14) == body
+    });
+    // トーチを押すと、ログに 1 行出る(メニューはまだ無い)。ポインターが乗った地と、押した地が付く。
+    seinas.pointer(&format!("motion {} {}", center(2, 0), TOP + 3));
+    seinas.pointer("press");
+    wait_for_taskbar_log(&seinas, "the torch was pressed (no menu yet)");
+    seinas.wait_for_screen("the pressed torch", |shot| {
+        shot.pixel(center(2, 0) - 16, TOP + 4) == seinas_theme::taskbar::PRESSED
+    });
+    seinas.pointer("release");
+    seinas.wait_for_screen("the hot torch", |shot| {
+        shot.pixel(center(2, 0) - 16, TOP + 4) == seinas_theme::taskbar::HOT
+    });
 }

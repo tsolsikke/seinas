@@ -1,0 +1,11 @@
+[package]
+name = "seinas-icons"
+description = "Seinasのアイコン。アプリのアイコンを探す所(app_id、.desktop、アイコンのテーマ)と、自分で描くアイコン(既定のアイコン、トーチ)、小さな図形の描き方。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# PNG を読むクレートは、壁紙のほかに入れない決まり(CI と pre-push の check-deps)なので、まだ使わない。

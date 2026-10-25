@@ -17,6 +17,8 @@ seinas-text = { path = "../seinas-text" }
 seinas-config = { path = "../seinas-config" }
 # 見た目の値(テーマのトークン)。
 seinas-theme = { path = "../seinas-theme" }
+# アプリのアイコンと、トーチのアイコン。
+seinas-icons = { path = "../seinas-icons" }
 # 壁の時計(clock_gettime)を、失敗を見分けて読むのに使う。
 libc = { workspace = true }
 

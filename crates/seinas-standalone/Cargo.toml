@@ -18,6 +18,8 @@ tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 seinas-golden = { path = "../seinas-golden" }
+# 見た目の値(テストが色と大きさを、トークンから読む)。
+seinas-theme = { path = "../seinas-theme" }
 # テストの子のプロセスに PR_SET_PDEATHSIG を付ける(tests/common/mod.rs)。
 libc = { workspace = true }
 

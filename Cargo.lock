@@ -710,6 +710,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "seinas-icons"
+version = "0.3.0"
+
+[[package]]
 name = "seinas-render"
 version = "0.3.0"
 dependencies = [
@@ -728,6 +732,7 @@ dependencies = [
  "seinas-frontend",
  "seinas-golden",
  "seinas-render",
+ "seinas-theme",
  "smithay",
  "tracing",
  "tracing-subscriber",
@@ -740,6 +745,7 @@ dependencies = [
  "libc",
  "seinas-config",
  "seinas-golden",
+ "seinas-icons",
  "seinas-text",
  "seinas-theme",
  "smithay-client-toolkit",
