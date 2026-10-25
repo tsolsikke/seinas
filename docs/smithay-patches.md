@@ -17,6 +17,14 @@ Seinas は Smithay 0.7.0 を使います。見つけた不具合は Seinas の�
 
 - キーボードの無い seat での `get_input_method` の panic の直し(手元の `f6913407`・`8c197939`)。Seinas は、キーボードの無い seat では input-method と virtual-keyboard の global を作らず、`get_input_method` も Smithay へ渡す前に断るので、この道に入らない(`the_input_method_globals_need_a_keyboard` が確かめる)。fork を小さく保つため、Seinas が当たらないものは積まない。Seinas の側のこの守り(キーボードの無い seat では global を作らず、`get_input_method` を断る)を外すときに積む(運用者の決定、2026-10-25)。
 
+## 取り込む候補
+
+まだ積まないが、時期が来たら積むもの。
+
+| 上流のコミット | 中身 | 当たる場面 | 取り込む時期 |
+| --- | --- | --- | --- |
+| `8a270232` input: send keymap updates to grabs(2026-10-13。0.7.0 の後) | keyboard の keymap が替わったとき(と、virtual-keyboard が別の keymap でキーを送るとき)に、IME の keyboard の grab へも新しい keymap を送る。0.7.0 の `update_xkb_state` は、新しい keymap を `wl_keyboard` へだけ送り、grab へは送らない(`src/input/keyboard/mod.rs` 770〜797 行) | 入れ子の構成で、親の keymap に置き換えるとき(IME が grab している間に keymap が替わると、IME は古い keymap のままキーを読む)。seinas-standalone には keymap を変える道が無いので、今は当たらない | Kieli の第 2 段階(Kieli を Seinas につなぐ段階)に入る前(運用者の決定、2026-10-25)。master(`Dispatch2` の形)の上に書かれ、`input_method_keyboard_grab.rs` も変えるので、`01d2b90d` と合わせて 0.7.0 の形に移して積む。ADR 0004 の 4 の項目 4 の keymap の変更の確かめと一緒に行う |
+
 ## 残る限り
 
 - 今の IME の grab のオブジェクトが破棄されると、Smithay は keyboard の grab を、それが IME の grab かどうかを見ずに外す(0.7.0 と上流の master と同じ)。IME でない grab が置かれている間に今の IME の grab が破棄されると、その grab も外れる。Seinas は、IME のほかに keyboard の grab を使わないので、今は当たらない(2026-10-25 に、Smithay の側の一時的なテストで確かめた)。fork には直しを足さない。IME 以外の keyboard の grab を足すときに見直す(運用者の決定、2026-10-25)。
