@@ -29,3 +29,5 @@ Seinas は Smithay 0.7.0 を使います。見つけた不具合は Seinas の�
 4. Seinas の `[patch.crates-io]` を、一時的に path で新しいブランチへ向け、Seinas のテストの全体(ホストと musl)を通す。パッチを外すと、上の回帰のテストが落ちることを確かめる。
 5. 運用者が fork へ push した後に、`[patch.crates-io]` を git と rev の形にし、`Cargo.toml` の `smithay` のバージョンと一緒にコミットする。
 6. この文書の一覧を、新しいブランチの hash と、上流の状態に合わせて書き直す。
+
+wayland-backend(と wayland-server)を上げるときは、Seinas の側の作ったばかりの grab のオブジェクトの見分け方(`crates/seinas-frontend/src/ime.rs` の `new_grab_object`)が頼っている順(要求の新しいオブジェクトを data の無い形で先に作り、要求の処理の後で data を入れる。wayland-backend 0.3.17)が変わっていないかを確かめる(ADR 0004 の 1.5)。変わると、同じ接続の古い grab と新しい grab を見分けられなくなり、`the_old_grab_on_the_same_connection_does_not_remove_the_new_grab`(jq)が落ちるので、気づける。
