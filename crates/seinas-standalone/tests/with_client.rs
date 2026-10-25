@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{shows_only_background, shows_zeyes, wait_for, Compositor, BACKGROUND};
+use common::{shows_only_background, shows_zeyes, wait_for, Compositor, AROUND, BACKGROUND, BAR};
 
 #[test]
 fn a_client_window_is_drawn_on_the_fake_screen_again_after_reconnecting() {
@@ -24,10 +24,11 @@ fn a_client_window_is_drawn_on_the_fake_screen_again_after_reconnecting() {
     assert!(first.is_running(), "the first client must keep running");
     // ウィンドウの外は、seinasの背景のまま。
     let shot = seinas.shot();
-    assert_eq!(shot.pixel(330, 120), BACKGROUND);
-    // 高さは、タイトルバーの24と、コンテンツの240。
-    assert_eq!(shot.pixel(160, 263), common::SKIN);
-    assert_eq!(shot.pixel(160, 264), BACKGROUND);
+    assert_eq!(shot.pixel(320 + AROUND, 120), BACKGROUND);
+    // 高さは、タイトルバーの36と、コンテンツの240。そのすぐ下に枠の線があり、その外(影の外)は背景。
+    assert_eq!(shot.pixel(160, BAR + 239), common::SKIN);
+    assert_eq!(shot.pixel(160, BAR + 240), common::ACTIVE_BORDER);
+    assert_eq!(shot.pixel(160, BAR + 240 + AROUND), BACKGROUND);
 
     // 強制終了すると、ウィンドウが消えて背景に戻る。クリーンアップのスレッドが1本できる。
     drop(first);

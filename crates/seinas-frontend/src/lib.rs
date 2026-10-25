@@ -22,6 +22,7 @@ pub use smithay;
 
 mod decoration;
 mod foreign_toplevel;
+mod frame;
 pub mod geometry;
 mod ime;
 mod ime_popup;
@@ -35,11 +36,13 @@ mod switcher;
 mod switcher_view;
 mod title_bar;
 pub use decoration::{
-    clamp_outer_location, content_location, content_size_for, load_fonts, outer_size,
-    paint_title_bar, title_text, TitleButton, TitleButtons, TitleLook, ACTIVE_BAR, ACTIVE_TITLE,
-    CLOSE_BUTTON_SIZE, HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON,
-    INACTIVE_BAR, INACTIVE_TITLE, MAX_BUTTONS_WIDTH, MIN_VISIBLE_BAR, NOT_RESPONDING,
-    TITLE_BAR_HEIGHT, TITLE_BUTTON_SIZE, TITLE_PADDING, TITLE_SIZE, UNRESPONSIVE_CLOSE_BUTTON,
+    clamp_outer_location, content_location, content_size_for, frame_contains, in_cut_corner,
+    load_fonts, outer_size, paint_title_bar, title_text, TitleButton, TitleButtons, TitleLook,
+    ACTIVE_BAR, ACTIVE_TITLE, BORDER_WIDTH, CLOSE_BUTTON_SIZE, CORNER_RADIUS, FRAME_RADIUS,
+    HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON, INACTIVE_BAR,
+    INACTIVE_TITLE, MAX_BUTTONS_WIDTH, MIN_VISIBLE_BAR, NOT_RESPONDING, TITLE_BAR_HEIGHT,
+    TITLE_BUTTON_SIZE, TITLE_ICON_SIZE, TITLE_PADDING, TITLE_SIZE, TITLE_TEXT_X,
+    UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
 pub use ime::{
@@ -58,6 +61,7 @@ pub use resize::{
     anchored_location, edges_at, resized_content, Edges, ResizeStart, SizeLimits, CORNER_LENGTH,
     MIN_CONTENT_SIZE, RESIZE_BORDER,
 };
+pub use seinas_theme::frame::{ACTIVE_BORDER, INACTIVE_BORDER};
 pub use shortcuts::{
     is_modifier_key, keysym, Action, Decision, Modifiers, Shortcut, Shortcuts, SwitchKeys,
     SWITCH_NEXT, SWITCH_NEXT_NESTED, SWITCH_PREVIOUS, SWITCH_PREVIOUS_NESTED,
@@ -73,6 +77,7 @@ pub use switcher_view::{
 };
 pub use title_bar::{SwitcherImage, TitleBar};
 
+use seinas_icons::Found;
 use seinas_text::TextPainter;
 use smithay::{
     backend::input::{ButtonState, KeyState},
@@ -82,9 +87,10 @@ use smithay::{
             solid::{SolidColorBuffer, SolidColorRenderElement},
             render_elements,
             surface::{render_elements_from_surface_tree, WaylandSurfaceRenderElement},
-            Kind,
+            Id, Kind,
         },
         pixman::PixmanRenderer,
+        Color32F,
         utils::with_renderer_surface_state,
     },
     desktop::{layer_map_for_output, LayerSurface as MappedLayer, WindowSurfaceType},
@@ -202,10 +208,15 @@ impl Default for KeyboardConfig {
     }
 }
 
+pub use frame::{border_elements, BorderCorners, ClippedSurface, Shadow};
+pub use seinas_icons::IconCache;
+
 render_elements! {
-    /// 画面に描く要素。クライアントの画面(ウィンドウと layer surface)と、Seinas が描くタイトルバー。
+    /// 画面に描く要素。クライアントの画面(ウィンドウと layer surface)と、Seinas が描くタイトルバー・枠・影。
+    /// `Clipped` は、角を欠いて描くウィンドウのコンテンツ。
     pub WindowElement<=PixmanRenderer>;
     Surface=WaylandSurfaceRenderElement<PixmanRenderer>,
+    Clipped=ClippedSurface,
     TitleBar=MemoryRenderBufferRenderElement<PixmanRenderer>,
     Mark=SolidColorRenderElement,
 }
@@ -261,6 +272,12 @@ pub struct Frontend<D: SeatHandler> {
     pub text: TextPainter,
     /// 作ったタイトルバーの絵。ウィンドウ(の画面)ごとに覚えておく。
     pub title_bars: HashMap<ObjectId, TitleBar>,
+    /// アプリのアイコン(タイトルバーの左)。app_id ごとに 1 回だけ探して読む(`seinas-icons`。ADR 0007)。
+    pub icons: IconCache,
+    /// 枠の角の絵(activated のウィンドウと、そうでないもの)。
+    pub frame_corners: (BorderCorners, BorderCorners),
+    /// 作った影の絵。ウィンドウ(の画面)ごとに覚えておき、大きさが変わったときだけ作り直す。
+    pub shadows: HashMap<ObjectId, Shadow>,
     /// ポインターでの操作(動かす、閉じる、サイズ変更)の状態。
     pub interaction: Interaction,
     /// 閉じるように頼んだクライアントへの ping の答えを待つ一覧と、応答なしの印。
@@ -468,6 +485,7 @@ impl<D: FrontendHost> Frontend<D> {
         self.windows
             .remove(|window| window.wl_surface() == toplevel.wl_surface());
         self.title_bars.remove(&toplevel.wl_surface().id());
+        self.shadows.remove(&toplevel.wl_surface().id());
         self.forget_closed_candidates();
         self.pings.forget(|client| !client.alive());
         self.update_activation();
@@ -1034,44 +1052,121 @@ impl<D: FrontendHost> Frontend<D> {
         // 最小化しているウィンドウは描かない(Alt+Tab の候補として見せているものは描く)。
         for (window, active) in self.windows.iter_shown() {
             let surface = window.item.wl_surface();
-            // まだ絵を出していないウィンドウには、タイトルバーも付けない。
-            if let Some(content) = content_size(&window.item) {
-                let text = toplevel_title(&window.item);
-                let look = TitleLook {
-                    buttons: measure.buttons(&window.item),
-                    maximized: window.is_maximized(),
-                    hot: self.interaction.hot_button(window.id),
-                    unresponsive: self.pings.is_unresponsive(&window.item.client()),
-                };
-                let bar = self
-                    .title_bars
-                    .entry(surface.id())
-                    .and_modify(|bar| {
-                        if !bar.matches(&text, content.w, active, look) {
-                            *bar = TitleBar::new(&mut self.text, &text, content.w, active, look);
-                        }
-                    })
-                    .or_insert_with(|| {
-                        TitleBar::new(&mut self.text, &text, content.w, active, look)
-                    });
-                elements.extend(
-                    bar.element(renderer, window.location)
-                        .map(WindowElement::TitleBar),
-                );
+            // まだ絵を出していないウィンドウには、タイトルバーも枠も影も付けない。
+            let Some(content) = content_size(&window.item) else {
+                continue;
+            };
+            let text = toplevel_title(&window.item);
+            let (_, app_id) = toplevel_names(&window.item);
+            let look = TitleLook {
+                buttons: measure.buttons(&window.item),
+                maximized: window.is_maximized(),
+                hot: self.interaction.hot_button(window.id),
+                unresponsive: self.pings.is_unresponsive(&window.item.client()),
+            };
+            // アイコンは、app_id ごとに初めてのときだけ探して読む。
+            match self.icons.load(&app_id) {
+                Some(Found::File(path)) => info!("the icon of {app_id}: {}", path.display()),
+                Some(Found::Unreadable(path, reason)) => warn!(
+                    "the icon of {app_id} ({}) is not used: {reason}; the default icon is used",
+                    path.display()
+                ),
+                Some(Found::Missing) => {
+                    info!("no icon for {app_id}; the default icon is used")
+                }
+                None => {}
             }
-            let content = content_location(window.location);
+            let icon = self.icons.get(&app_id);
+            let bar = self
+                .title_bars
+                .entry(surface.id())
+                .and_modify(|bar| {
+                    if !bar.matches(&text, content.w, active, look, &app_id) {
+                        *bar = TitleBar::new(
+                            &mut self.text,
+                            &text,
+                            content.w,
+                            active,
+                            look,
+                            &app_id,
+                            icon,
+                        );
+                    }
+                })
+                .or_insert_with(|| {
+                    TitleBar::new(
+                        &mut self.text,
+                        &text,
+                        content.w,
+                        active,
+                        look,
+                        &app_id,
+                        icon,
+                    )
+                });
             elements.extend(
-                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
-                    renderer,
-                    surface,
-                    // 拡大率は1なので、画面の上の位置とピクセルの位置は同じ。
-                    (content.x, content.y),
-                    1.0,
-                    1.0,
+                bar.element(renderer, window.location)
+                    .map(WindowElement::TitleBar),
+            );
+            let outer = Rect::new(window.location, outer_size(content));
+            let rounded = !window.is_maximized();
+            let location = content_location(window.location);
+            let surfaces = render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                renderer,
+                surface,
+                // 拡大率は1なので、画面の上の位置とピクセルの位置は同じ。
+                (location.x, location.y),
+                1.0,
+                1.0,
+                Kind::Unspecified,
+            );
+            if !rounded {
+                // 最大化しているときは、角も枠も影も付けない。
+                elements.extend(surfaces.into_iter().map(WindowElement::Surface));
+                continue;
+            }
+            elements.extend(
+                surfaces
+                    .into_iter()
+                    .map(|element| WindowElement::Clipped(ClippedSurface::new(element, outer))),
+            );
+            // 枠(角の絵と、まっすぐな所の単色の矩形)。
+            let (corners, color) = if active {
+                (&self.frame_corners.0, ACTIVE_BORDER)
+            } else {
+                (&self.frame_corners.1, INACTIVE_BORDER)
+            };
+            let (images, lines) = border_elements(renderer, outer, corners);
+            elements.extend(images.into_iter().map(WindowElement::TitleBar));
+            let [r, g, b] = color.map(|c| f32::from(c) / 255.0);
+            elements.extend(lines.into_iter().map(|[x, y, w, h]| {
+                WindowElement::Mark(SolidColorRenderElement::new(
+                    Id::new(),
+                    Rectangle::new((x, y).into(), (w, h).into()),
+                    0usize,
+                    Color32F::from([r, g, b, 1.0]),
                     Kind::Unspecified,
-                )
-                .into_iter()
-                .map(WindowElement::Surface),
+                ))
+            }));
+            // 影(枠の外側の矩形の大きさで、作って覚える)。
+            let (w, h) = (
+                outer.size.w + 2 * BORDER_WIDTH,
+                outer.size.h + 2 * BORDER_WIDTH,
+            );
+            let shadow = self
+                .shadows
+                .entry(surface.id())
+                .and_modify(|shadow| {
+                    if !shadow.matches(w, h) {
+                        *shadow = Shadow::new(w, h);
+                    }
+                })
+                .or_insert_with(|| Shadow::new(w, h));
+            elements.extend(
+                shadow
+                    .elements(renderer, outer)
+                    .into_iter()
+                    .map(WindowElement::TitleBar),
             );
         }
         elements.extend(self.layer_elements(renderer, &[Layer::Bottom, Layer::Background]));
@@ -2180,6 +2275,12 @@ macro_rules! delegate_frontend {
                     windows: $crate::Stack::default(),
                     text: $crate::load_fonts(&config.font_dir, config.font_config.as_deref()),
                     title_bars: Default::default(),
+                    icons: $crate::IconCache::from_env($crate::TITLE_ICON_SIZE as u32),
+                    frame_corners: (
+                        $crate::BorderCorners::new($crate::ACTIVE_BORDER),
+                        $crate::BorderCorners::new($crate::INACTIVE_BORDER),
+                    ),
+                    shadows: Default::default(),
                     interaction: Default::default(),
                     pings: $crate::Pings::new(config.ping_timeout),
                     reap_requested: false,

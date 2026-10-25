@@ -2,19 +2,25 @@
 //!
 //! `paint_title_bar` は Smithay を使わない関数なので、それだけを呼ぶ。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use seinas_frontend::{
-    geometry::Size, paint_switcher, paint_title_bar, switcher_layout, SwitcherEntry, TitleButton,
-    TitleButtons, TitleLook, TITLE_BAR_HEIGHT,
+    geometry::Size, paint_switcher, paint_title_bar, switcher_layout, IconCache, SwitcherEntry,
+    TitleButton, TitleButtons, TitleLook, TITLE_BAR_HEIGHT, TITLE_ICON_SIZE,
 };
 use seinas_golden::{Image, Runner, Tolerance};
 use seinas_text::{FontFiles, TextPainter};
 
-/// タイトルバーを描いて、RGB の画像にする。
+/// タイトルバーを、既定のアプリのアイコンで描いて、RGB の画像にする(欠いた角は、透明の代わりに黒の上に重ねた色)。
 fn bar(painter: &mut TextPainter, title: &str, width: i32, active: bool, look: TitleLook) -> Image {
-    let pixels = paint_title_bar(painter, title, width, active, look);
+    let icons = IconCache::new(TITLE_ICON_SIZE as u32, Vec::new());
+    let pixels = paint_title_bar(painter, title, width, active, look, icons.default_icon());
     Image::from_bgrx(width as usize, TITLE_BAR_HEIGHT as usize, &pixels)
+}
+
+/// テスト用のアイコンの置き場(データの置き場の形。`tools/make-test-icons.py` が作る)。
+fn test_icons() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../seinas-icons/tests/data/share")
 }
 
 /// 切り替えの一覧を、大きさ `output` の出力に置いたときの絵にする(一覧の大きさの画像)。
@@ -94,7 +100,7 @@ fn main() {
         Tolerance::EXACT,
         bar(&mut no_fonts, "zeyes", 200, true, close_only(true)),
     );
-    // close ボタン(24 px)より狭い幅。
+    // close ボタン(44 px)より狭い幅。
     run.image(
         "c7-narrower-than-close-button",
         Tolerance::EXACT,
@@ -142,6 +148,23 @@ fn main() {
                 unresponsive: false,
             },
         ),
+    );
+
+    // C12: テスト用のアイコンの置き場から読んだ、アプリのアイコン(フォントの要らないもの)。
+    let mut icons = IconCache::new(TITLE_ICON_SIZE as u32, vec![test_icons()]);
+    icons.load("seinas.test.files");
+    let pixels = paint_title_bar(
+        &mut no_fonts,
+        "",
+        200,
+        true,
+        close_only(false),
+        icons.get("seinas.test.files"),
+    );
+    run.image(
+        "c12-app-icon",
+        Tolerance::EXACT,
+        Image::from_bgrx(200, TITLE_BAR_HEIGHT as usize, &pixels),
     );
 
     // C11: 応答なしのウィンドウ(フォントの要るもの)。長いタイトルでも、後ろの「(応答なし)」は切らずに出し、

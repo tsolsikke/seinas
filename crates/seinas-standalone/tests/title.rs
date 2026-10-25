@@ -14,8 +14,8 @@ mod common;
 use std::path::Path;
 
 use common::{
-    bar_color, title_ink, Compositor, Shot, ACTIVE_BAR, BACKGROUND, BAR, BUTTONS, INACTIVE_BAR,
-    TITLE_PADDING,
+    bar_color, title_ink, upper_bar_color, upper_title_ink, Compositor, Shot, ACTIVE_BAR, AROUND,
+    BACKGROUND, BAR, BUTTONS, FRAME_RADIUS, INACTIVE_BAR, TITLE_LEFT, TITLE_PADDING,
 };
 
 /// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
@@ -28,20 +28,21 @@ const STEP: usize = 32;
 /// 外枠の左上が(`x0`, `y0`)にあるテスト用のウィンドウが、タイトルバーの色 `bar` で描かれているか。
 fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
     bar_color(shot, x0, y0, WINDOW_WIDTH) == Some(bar)
-        // タイトルバーの左の端も、タイトルバーの色。
-        && shot.pixel(x0, y0) == bar
-        // コンテンツは、タイトルバーのすぐ下から始まる。
+        // タイトルバーの左の端も(丸く欠いた角の下で)、タイトルバーの色。
+        && shot.pixel(x0, y0 + FRAME_RADIUS) == bar
+        // コンテンツは、タイトルバーのすぐ下から始まる(下の角は丸く欠いてあるので、その上の行を見る)。
         && shot.pixel(x0, y0 + BAR) == ORANGE
-        && shot.pixel(x0 + WINDOW_WIDTH - 1, y0 + BAR + WINDOW_HEIGHT - 1) == ORANGE
+        && shot.pixel(x0 + WINDOW_WIDTH - 1, y0 + BAR + WINDOW_HEIGHT - 1 - FRAME_RADIUS) == ORANGE
 }
 
 /// タイトルに使える範囲の右の端。右の端のボタン(最大化と閉じる)と、その手前の空きを除く。
 const TITLE_END: usize = WINDOW_WIDTH - BUTTONS - TITLE_PADDING;
 
-/// タイトルの文字のピクセルが、置かれてよい範囲(左の空きから、閉じるボタンの手前の空きまで)に収まっているか。
+/// タイトルの文字のピクセルが、置かれてよい範囲(アイコンの右の空きから、閉じるボタンの手前の空きまで)に収まって
+/// いるか。
 fn ink_stays_inside(ink: &[(usize, usize)]) -> bool {
     ink.iter()
-        .all(|&(x, _)| (TITLE_PADDING..TITLE_END).contains(&x))
+        .all(|&(x, _)| (TITLE_LEFT..TITLE_END).contains(&x))
 }
 
 /// 文字のピクセルの位置を、いちばん左の列を0にそろえる(置かれた位置によらず、形を比べるため)。
@@ -69,12 +70,12 @@ fn the_title_is_drawn_on_a_bar_above_the_window() {
     // 左に寄せてある。「zeyes」は短いので、タイトルバーの右の半分には何も無い。
     let left = ink.iter().map(|&(x, _)| x).min().unwrap();
     let right = ink.iter().map(|&(x, _)| x).max().unwrap();
-    assert!((TITLE_PADDING..TITLE_PADDING + 3).contains(&left), "{left}");
+    assert!((TITLE_LEFT..TITLE_LEFT + 3).contains(&left), "{left}");
     assert!(right < WINDOW_WIDTH / 2, "{right}");
     // タイトルバーの外(ウィンドウの右と、コンテンツの下)は、背景のまま。
     let shot = seinas.shot();
-    assert_eq!(shot.pixel(WINDOW_WIDTH, 2), BACKGROUND);
-    assert_eq!(shot.pixel(2, BAR + WINDOW_HEIGHT), BACKGROUND);
+    assert_eq!(shot.pixel(WINDOW_WIDTH + AROUND, 2), BACKGROUND);
+    assert_eq!(shot.pixel(2, BAR + WINDOW_HEIGHT + AROUND), BACKGROUND);
 
     // タイトルを変えると、描き直される。
     client.send_line("title 別の題名");
@@ -105,11 +106,20 @@ fn the_bar_of_the_activated_window_has_its_own_color() {
     let second = seinas.connect_test_client(&["window", "--title", "second"]);
     let shot = seinas.wait_for_shot("the second window activated instead of the first", |shot| {
         shows_window(shot, STEP, STEP, ACTIVE_BAR)
-            && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
+            && upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == INACTIVE_BAR
             && !title_ink(shot, STEP, STEP, WINDOW_WIDTH).is_empty()
     });
     assert_ne!(ACTIVE_BAR, INACTIVE_BAR);
-    assert_eq!(shape(&title_ink(&shot, 0, 0, WINDOW_WIDTH)), shape(&alone));
+    // 1 つ目のタイトルバーの下のほうは、2 つ目(と、その枠と影)に隠れるので、隠れない上の行で、文字の形を比べる。
+    let uncovered = STEP - AROUND;
+    let behind = upper_title_ink(&shot, 0, 0, WINDOW_WIDTH, uncovered);
+    let alone_above: Vec<(usize, usize)> = alone
+        .iter()
+        .copied()
+        .filter(|&(_, y)| y < uncovered)
+        .collect();
+    assert!(!behind.is_empty());
+    assert_eq!(shape(&behind), shape(&alone_above));
 
     // 2つ目が去ると、1つ目が、また activated の色に戻る。
     drop(second);
@@ -227,7 +237,7 @@ fn without_fonts_the_bar_is_drawn_without_a_title() {
     let _second = seinas.connect_test_client(&["window", "--title", "second"]);
     seinas.wait_for_screen("two bars", |shot| {
         shows_window(shot, STEP, STEP, ACTIVE_BAR)
-            && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
+            && upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == INACTIVE_BAR
     });
     assert!(
         seinas.process.is_running(),
@@ -282,7 +292,7 @@ fn the_client_is_told_that_the_server_draws_the_decoration() {
     // 最初のconfigureで伝える大きさは、画面(640x480)からタイトルバーの高さを引いたもの。
     assert_eq!(
         client.next_line("the first configure"),
-        "window: configure 640x456 [activated]"
+        format!("window: configure 640x{} [activated]", 480 - BAR)
     );
     // xdg-decorationで尋ねると、サーバーの側で描くと答える。
     client.wait_for_line("window: decoration server-side");

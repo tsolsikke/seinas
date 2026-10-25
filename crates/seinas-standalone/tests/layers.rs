@@ -9,7 +9,9 @@
 
 mod common;
 
-use common::{bar_color, wait_for, Compositor, ACTIVE_BAR, BAR, HEIGHT, INACTIVE_BAR, WIDTH};
+use common::{
+    bar_color, upper_bar_color, wait_for, Compositor, ACTIVE_BAR, BAR, HEIGHT, INACTIVE_BAR, WIDTH,
+};
 
 /// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
@@ -176,7 +178,7 @@ fn a_press_on_a_top_layer_does_not_raise_the_window_below() {
     ]);
     panel.wait_for_line("layer: drawn");
     seinas.wait_for_screen("the panel over the back window", |shot| {
-        shot.pixel(10, 10) == PANEL && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
+        shot.pixel(10, 10) == PANEL && upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == INACTIVE_BAR
     });
 
     // パネルの上(奥のウィンドウのタイトルバーの上でもある)を押しても、奥のウィンドウは raise されない。
@@ -185,12 +187,12 @@ fn a_press_on_a_top_layer_does_not_raise_the_window_below() {
     seinas.pointer("release");
     // パネルの外のタイトルバーを押すと、raise される。それが見えるまで待つ間に、上の押した結果も描かれている。
     let shot = seinas.shot();
-    assert_eq!(bar_color(&shot, 0, 0, WINDOW_WIDTH), Some(INACTIVE_BAR));
+    assert_eq!(upper_bar_color(&shot, 0, 0, WINDOW_WIDTH), INACTIVE_BAR);
     seinas.pointer("motion 100 10");
     seinas.pointer("press");
     seinas.pointer("release");
     seinas.wait_for_screen("the back window raised", |shot| {
-        bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR) && shot.pixel(10, 10) == PANEL
+        upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == ACTIVE_BAR && shot.pixel(10, 10) == PANEL
     });
     assert!(seinas.process.is_running());
 }

@@ -696,6 +696,7 @@ version = "0.3.0"
 dependencies = [
  "seinas-config",
  "seinas-golden",
+ "seinas-icons",
  "seinas-text",
  "seinas-theme",
  "smithay",

@@ -33,19 +33,35 @@ pub const SKIN: [u8; 3] = [0x6a, 0xb0, 0x5c];
 pub const SCLERA: [u8; 3] = [0xff, 0xff, 0xff];
 pub const OUTLINE: [u8; 3] = [0x10, 0x10, 0x10];
 pub const PUPIL: [u8; 3] = [0x14, 0x0e, 0x0a];
+// タイトルバーの大きさと色は、テーマのトークン(`seinas-theme` の `title_bar`)から読む。
 /// タイトルバー。activated なウィンドウのものと、そうでないもの。
-pub const ACTIVE_BAR: [u8; 3] = [0x2f, 0x6f, 0xb5];
-pub const INACTIVE_BAR: [u8; 3] = [0x4a, 0x50, 0x5c];
+pub const ACTIVE_BAR: [u8; 3] = seinas_theme::title_bar::ACTIVE_BAR;
+pub const INACTIVE_BAR: [u8; 3] = seinas_theme::title_bar::INACTIVE_BAR;
 /// タイトルバーの高さ。ウィンドウのコンテンツは、この下に置かれる。
-pub const BAR: usize = 24;
-/// タイトルバーの左右の端から、タイトルまでの空き。
-pub const TITLE_PADDING: usize = 8;
-/// 閉じるボタンの大きさ。タイトルバーの右の端に、正方形で置かれる。
-pub const CLOSE_BUTTON: usize = 24;
+pub const BAR: usize = seinas_theme::title_bar::HEIGHT as usize;
+/// タイトルバーの左の端からアプリのアイコンまでの空き。右の端のボタンの手前にも、同じだけ空ける。
+pub const TITLE_PADDING: usize = seinas_theme::title_bar::PADDING as usize;
+/// タイトルバーの左の端から、アイコンの右の端まで。
+pub const TITLE_ICON_RIGHT: usize = TITLE_PADDING + seinas_theme::title_bar::ICON_SIZE as usize;
+/// タイトルバーの左の端から、タイトルの文字まで(アイコンの右の空きの後)。
+pub const TITLE_LEFT: usize = TITLE_ICON_RIGHT + seinas_theme::title_bar::ICON_GAP as usize;
+/// 閉じるボタンの幅。タイトルバーの右の端に、タイトルバーと同じ高さで置かれる。
+pub const CLOSE_BUTTON: usize = seinas_theme::title_bar::BUTTON_WIDTH as usize;
 /// タイトルバーの右の端のボタンの幅(シェルの部品が無いときの、最大化と閉じるの 2 つ)。
 pub const BUTTONS: usize = 2 * CLOSE_BUTTON;
+/// 枠の線の色(activated のウィンドウと、そうでないもの)。
+pub const ACTIVE_BORDER: [u8; 3] = seinas_theme::frame::ACTIVE_BORDER;
+pub const INACTIVE_BORDER: [u8; 3] = seinas_theme::frame::INACTIVE_BORDER;
 /// ポインターを乗せたときの、閉じるボタンの地の色。
-pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
+pub const HOT_CLOSE_BUTTON: [u8; 3] = seinas_theme::title_bar::HOT_CLOSE_BUTTON;
+/// 外枠の角の丸み(この内側の行から、タイトルバーの右の端の色を見る)。
+pub const FRAME_RADIUS: usize =
+    (seinas_theme::frame::CORNER_RADIUS - seinas_theme::frame::BORDER_WIDTH) as usize;
+/// 外枠から、これだけ(ピクセル)離れた所は、枠と影の外(枠 1 と、影のぼけの幅 12 と、影の下へのずれ 2 より遠い)。
+pub const AROUND: usize = (seinas_theme::frame::BORDER_WIDTH
+    + seinas_theme::frame::SHADOW_BLUR
+    + seinas_theme::frame::SHADOW_OFFSET_Y
+    + 1) as usize;
 
 /// テストが起こした子のプロセスに付ける環境変数。値は、テストのプロセスの PID。残ったプロセスを
 /// `tools/check-leftovers.sh` が見分けるのに使う。
@@ -256,21 +272,46 @@ pub fn shows_zeyes(shot: &Shot) -> bool {
 
 /// 外枠の左上が(`x0`, `y0`)、幅が `width` のウィンドウの、タイトルバーの色。
 ///
-/// タイトルバーの右の端(閉じるボタンの隅。タイトルの文字も「×」の印も来ない所)の、上と下のピクセルを見る。
-/// 色がそろっていなければNone。ポインターが閉じるボタンの上にあるときは、ボタンの地の色になる。
+/// タイトルバーの右の端(閉じるボタンの隅。タイトルの文字も「×」の印も来ない所)の、角の丸みのすぐ下の行と、
+/// いちばん下の行のピクセルを見る(上の角は丸く欠いてあり、後ろが見える)。色がそろっていなければNone。ポインターが
+/// 閉じるボタンの上にあるときは、ボタンの地の色になる。
 pub fn bar_color(shot: &Shot, x0: usize, y0: usize, width: usize) -> Option<[u8; 3]> {
-    let top = shot.pixel(x0 + width - 2, y0);
+    let top = shot.pixel(x0 + width - 2, y0 + FRAME_RADIUS);
     (top == shot.pixel(x0 + width - 2, y0 + BAR - 1)).then_some(top)
 }
 
 /// 外枠の左上が(`x0`, `y0`)、幅が `width` のウィンドウのタイトルバーの中で、タイトルバーの色でないピクセル(タイトルの文字)の位置。
-/// 位置は、タイトルバーの左上を原点にした(x, y)。右の端のボタン(最大化と閉じる)は、見ない。
+/// 位置は、タイトルバーの左上を原点にした(x, y)。左の端のアプリのアイコン(と、その左の丸く欠いた角)と、右の端の
+/// ボタン(最大化と閉じる)は、見ない。
 pub fn title_ink(shot: &Shot, x0: usize, y0: usize, width: usize) -> Vec<(usize, usize)> {
     let Some(bar) = bar_color(shot, x0, y0, width) else {
         return Vec::new();
     };
     (0..BAR)
-        .flat_map(|y| (0..width - BUTTONS).map(move |x| (x, y)))
+        .flat_map(|y| (TITLE_ICON_RIGHT..width - BUTTONS).map(move |x| (x, y)))
+        .filter(|&(x, y)| shot.pixel(x0 + x, y0 + y) != bar)
+        .collect()
+}
+
+/// 外枠の左上が(`x0`, `y0`)、幅が `width` のウィンドウの、タイトルバーの上のほうの色(右の端の、角の丸みのすぐ下の
+/// 行)。カスケードで手前にずれて重なったウィンドウ(32 ずらし)は、奥のタイトルバー(高さ 36)の下のほうを隠すので、
+/// 奥のウィンドウはこれで見る。
+pub fn upper_bar_color(shot: &Shot, x0: usize, y0: usize, width: usize) -> [u8; 3] {
+    shot.pixel(x0 + width - 2, y0 + FRAME_RADIUS)
+}
+
+/// [`title_ink`] と同じだが、タイトルバーの上から `rows` 行だけを見る。タイトルバーの色は [`upper_bar_color`] で
+/// 決める(下のほうが手前のウィンドウに隠れた、奥のウィンドウのため)。
+pub fn upper_title_ink(
+    shot: &Shot,
+    x0: usize,
+    y0: usize,
+    width: usize,
+    rows: usize,
+) -> Vec<(usize, usize)> {
+    let bar = upper_bar_color(shot, x0, y0, width);
+    (0..rows.min(BAR))
+        .flat_map(|y| (TITLE_ICON_RIGHT..width - BUTTONS).map(move |x| (x, y)))
         .filter(|&(x, y)| shot.pixel(x0 + x, y0 + y) != bar)
         .collect()
 }
@@ -447,6 +488,9 @@ impl Compositor {
                 // 外から入った指定に左右されないようにする(利用者のフォントの設定のファイルも読まない)。
                 .env_remove("SEINAS_FONTS")
                 .env("XDG_CONFIG_HOME", &dir)
+                // タイトルバーのアプリのアイコンは、テスト用のアイコンの置き場だけから探す。
+                .env("XDG_DATA_HOME", dir.join("no-data"))
+                .env("XDG_DATA_DIRS", test_icons())
                 .envs(env.iter().copied())
                 .stderr(log)
                 .spawn()
@@ -636,6 +680,8 @@ impl Compositor {
                 .env("WAYLAND_DISPLAY", &self.socket)
                 .env("XDG_RUNTIME_DIR", &self.dir)
                 .env("XDG_CONFIG_HOME", &self.dir)
+                .env("XDG_DATA_HOME", self.dir.join("no-data"))
+                .env("XDG_DATA_DIRS", test_icons())
                 .env_remove("SEINAS_FONTS")
                 .stderr(log)
                 .spawn()

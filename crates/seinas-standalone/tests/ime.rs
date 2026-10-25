@@ -13,7 +13,7 @@
 
 mod common;
 
-use common::{Compositor, Shot, TestClient};
+use common::{Compositor, Shot, TestClient, BAR};
 
 /// evdev のキーの番号。
 const KEY_X: u32 = 45;
@@ -609,29 +609,30 @@ fn popup_at(shot: &Shot, x: usize, y: usize) -> bool {
 #[test]
 fn the_candidate_window_follows_the_cursor_inside_the_output() {
     let seinas = Compositor::start_with_input("il");
-    // 1 つ目のウィンドウの外枠は (0, 0)、コンテンツは (0, 24) から。
+    // 1 つ目のウィンドウの外枠は (0, 0)、コンテンツは (0, BAR) から。
     let mut window = open_text_window_with(&seinas, &["--size", "640x150"]);
     let ime = connect_ime_to_window_with(&seinas, &["--popup", "40x30"]);
-    // カーソルの矩形 (10, 20, 2, 16) の下:(10, 24 + 20 + 16)。
+    // カーソルの矩形 (10, 20, 2, 16) の下:(10, BAR + 20 + 16)。
     seinas.wait_for_screen("the candidate window below the cursor", |shot| {
-        popup_at(shot, 10, 60) && shot.pixel(10, 59) == ORANGE
+        popup_at(shot, 10, BAR + 36) && shot.pixel(10, BAR + 35) == ORANGE
     });
     // 右の端:カーソルは x = 620 だが、640 - 40 = 600 へ寄せる。
     window.send_line("cursor 620 20 2 16");
     ime.wait_for_line("ime: popup rectangle 620 20 2 16");
     seinas.wait_for_screen("the candidate window at the right edge", |shot| {
-        popup_at(shot, 600, 60) && shot.pixel(599, 60) == ORANGE
+        popup_at(shot, 600, BAR + 36) && shot.pixel(599, BAR + 36) == ORANGE
     });
 }
 
 #[test]
 fn the_candidate_window_goes_above_the_cursor_at_the_bottom_edge() {
     let seinas = Compositor::start_with_input("im");
-    // コンテンツは y = 24 から 474 まで。カーソルの矩形の下の端は 24 + 440 + 8 = 472 で、下には 30 が入らない。
+    // コンテンツは y = BAR(36)から。カーソルの矩形の下の端は 36 + 440 + 8 = 484 で、下には 30 が入らない
+    // (出力の高さは 480)。
     let _window = open_text_window_with(&seinas, &["--size", "200x450", "--cursor", "10,440,2,8"]);
     let _ime = connect_ime_to_window_with(&seinas, &["--popup", "40x30"]);
     seinas.wait_for_screen("the candidate window above the cursor", |shot| {
-        popup_at(shot, 10, 464 - 30) && shot.pixel(10, 464) == ORANGE
+        popup_at(shot, 10, BAR + 440 - 30) && shot.pixel(10, BAR + 440) == ORANGE
     });
 }
 
@@ -640,14 +641,14 @@ fn the_candidate_window_stays_inside_a_resized_output() {
     let mut seinas = Compositor::start_with_input("in");
     let _window = open_text_window_with(&seinas, &["--cursor", "10,100,2,16"]);
     let _ime = connect_ime_to_window_with(&seinas, &["--popup", "40x30"]);
-    // カーソルの矩形は画面の上で (10, 124) から 16。下に置くと y = 140。
+    // カーソルの矩形は画面の上で (10, BAR + 100) = (10, 136) から 16。下に置くと y = 152。
     seinas.wait_for_screen("the candidate window below the cursor", |shot| {
-        popup_at(shot, 10, 140)
+        popup_at(shot, 10, BAR + 116)
     });
-    // 出力の高さを 160 にすると、下には入らない(140 + 30 > 160)ので、上(124 - 30)に置く。
+    // 出力の高さを 160 にすると、下には入らない(152 + 30 > 160)ので、上(136 - 30)に置く。
     seinas.pointer("output 400x160");
     seinas.wait_for_screen("the candidate window above the cursor", |shot| {
-        shot.height == 160 && popup_at(shot, 10, 94) && shot.pixel(10, 140) == ORANGE
+        shot.height == 160 && popup_at(shot, 10, BAR + 70) && shot.pixel(10, BAR + 116) == ORANGE
     });
 }
 
@@ -656,13 +657,13 @@ fn the_candidate_window_hides_when_the_focus_leaves() {
     let seinas = Compositor::start_with_input("io");
     let first = open_text_window_with(&seinas, &[]);
     let ime = connect_ime_to_window_with(&seinas, &["--popup", "40x30"]);
-    seinas.wait_for_screen("the candidate window", |shot| popup_at(shot, 10, 60));
+    seinas.wait_for_screen("the candidate window", |shot| popup_at(shot, 10, BAR + 36));
     // 2 つ目のウィンドウ(外枠は (32, 32))にフォーカスが移ると、IME は deactivate になり、候補ウィンドウは消える。
-    // (10, 60) は 2 つ目に隠れない所なので、1 つ目のコンテンツが見える。
+    // (10, BAR + 36) は 2 つ目(と、その枠と影)に隠れない所なので、1 つ目のコンテンツが見える。
     let _second = seinas.connect_test_client(&["window", "--keyboard"]);
     ime.wait_for_line("ime: deactivate");
     seinas.wait_for_screen("the candidate window hidden", |shot| {
-        shot.pixel(10, 60) == ORANGE && shot.pixel(49, 89) != PURPLE
+        shot.pixel(10, BAR + 36) == ORANGE && shot.pixel(49, BAR + 65) != PURPLE
     });
     drop(first);
 }

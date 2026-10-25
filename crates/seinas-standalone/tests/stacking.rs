@@ -10,8 +10,8 @@
 mod common;
 
 use common::{
-    bar_color, shows_zeyes_at, Compositor, Shot, ACTIVE_BAR, BACKGROUND, BAR, INACTIVE_BAR, SKIN,
-    ZEYES_HEIGHT, ZEYES_WIDTH,
+    bar_color, shows_zeyes_at, Compositor, Shot, ACTIVE_BAR, AROUND, BACKGROUND, BAR, FRAME_RADIUS,
+    INACTIVE_BAR, SKIN, ZEYES_HEIGHT, ZEYES_WIDTH,
 };
 
 /// 2つ目のzeyes-minの、目のまわりの色(青)。
@@ -19,8 +19,11 @@ const BLUE: [u8; 3] = [0x40, 0x60, 0xd0];
 /// スロットを1つずらす量。
 const STEP: usize = 32;
 
-/// 青のウィンドウ(スロット1)の、コンテンツの右下の端。
-const BLUE_END: (usize, usize) = (STEP + ZEYES_WIDTH - 1, STEP + BAR + ZEYES_HEIGHT - 1);
+/// 青のウィンドウ(スロット1)の、コンテンツの右の端の、下の角の丸みのすぐ上の点(角は丸く欠いてある)。
+const BLUE_END: (usize, usize) = (
+    STEP + ZEYES_WIDTH - 1,
+    STEP + BAR + ZEYES_HEIGHT - 1 - FRAME_RADIUS,
+);
 
 /// スロット0(左上)にある緑のウィンドウが、全体が見える形で、activated なものとして描かれているか。
 fn green_in_front(shot: &Shot) -> bool {
@@ -35,12 +38,14 @@ fn blue_in_front(shot: &Shot) -> bool {
 }
 
 /// スロット1の青のウィンドウの下から、スロット0の緑のウィンドウの左と上の端がのぞいているか。
-/// 上の端には、activated でない色のタイトルバーが、全部見えている。
+/// 上の端には、activated でない色のタイトルバーの上のほう(青の枠と影より上)が見えている。左の端には、タイトルバーの
+/// 下の端までと、コンテンツが見えている。
 fn green_peeks_out_behind_blue(shot: &Shot) -> bool {
     shot.pixel(2, BAR + 2) == SKIN
         && shot.pixel(2, BAR + ZEYES_HEIGHT - 3) == SKIN
-        && shot.pixel(ZEYES_WIDTH - 3, BAR + 2) == SKIN
-        && bar_color(shot, 0, 0, ZEYES_WIDTH) == Some(INACTIVE_BAR)
+        && shot.pixel(ZEYES_WIDTH - 3, FRAME_RADIUS) == INACTIVE_BAR
+        && shot.pixel(ZEYES_WIDTH / 2, FRAME_RADIUS) == INACTIVE_BAR
+        && shot.pixel(3, BAR - 1) == INACTIVE_BAR
 }
 
 #[test]
@@ -50,7 +55,7 @@ fn a_new_window_goes_in_front_and_is_placed_with_an_offset() {
     // 1つ目(緑)は、スロット0(左上)に入る。
     let green = seinas.connect_zeyes();
     seinas.wait_for_screen("the green window at the top left", |shot| {
-        green_in_front(shot) && shot.pixel(ZEYES_WIDTH + 2, 100) == BACKGROUND
+        green_in_front(shot) && shot.pixel(ZEYES_WIDTH + AROUND, 100) == BACKGROUND
     });
 
     // 2つ目(青)は、スロット1に入り、緑の手前に重なる。緑は、左と上の端だけが見える。
@@ -58,9 +63,9 @@ fn a_new_window_goes_in_front_and_is_placed_with_an_offset() {
     seinas.wait_for_screen("the blue window in front, offset by 32", |shot| {
         blue_in_front(shot)
             && green_peeks_out_behind_blue(shot)
-            // 青のウィンドウの右下の端と、その外。
+            // 青のウィンドウの右の端と、その外(枠と影の外)。
             && shot.pixel(BLUE_END.0, BLUE_END.1) == BLUE
-            && shot.pixel(BLUE_END.0 + 1, BLUE_END.1 + 1) == BACKGROUND
+            && shot.pixel(BLUE_END.0 + AROUND, BLUE_END.1 + FRAME_RADIUS + AROUND) == BACKGROUND
     });
 
     // 手前の青が去ると、その下の緑が見える。

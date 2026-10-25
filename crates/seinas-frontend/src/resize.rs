@@ -4,7 +4,7 @@
 //! 決まりの説明は `docs/window-placement.md` にある。
 
 use crate::{
-    decoration::TITLE_BAR_HEIGHT,
+    decoration::{in_cut_corner, TITLE_BAR_HEIGHT},
     geometry::{Point, PointF, Rect, Size},
 };
 
@@ -52,7 +52,8 @@ impl Edges {
 
 /// 外枠が `outer` のウィンドウで、点 `point` がサイズ変更の境界の上にあれば、動かす辺。
 ///
-/// 境界は、外枠の外側の [`RESIZE_BORDER`] の幅。外枠の中と、境界の外はNone。
+/// 境界は、外枠の外側の [`RESIZE_BORDER`] の幅と、外枠の角を欠いた所(`decoration::in_cut_corner`。角の 2 つの辺を
+/// 動かす)。そのほかの外枠の中と、境界の外はNone。
 pub fn edges_at(outer: Rect, point: PointF) -> Option<Edges> {
     let grown = Rect::new(
         Point::new(outer.loc.x - RESIZE_BORDER, outer.loc.y - RESIZE_BORDER),
@@ -61,7 +62,7 @@ pub fn edges_at(outer: Rect, point: PointF) -> Option<Edges> {
             outer.size.h + 2 * RESIZE_BORDER,
         ),
     );
-    if !grown.contains(point) || outer.contains(point) {
+    if !grown.contains(point) || (outer.contains(point) && !in_cut_corner(outer, point)) {
         return None;
     }
     let (left, top) = (outer.loc.x as f64, outer.loc.y as f64);
@@ -70,11 +71,14 @@ pub fn edges_at(outer: Rect, point: PointF) -> Option<Edges> {
         (outer.loc.y + outer.size.h) as f64,
     );
     let corner = CORNER_LENGTH as f64;
+    // 角を欠いた所は、外枠の中だが、近い角の 2 つの辺を動かす。
+    let cut = outer.contains(point);
+    let middle = |a: f64, low: f64, high: f64| a < (low + high) / 2.0;
     let mut edges = Edges::new(
-        point.y < top,
-        point.y >= bottom,
-        point.x < left,
-        point.x >= right,
+        point.y < top || (cut && middle(point.y, top, bottom)),
+        point.y >= bottom || (cut && !middle(point.y, top, bottom)),
+        point.x < left || (cut && middle(point.x, left, right)),
+        point.x >= right || (cut && !middle(point.x, left, right)),
     );
     // 角の近くは、もう 1 つの辺も動かす。
     if edges.left || edges.right {
@@ -175,7 +179,7 @@ mod tests {
         size: Size { w: 640, h: 480 },
     };
 
-    /// 外枠の左上が (100, 100)、コンテンツが 200x150(外枠は 200x174)のウィンドウ。
+    /// 外枠の左上が (100, 100)、コンテンツが 200x150(外枠は 200x186)のウィンドウ。
     fn outer() -> Rect {
         Rect::new(Point::new(100, 100), Size::new(200, 150 + TITLE_BAR_HEIGHT))
     }
@@ -192,31 +196,37 @@ mod tests {
     #[test]
     fn the_band_outside_the_frame_has_four_sides_and_four_corners() {
         let at = |x: f64, y: f64| edges_at(outer(), (x, y).into());
-        // 外枠は x 100〜300、y 100〜274。境界は、その外側の 8 ピクセル。
+        // 外枠は x 100〜300、y 100〜286。境界は、その外側の 8 ピクセル。
         assert_eq!(at(150.0, 92.0), Some(Edges::TOP));
         assert_eq!(at(150.0, 99.9), Some(Edges::TOP));
-        assert_eq!(at(150.0, 274.0), Some(Edges::BOTTOM));
-        assert_eq!(at(150.0, 281.9), Some(Edges::BOTTOM));
+        assert_eq!(at(150.0, 286.0), Some(Edges::BOTTOM));
+        assert_eq!(at(150.0, 293.9), Some(Edges::BOTTOM));
         assert_eq!(at(92.0, 200.0), Some(Edges::LEFT));
         assert_eq!(at(300.0, 200.0), Some(Edges::RIGHT));
         assert_eq!(at(307.9, 200.0), Some(Edges::RIGHT));
         // 本当の角。
         assert_eq!(at(95.0, 95.0), Some(Edges::TOP_LEFT));
         assert_eq!(at(305.0, 95.0), Some(Edges::TOP_RIGHT));
-        assert_eq!(at(95.0, 278.0), Some(Edges::BOTTOM_LEFT));
-        assert_eq!(at(305.0, 278.0), Some(Edges::BOTTOM_RIGHT));
+        assert_eq!(at(95.0, 290.0), Some(Edges::BOTTOM_LEFT));
+        assert_eq!(at(305.0, 290.0), Some(Edges::BOTTOM_RIGHT));
         // 角から 16 ピクセルまでは、角として扱う。
         assert_eq!(at(95.0, 115.9), Some(Edges::TOP_LEFT));
         assert_eq!(at(95.0, 116.0), Some(Edges::LEFT));
         assert_eq!(at(284.0, 95.0), Some(Edges::TOP_RIGHT));
         assert_eq!(at(283.9, 95.0), Some(Edges::TOP));
-        assert_eq!(at(305.0, 258.0), Some(Edges::BOTTOM_RIGHT));
-        assert_eq!(at(115.9, 278.0), Some(Edges::BOTTOM_LEFT));
-        // 外枠の中と、境界の外は、当たらない。
-        assert_eq!(at(100.0, 100.0), None);
-        assert_eq!(at(299.9, 273.9), None);
+        assert_eq!(at(305.0, 270.0), Some(Edges::BOTTOM_RIGHT));
+        assert_eq!(at(115.9, 290.0), Some(Edges::BOTTOM_LEFT));
+        // 外枠の角を欠いた所(丸み 7 の外)は、その角。
+        assert_eq!(at(100.5, 100.5), Some(Edges::TOP_LEFT));
+        assert_eq!(at(299.5, 100.5), Some(Edges::TOP_RIGHT));
+        assert_eq!(at(100.5, 285.5), Some(Edges::BOTTOM_LEFT));
+        assert_eq!(at(299.5, 285.5), Some(Edges::BOTTOM_RIGHT));
+        // そのほかの外枠の中と、境界の外は、当たらない。
+        assert_eq!(at(103.0, 103.0), None);
+        assert_eq!(at(100.0, 110.0), None);
+        assert_eq!(at(299.9, 280.0), None);
         assert_eq!(at(91.9, 200.0), None);
-        assert_eq!(at(150.0, 282.0), None);
+        assert_eq!(at(150.0, 294.0), None);
         assert_eq!(at(308.0, 200.0), None);
     }
 
@@ -332,8 +342,8 @@ mod tests {
 
     #[test]
     fn the_top_edge_stops_at_the_top_of_the_usable_area() {
-        // 使える範囲の上の端が 40(上にパネルがある)。下の端(274)は動かないので、コンテンツの高さは
-        // 274 - 24 - 40 = 210 まで。
+        // 使える範囲の上の端が 40(上にパネルがある)。下の端(286)は動かないので、コンテンツの高さは
+        // 286 - 36 - 40 = 210 まで。
         let area = Rect::new(Point::new(0, 40), Size::new(640, 440));
         let start = start(Edges::TOP, (200.0, 96.0));
         let now = resized_content(start, (200.0, 0.0).into(), SizeLimits::default(), area);

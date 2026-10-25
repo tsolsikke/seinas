@@ -16,6 +16,8 @@ seinas-text = { path = "../seinas-text" }
 seinas-config = { path = "../seinas-config" }
 # 見た目の値(テーマのトークン)。
 seinas-theme = { path = "../seinas-theme" }
+# アプリのアイコン(タイトルバーの左)と、図形の描き方。
+seinas-icons = { path = "../seinas-icons" }
 tracing = { workspace = true }
 
 [dev-dependencies]

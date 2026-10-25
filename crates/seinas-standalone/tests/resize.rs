@@ -12,7 +12,9 @@
 
 mod common;
 
-use common::{bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, BAR};
+use common::{
+    bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, AROUND, BACKGROUND, BAR, FRAME_RADIUS,
+};
 
 /// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
@@ -22,13 +24,14 @@ const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 const STEP: usize = 32;
 
 /// 外枠の左上が (`x0`, `y0`)、コンテンツが `w` × `h` のウィンドウが、activated のタイトルバーで描かれているか。
-/// 右と下のすぐ外が、背景であることも見る。
+/// 右と下の外(枠と影の外)が、背景であることも見る。
 fn shows_window(shot: &Shot, (x0, y0): (usize, usize), (w, h): (usize, usize)) -> bool {
     bar_color(shot, x0, y0, w) == Some(ACTIVE_BAR)
         && shot.pixel(x0, y0 + BAR) == ORANGE
-        && shot.pixel(x0 + w - 1, y0 + BAR + h - 1) == ORANGE
-        && shot.pixel(x0 + w, y0 + BAR + h / 2) == BACKGROUND
-        && shot.pixel(x0 + w / 2, y0 + BAR + h) == BACKGROUND
+        // 下の角は丸く欠いてあるので、右の端は、その上の行で見る。
+        && shot.pixel(x0 + w - 1, y0 + BAR + h - 1 - FRAME_RADIUS) == ORANGE
+        && shot.pixel(x0 + w + AROUND, y0 + BAR + h / 2) == BACKGROUND
+        && shot.pixel(x0 + w / 2, y0 + BAR + h + AROUND) == BACKGROUND
 }
 
 /// (`from`)で左のボタンを押し、(`to`)まで動かして、離す。

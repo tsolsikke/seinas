@@ -8,7 +8,9 @@
 use crate::geometry::{Point, PointF, Rect, Size};
 
 use crate::{
-    decoration::{clamp_outer_location, TitleButton, TitleButtons, TITLE_BAR_HEIGHT},
+    decoration::{
+        clamp_outer_location, frame_contains, TitleButton, TitleButtons, TITLE_BAR_HEIGHT,
+    },
     resize::{edges_at, resized_content, Edges, ResizeStart, SizeLimits},
     stack::{Stack, WindowId},
 };
@@ -41,9 +43,15 @@ pub enum Part {
 }
 
 /// 外枠の左上が `location`、外枠の大きさが `outer`、タイトルバーのボタンが `buttons` のウィンドウの中で、
-/// 点 `point` がどの部分か。ウィンドウの外ならNone。
-pub fn part_at(location: Point, outer: Size, buttons: TitleButtons, point: PointF) -> Option<Part> {
-    if !Rect::new(location, outer).contains(point) {
+/// 点 `point` がどの部分か。ウィンドウの外ならNone。`rounded`(最大化していない)なら、角を欠いた所もウィンドウの外。
+pub fn part_at(
+    location: Point,
+    outer: Size,
+    buttons: TitleButtons,
+    rounded: bool,
+    point: PointF,
+) -> Option<Part> {
+    if !frame_contains(Rect::new(location, outer), rounded, point) {
         return None;
     }
     if point.y >= (location.y + TITLE_BAR_HEIGHT) as f64 {
@@ -87,7 +95,7 @@ fn target_at<T>(
         }
         let outer = measure.outer_size(&entry.item)?;
         let buttons = measure.buttons(&entry.item);
-        let target = match part_at(entry.location, outer, buttons, point) {
+        let target = match part_at(entry.location, outer, buttons, !entry.is_maximized(), point) {
             Some(part) => Target::Part(part),
             None => {
                 if entry.is_maximized() {
@@ -762,8 +770,8 @@ mod tests {
     use super::*;
 
     const SCREEN: (i32, i32) = (640, 480);
-    /// テストのウィンドウの外枠の大きさ(どれも同じ)。タイトルバーが24、コンテンツが320x240。
-    const OUTER: (i32, i32) = (320, 264);
+    /// テストのウィンドウの外枠の大きさ(どれも同じ)。タイトルバーが36、コンテンツが320x240。
+    const OUTER: (i32, i32) = (320, 240 + TITLE_BAR_HEIGHT);
     const RIGHT_BUTTON: u32 = 0x111;
 
     /// テストのウィンドウの測り方。外枠はどれも同じ大きさ。
@@ -873,20 +881,32 @@ mod tests {
     #[test]
     fn a_window_has_three_parts() {
         let (location, outer) = ((32, 32).into(), OUTER.into());
-        let part = |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, at(x, y));
-        // タイトルバーは、上の24ピクセル。その右の端の24ピクセルが、閉じるボタン。
+        let part =
+            |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, false, at(x, y));
+        // タイトルバーは、上の36ピクセル。その右の端の44ピクセルが、閉じるボタン。
         assert_eq!(part(32.0, 32.0), Some(Part::Bar));
-        assert_eq!(part(327.9, 55.9), Some(Part::Bar));
-        assert_eq!(part(328.0, 32.0), Some(Part::Button(TitleButton::Close)));
-        assert_eq!(part(351.9, 55.9), Some(Part::Button(TitleButton::Close)));
+        assert_eq!(part(307.9, 67.9), Some(Part::Bar));
+        assert_eq!(part(308.0, 32.0), Some(Part::Button(TitleButton::Close)));
+        assert_eq!(part(351.9, 67.9), Some(Part::Button(TitleButton::Close)));
         // その下がコンテンツ。
-        assert_eq!(part(32.0, 56.0), Some(Part::Content));
-        assert_eq!(part(351.0, 56.0), Some(Part::Content));
-        assert_eq!(part(351.9, 295.9), Some(Part::Content));
+        assert_eq!(part(32.0, 68.0), Some(Part::Content));
+        assert_eq!(part(351.0, 68.0), Some(Part::Content));
+        assert_eq!(part(351.9, 307.9), Some(Part::Content));
         // 外。
         assert_eq!(part(31.9, 40.0), None);
         assert_eq!(part(352.0, 40.0), None);
-        assert_eq!(part(100.0, 296.0), None);
+        assert_eq!(part(100.0, 308.0), None);
+        // 角を丸めたウィンドウ(最大化していない)では、角を欠いた所(丸み 7 の外)も外。
+        let rounded =
+            |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, true, at(x, y));
+        assert_eq!(rounded(32.5, 32.5), None);
+        assert_eq!(rounded(351.5, 32.5), None);
+        assert_eq!(rounded(32.5, 307.5), None);
+        assert_eq!(rounded(351.5, 307.5), None);
+        assert_eq!(rounded(36.0, 36.0), Some(Part::Bar));
+        assert_eq!(rounded(39.0, 32.5), Some(Part::Bar));
+        assert_eq!(rounded(347.0, 36.0), Some(Part::Button(TitleButton::Close)));
+        assert_eq!(rounded(36.0, 304.0), Some(Part::Content));
     }
 
     #[test]
@@ -963,10 +983,10 @@ mod tests {
         assert_eq!(world.place("b").0, (32, 0));
         // 下へ: タイトルバーの全体が残る。
         world.motion(100.0, 2000.0);
-        assert_eq!(world.place("b").0, (32, 456));
-        // 左へ: タイトルバーの右の 120 ピクセル(48 と、ボタン 3 つ分の 72)が残る。右へ: 左の 48 ピクセルが残る。
+        assert_eq!(world.place("b").0, (32, 444));
+        // 左へ: タイトルバーの右の 180 ピクセル(48 と、ボタン 3 つ分の 132)が残る。右へ: 左の 48 ピクセルが残る。
         world.motion(-2000.0, 100.0);
-        assert_eq!(world.place("b").0, (-200, 92));
+        assert_eq!(world.place("b").0, (-140, 92));
         world.motion(2000.0, 100.0);
         assert_eq!(world.place("b").0, (592, 92));
         // 限りに当たった後も、ポインターが戻れば、付いてくる。
@@ -1191,8 +1211,8 @@ mod tests {
     fn the_band_outside_the_frame_resizes_the_window() {
         let mut world = World::two();
         let (a, b) = (world.id("a"), world.id("b"));
-        // bの下の辺の外側(外枠は y 32〜296)。ポインターの形が変わり、だれにも渡さない。
-        let hovered = world.motion(200.0, 300.0);
+        // bの下の辺の外側(外枠は y 32〜308)。ポインターの形が変わり、だれにも渡さない。
+        let hovered = world.motion(200.0, 312.0);
         assert_eq!(hovered.deliver, Deliver::Nobody);
         assert_eq!(world.interaction.cursor(), Cursor::Resize(Edges::BOTTOM));
         // 境界の外へ出ると、元に戻る。
@@ -1342,28 +1362,28 @@ mod tests {
     fn the_title_buttons_minimize_and_maximize() {
         let mut world = two_with_buttons();
         let b = world.id("full-b");
-        // full-b の外枠は x 32〜352。閉じるは 328〜352、最大化は 304〜328、最小化は 280〜304。
-        world.motion(316.0, 40.0);
+        // full-b の外枠は x 32〜352。閉じるは 308〜352、最大化は 264〜308、最小化は 220〜264。
+        world.motion(286.0, 40.0);
         assert_eq!(world.interaction.hot_button(b), Some(TitleButton::Maximize));
-        world.press(316.0, 40.0, LEFT_BUTTON);
+        world.press(286.0, 40.0, LEFT_BUTTON);
         assert_eq!(
-            world.release(316.0, 40.0, LEFT_BUTTON).command,
+            world.release(286.0, 40.0, LEFT_BUTTON).command,
             Some((b, Command::ToggleMaximize))
         );
-        world.press(292.0, 40.0, LEFT_BUTTON);
+        world.press(242.0, 40.0, LEFT_BUTTON);
         assert_eq!(
-            world.release(292.0, 40.0, LEFT_BUTTON).command,
+            world.release(242.0, 40.0, LEFT_BUTTON).command,
             Some((b, Command::Minimize))
         );
         // 押したまま外へ出して離すと、取り消し。
-        world.press(292.0, 40.0, LEFT_BUTTON);
+        world.press(242.0, 40.0, LEFT_BUTTON);
         world.motion(200.0, 40.0);
         assert_eq!(world.interaction.hot_button(b), None);
         assert_eq!(world.release(200.0, 40.0, LEFT_BUTTON).command, None);
         // ボタンが閉じるだけのウィンドウでは、同じ所はタイトルバー。
         let mut plain = World::two();
-        plain.press(316.0, 40.0, LEFT_BUTTON);
-        assert_eq!(plain.release(316.0, 40.0, LEFT_BUTTON).command, None);
+        plain.press(286.0, 40.0, LEFT_BUTTON);
+        assert_eq!(plain.release(286.0, 40.0, LEFT_BUTTON).command, None);
     }
 
     #[test]
@@ -1399,46 +1419,47 @@ mod tests {
         let mut world = two_with_buttons();
         let b = world.id("full-b");
         let area = Rect::from_size(SCREEN.into());
-        // 元の大きさは 160x120(外枠の幅 160。右の端の 72 がボタン)。最大化している間の外枠の幅は 320。
-        world.stack.maximize(b, area, Some((160, 120).into()));
+        // 元の大きさは 240x120(外枠の幅 240。右の端の 132 がボタン)。最大化している間の外枠の幅は 320。
+        world.stack.maximize(b, area, Some((240, 120).into()));
         // 横の 1/4 の所を押す。8 ピクセルより手前では、動かない。
         world.press(80.0, 10.0, LEFT_BUTTON);
         let near = world.motion(87.0, 10.0);
         assert_eq!((near.command, near.redraw), (None, false));
         assert!(!world.interaction.is_moving());
-        // 8 ピクセル動かすと、元の大きさに戻す。ポインターは、元の大きさのタイトルバーの 1/4(40)の所に来る。
+        // 8 ピクセル動かすと、元の大きさに戻す。ポインターは、元の大きさのタイトルバーの 1/4(60)の所に来る。
         let restore = world.motion(88.0, 10.0);
         assert_eq!(
             restore.command,
             Some((
                 b,
                 Command::Restore {
-                    location: (48, 0).into()
+                    location: (28, 0).into()
                 }
             ))
         );
         assert!(world.interaction.is_moving());
         // 戻すのは呼ぶ側(フロントエンド)が行う。その後は、ふつうに動く。
         world.stack.unmaximize(b, area);
-        world.stack.move_to(b, (48, 0).into());
+        world.stack.move_to(b, (28, 0).into());
         world.motion(98.0, 30.0);
-        assert_eq!(world.place("full-b"), ((58, 20), None));
+        assert_eq!(world.place("full-b"), ((38, 20), None));
         assert_eq!(world.release(98.0, 30.0, LEFT_BUTTON).command, None);
 
-        // ボタンの近く(横の 3/4)を押しても、戻したときに、ポインターはボタンの上に来ない(160 - 72 - 1 = 87)。
-        world.stack.maximize(b, area, Some((160, 120).into()));
-        world.press(240.0, 10.0, LEFT_BUTTON);
-        let restore = world.motion(250.0, 10.0);
+        // ボタンの近く(横の 9/16。ボタンは 188〜320)を押しても、戻したときに、ポインターはボタンの上に来ない
+        // (240 - 132 - 1 = 107)。
+        world.stack.maximize(b, area, Some((240, 120).into()));
+        world.press(180.0, 10.0, LEFT_BUTTON);
+        let restore = world.motion(190.0, 10.0);
         assert_eq!(
             restore.command,
             Some((
                 b,
                 Command::Restore {
-                    location: (163, 0).into()
+                    location: (83, 0).into()
                 }
             ))
         );
-        world.release(250.0, 10.0, LEFT_BUTTON);
+        world.release(190.0, 10.0, LEFT_BUTTON);
     }
 
     #[test]
@@ -1446,7 +1467,7 @@ mod tests {
         let mut world = two_with_buttons();
         let b = world.id("full-b");
         let area = Rect::from_size(SCREEN.into());
-        world.stack.maximize(b, area, Some((160, 120).into()));
+        world.stack.maximize(b, area, Some((240, 120).into()));
         // コンテンツの中(自分で描いたタイトルバーなど)を押して、move を頼む。まだ動かない。
         world.press(100.0, 40.0, LEFT_BUTTON);
         let start = world
@@ -1461,13 +1482,13 @@ mod tests {
             Some((
                 b,
                 Command::Restore {
-                    location: (58, 0).into()
+                    location: (33, 0).into()
                 }
             ))
         );
         assert!(world.interaction.is_moving());
         world.stack.unmaximize(b, area);
-        world.stack.move_to(b, (58, 0).into());
+        world.stack.move_to(b, (33, 0).into());
         // そのまま上端へ動かすと、最大化の予告が出て、離すと最大化する。
         world.motion(108.0, 60.0);
         world.motion(108.0, 0.0);

@@ -3,7 +3,10 @@
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! フロントエンドは、`T` をtoplevelにして使う。決まりの説明は `docs/window-placement.md` にある。
 
-use crate::geometry::{Point, PointF, Rect, Size};
+use crate::{
+    decoration::frame_contains,
+    geometry::{Point, PointF, Rect, Size},
+};
 
 /// 新しいウィンドウを、前のものからずらす量(ピクセル)。右へも下へも、この量だけずらす。
 pub const CASCADE_STEP: i32 = 32;
@@ -281,13 +284,19 @@ impl<T> Stack<T> {
     /// 画面の上の点 `point` にある、いちばん手前のウィンドウが、手前から何番目か。
     ///
     /// `size_of` は、ウィンドウの大きさを返す。まだ絵を出していないウィンドウ(大きさが無い)と、最小化している
-    /// ウィンドウには当たらない。見せるだけのウィンドウがあれば、それを先に見る([`Stack::iter_shown`] の順)。
+    /// ウィンドウには当たらない。最大化していないウィンドウの、角を欠いた所にも当たらない(後ろのウィンドウに当たる)。
+    /// 見せるだけのウィンドウがあれば、それを先に見る([`Stack::iter_shown`] の順)。
     pub fn index_at(&self, point: PointF, size_of: impl Fn(&T) -> Option<Size>) -> Option<usize> {
         let id = self
             .iter_shown()
             .find(|(entry, _)| {
-                size_of(&entry.item)
-                    .is_some_and(|size| Rect::new(entry.location, size).contains(point))
+                size_of(&entry.item).is_some_and(|size| {
+                    frame_contains(
+                        Rect::new(entry.location, size),
+                        !entry.is_maximized(),
+                        point,
+                    )
+                })
             })
             .map(|(entry, _)| entry.id)?;
         self.position(id)
@@ -439,9 +448,13 @@ mod tests {
         // どのウィンドウの上でもない所。
         assert_eq!(stack.index_at(at(500.0, 400.0), size), None);
         assert_eq!(stack.index_at(at(10.0, 300.0), size), None);
-        // 端の扱い: 左上の点は含み、右下の外側の点は含まない。
-        assert_eq!(stack.index_at(at(0.0, 0.0), size), Some(2));
+        // 端の扱い: 上の辺の点は含み、右下の外側の点は含まない。
+        assert_eq!(stack.index_at(at(8.0, 0.0), size), Some(2));
         assert_eq!(stack.index_at(at(384.0, 304.0), size), None);
+        // 角を欠いた所(丸み 7 の外)は含まない。cの左上の角では、後ろのbに当たる。aの左上の角は、どれにも当たらない。
+        assert_eq!(stack.index_at(at(0.5, 0.5), size), None);
+        assert_eq!(stack.index_at(at(64.5, 64.5), size), Some(1));
+        assert_eq!(stack.index_at(at(66.5, 66.5), size), Some(0));
     }
 
     #[test]

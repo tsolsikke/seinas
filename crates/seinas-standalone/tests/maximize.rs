@@ -13,31 +13,35 @@
 
 mod common;
 
-use common::{bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, BAR, HEIGHT, WIDTH};
+use common::{
+    bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, AROUND, BACKGROUND, BAR, CLOSE_BUTTON,
+    FRAME_RADIUS, HEIGHT, WIDTH,
+};
 
 /// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const WINDOW_HEIGHT: usize = 150;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 /// タイトルの色(ボタンの印も、この色)。
-const ACTIVE_TITLE: [u8; 3] = [0xff, 0xff, 0xff];
+const ACTIVE_TITLE: [u8; 3] = seinas_theme::title_bar::ACTIVE_TITLE;
 
 /// 外枠の左上が (`x0`, `y0`)、コンテンツが `w` × `h` のウィンドウが、activated のタイトルバーで描かれているか。
 fn shows_window(shot: &Shot, (x0, y0): (usize, usize), (w, h): (usize, usize)) -> bool {
     bar_color(shot, x0, y0, w) == Some(ACTIVE_BAR)
         && shot.pixel(x0, y0 + BAR) == ORANGE
-        && shot.pixel(x0 + w - 1, y0 + BAR + h - 1) == ORANGE
+        // 下の角は丸く欠いてあるので、右の端は、その上の行で見る。
+        && shot.pixel(x0 + w - 1, y0 + BAR + h - 1 - FRAME_RADIUS) == ORANGE
 }
 
 /// 左上のウィンドウが、元の大きさ(200x150)で描かれているか。
 fn shows_normal_window(shot: &Shot) -> bool {
     shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
-        && shot.pixel(WINDOW_WIDTH + 2, BAR + 2) == BACKGROUND
+        && shot.pixel(WINDOW_WIDTH + AROUND, BAR + 2) == BACKGROUND
 }
 
-/// 左上のウィンドウの、最小化のボタン(128〜152)に「−」の印があるか。
+/// 左上のウィンドウの、最小化のボタン(68〜112)に「−」の印(x 82〜97、y 18)があるか。
 fn has_minimize_button(shot: &Shot) -> bool {
-    shot.pixel(WINDOW_WIDTH - 72 + 7, 11) == ACTIVE_TITLE
+    shot.pixel(WINDOW_WIDTH - 3 * CLOSE_BUTTON + 14, 18) == ACTIVE_TITLE
 }
 
 /// 次の configure の行(`WxH [状態]`)。状態は名前の順に並べ直す。ほかの行は読み飛ばす。
@@ -64,6 +68,11 @@ fn click(seinas: &mut Compositor, x: usize, y: usize) {
     seinas.pointer("release");
 }
 
+/// 幅が `width` のタイトルバーの、右の端から `index` 番目(0 が閉じる)のボタンの中央の x。
+fn button_x(width: usize, index: usize) -> usize {
+    width - index * CLOSE_BUTTON - CLOSE_BUTTON / 2
+}
+
 fn open_window(seinas: &Compositor, args: &[&str]) -> TestClient {
     let window = seinas.connect_test_client(&[&["window", "--follow-size"], args].concat());
     window.wait_for_line("window: drawn");
@@ -76,8 +85,8 @@ fn the_maximize_button_and_a_double_click_toggle_maximize() {
     let window = open_window(&seinas, &[]);
     seinas.wait_for_screen("the window", shows_normal_window);
 
-    // 最大化のボタン(152〜176)を押すと、使える範囲(画面の全体)いっぱいになる。
-    click(&mut seinas, 164, 12);
+    // 最大化のボタン(112〜156)を押すと、使える範囲(画面の全体)いっぱいになる。
+    click(&mut seinas, button_x(WINDOW_WIDTH, 1), BAR / 2);
     assert_eq!(
         next_configure(&window, "maximized"),
         format!("{WIDTH}x{} [activated,maximized]", HEIGHT - BAR)
@@ -86,7 +95,7 @@ fn the_maximize_button_and_a_double_click_toggle_maximize() {
         shows_window(shot, (0, 0), (WIDTH, HEIGHT - BAR))
     });
     // 最大化している間は、元に戻すのボタン(右の端から 2 つ目)。押すと、元の位置と大きさに戻る。
-    click(&mut seinas, WIDTH - 36, 12);
+    click(&mut seinas, button_x(WIDTH, 1), BAR / 2);
     assert_eq!(
         next_configure(&window, "restored"),
         format!("{WINDOW_WIDTH}x{WINDOW_HEIGHT} [activated]")
@@ -117,7 +126,7 @@ fn the_maximize_button_and_a_double_click_toggle_maximize() {
 fn a_maximized_window_follows_the_usable_area_and_has_no_resize_border() {
     let mut seinas = Compositor::start_with_input("xb");
     let window = open_window(&seinas, &[]);
-    click(&mut seinas, 164, 12);
+    click(&mut seinas, button_x(WINDOW_WIDTH, 1), BAR / 2);
     assert_eq!(
         next_configure(&window, "maximized"),
         format!("{WIDTH}x{} [activated,maximized]", HEIGHT - BAR)
@@ -208,12 +217,12 @@ fn the_minimize_button_appears_with_a_shell_component() {
     seinas.wait_for_screen("the window", shows_normal_window);
     assert!(!has_minimize_button(&seinas.shot()));
 
-    // 一覧を受け取るシェルの部品がつながると、最小化のボタン(128〜152)が出る。
+    // 一覧を受け取るシェルの部品がつながると、最小化のボタン(68〜112)が出る。
     let mut list = seinas.connect_shell_client(&["toplevels"]);
     list.wait_for_line("toplevels: ready");
     seinas.wait_for_screen("the minimize button", has_minimize_button);
     // 押すと、描かれなくなり、一覧の状態が minimized になる。
-    click(&mut seinas, 140, 12);
+    click(&mut seinas, button_x(WINDOW_WIDTH, 2), BAR / 2);
     list.wait_for_line(r#"toplevel 1: title="" app_id="" state=[minimized] outputs=1"#);
     seinas.wait_for_screen("no window", |shot| shot.pixel(2, BAR + 2) == BACKGROUND);
     // 最小化している間は、その場所を押しても、何も起きない(背景)。

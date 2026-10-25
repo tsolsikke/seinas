@@ -14,20 +14,24 @@
 
 mod common;
 
-use common::{bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, BAR, HEIGHT, WIDTH};
+use common::{
+    bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, AROUND, BACKGROUND, BAR, FRAME_RADIUS,
+    HEIGHT, WIDTH,
+};
 
 /// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const WINDOW_HEIGHT: usize = 150;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
-/// 最大化の予告の枠の色(activated のタイトルバーと同じ)。
-const MARK: [u8; 3] = ACTIVE_BAR;
+/// 最大化の予告の枠の色(選んだものの色。テーマの `color::SELECTION`)。
+const MARK: [u8; 3] = seinas_theme::color::SELECTION;
 
 /// 外枠の左上が (`x0`, `y0`)、コンテンツが `w` × `h` のウィンドウが、activated のタイトルバーで描かれているか。
 fn shows_window(shot: &Shot, (x0, y0): (usize, usize), (w, h): (usize, usize)) -> bool {
     bar_color(shot, x0, y0, w) == Some(ACTIVE_BAR)
         && shot.pixel(x0, y0 + BAR) == ORANGE
-        && shot.pixel(x0 + w - 1, y0 + BAR + h - 1) == ORANGE
+        // 下の角は丸く欠いてあるので、右の端は、その上の行で見る。
+        && shot.pixel(x0 + w - 1, y0 + BAR + h - 1 - FRAME_RADIUS) == ORANGE
 }
 
 /// 最大化しているウィンドウが描かれているか。
@@ -141,7 +145,7 @@ fn dragging_a_maximized_window_restores_it_under_the_pointer() {
     seinas.pointer("release");
     seinas.wait_for_screen("the restored window under the pointer", |shot| {
         shows_window(shot, (109, 50), (WINDOW_WIDTH, WINDOW_HEIGHT))
-            && shot.pixel(105, 100) == BACKGROUND
+            && shot.pixel(109 - AROUND, 100) == BACKGROUND
     });
     expect_the_focus_kept(&mut seinas, &window);
 }
@@ -155,10 +159,10 @@ fn releasing_before_the_slack_keeps_a_maximized_window() {
         format!("{WIDTH}x{} [activated,maximized]", HEIGHT - BAR)
     );
     wait_for_state(&list, "activated,maximized");
-    // 7 ピクセルまで動かして離しても、最大化したまま。
-    seinas.pointer("motion 100 10");
+    // 7 ピクセルまで動かして離しても、最大化したまま。押すのは、ボタン(最小化は 68〜112)の手前のタイトルバー。
+    seinas.pointer("motion 40 10");
     seinas.pointer("press");
-    seinas.pointer("motion 107 10");
+    seinas.pointer("motion 47 10");
     seinas.pointer("release");
     // 少し時間を空けて、ダブルクリックにしない。その後の、処理が済んだことを sync で確かめる。
     std::thread::sleep(std::time::Duration::from_millis(600));
@@ -184,20 +188,20 @@ fn the_top_of_the_screen_previews_and_maximizes() {
     seinas.wait_for_screen("the window", |shot| {
         shows_window(shot, (0, 0), (WINDOW_WIDTH, WINDOW_HEIGHT))
     });
-    // grab して下へ動かし、上の端へ戻すと、予告が出る。
-    seinas.pointer("motion 100 10");
+    // grab して下へ動かし、上の端へ戻すと、予告が出る。押すのは、ボタン(最小化は 68〜112)の手前のタイトルバー。
+    seinas.pointer("motion 40 10");
     seinas.pointer("press");
-    seinas.pointer("motion 100 60");
-    seinas.pointer("motion 100 0");
+    seinas.pointer("motion 40 60");
+    seinas.pointer("motion 40 0");
     seinas.wait_for_screen("the mark", shows_mark);
     // 上の端から離れると、予告は消える。
-    seinas.pointer("motion 100 30");
+    seinas.pointer("motion 40 30");
     seinas.wait_for_screen("no mark", |shot| {
         shot.pixel(WIDTH - 2, HEIGHT / 2) == BACKGROUND
             && shot.pixel(WIDTH / 2 + 100, HEIGHT - 2) == BACKGROUND
     });
     // 上の端で離すと、最大化する。予告は消える。
-    seinas.pointer("motion 100 0");
+    seinas.pointer("motion 40 0");
     seinas.wait_for_screen("the mark again", shows_mark);
     seinas.pointer("release");
     assert_eq!(
@@ -275,7 +279,7 @@ fn a_client_move_restores_a_maximized_window_after_the_slack() {
     seinas.pointer("release");
     seinas.wait_for_screen("the restored window under the pointer", |shot| {
         shows_window(shot, (109, 50), (WINDOW_WIDTH, WINDOW_HEIGHT))
-            && shot.pixel(105, 100) == BACKGROUND
+            && shot.pixel(109 - AROUND, 100) == BACKGROUND
     });
     expect_the_focus_kept(&mut seinas, &window);
 }

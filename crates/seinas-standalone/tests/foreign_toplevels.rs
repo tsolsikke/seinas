@@ -12,8 +12,8 @@
 mod common;
 
 use common::{
-    bar_color, wait_for, Compositor, TestClient, ACTIVE_BAR, BACKGROUND, HEIGHT, INACTIVE_BAR,
-    WIDTH,
+    bar_color, wait_for, Compositor, TestClient, ACTIVE_BAR, AROUND, BACKGROUND, HEIGHT,
+    INACTIVE_BAR, WIDTH,
 };
 
 /// テスト用のクライアントのコンテンツの色(橙)。
@@ -206,7 +206,7 @@ fn maximize_and_minimize_requests_change_the_window() {
     assert_eq!(list.next_line("synced"), "toplevels: synced");
     seinas.wait_for_screen("the restored window", |shot| {
         bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(ACTIVE_BAR)
-            && shot.pixel(WINDOW_WIDTH + 2, 2) == BACKGROUND
+            && shot.pixel(WINDOW_WIDTH + AROUND, 2) == BACKGROUND
     });
 
     // 最小化すると、描かれなくなり、activated も外れる。戻すと、また activated になる。

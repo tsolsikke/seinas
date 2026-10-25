@@ -3,6 +3,7 @@
 //! タイトルバーの絵は、タイトル・幅・activated かどうか・ボタンの見た目が変わったときにだけ作り直し、
 //! それまでは覚えておいたものを使う。絵そのものは `decoration.rs` の `paint_title_bar` が作る。
 
+use seinas_icons::Icon;
 use seinas_text::TextPainter;
 use smithay::{
     backend::{
@@ -29,27 +30,33 @@ pub struct TitleBar {
     width: i32,
     active: bool,
     look: TitleLook,
+    /// アイコンを決めた app_id。
+    app_id: String,
     buffer: MemoryRenderBuffer,
 }
 
 impl TitleBar {
-    /// タイトルバーの絵を作る。`look` は、ボタンの見た目。
+    /// タイトルバーの絵を作る。`look` は、ボタンの見た目、`icon` は app_id `app_id` のアイコン。角を欠いた所は透けるので、
+    /// 不透明度つきの絵(ARGB)にする。
     pub fn new(
         painter: &mut TextPainter,
         text: &str,
         width: i32,
         active: bool,
         look: TitleLook,
+        app_id: &str,
+        icon: &Icon,
     ) -> Self {
-        let pixels = paint_title_bar(painter, text, width, active, look);
+        let pixels = paint_title_bar(painter, text, width, active, look, icon);
         TitleBar {
             text: text.to_owned(),
             width,
             active,
             look,
+            app_id: app_id.to_owned(),
             buffer: MemoryRenderBuffer::from_slice(
                 &pixels,
-                Fourcc::Xrgb8888,
+                Fourcc::Argb8888,
                 (width, TITLE_BAR_HEIGHT),
                 1,
                 Transform::Normal,
@@ -59,8 +66,19 @@ impl TitleBar {
     }
 
     /// 同じ条件で作った絵か(作り直さなくてよいか)。
-    pub fn matches(&self, text: &str, width: i32, active: bool, look: TitleLook) -> bool {
-        self.text == text && self.width == width && self.active == active && self.look == look
+    pub fn matches(
+        &self,
+        text: &str,
+        width: i32,
+        active: bool,
+        look: TitleLook,
+        app_id: &str,
+    ) -> bool {
+        self.text == text
+            && self.width == width
+            && self.active == active
+            && self.look == look
+            && self.app_id == app_id
     }
 
     /// 左上を `location` に置いた、描画の要素。

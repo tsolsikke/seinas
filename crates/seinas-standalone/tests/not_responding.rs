@@ -15,25 +15,27 @@ mod common;
 
 use std::time::Duration;
 
-use common::{bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, BAR};
+use common::{
+    bar_color, Compositor, Shot, TestClient, ACTIVE_BAR, BAR, CLOSE_BUTTON, FRAME_RADIUS,
+};
 
 /// テスト用のクライアントのウィンドウの、コンテンツの幅と色(橙)。
 const WINDOW_WIDTH: usize = 200;
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 /// 応答なしのウィンドウの、閉じるボタンの地の色。
-const UNRESPONSIVE_CLOSE_BUTTON: [u8; 3] = [0x8a, 0x1f, 0x14];
+const UNRESPONSIVE_CLOSE_BUTTON: [u8; 3] = seinas_theme::title_bar::UNRESPONSIVE_CLOSE_BUTTON;
 /// テストでの、pong を待つ時間(ミリ秒)。
 const TIMEOUT_MS: u64 = 300;
 
 /// 外枠の左上が (`x0`, `y0`) のウィンドウの、閉じるボタンの左上の角のすぐ内側のピクセル(印の無い所)。
 fn close_ground(shot: &Shot, (x0, y0): (usize, usize)) -> [u8; 3] {
-    shot.pixel(x0 + WINDOW_WIDTH - 23, y0 + 1)
+    shot.pixel(x0 + WINDOW_WIDTH - CLOSE_BUTTON + 1, y0 + 1)
 }
 
 /// 外枠の左上が (`x0`, `y0`) のウィンドウの閉じるボタンを、押して離す。その後、ポインターを外へ動かす
 /// (閉じるボタンの色を、ポインターの乗っていない形で見るため)。
 fn click_close(seinas: &mut Compositor, (x0, y0): (usize, usize)) {
-    let (x, y) = (x0 + WINDOW_WIDTH - 12, y0 + BAR / 2);
+    let (x, y) = (x0 + WINDOW_WIDTH - CLOSE_BUTTON / 2, y0 + BAR / 2);
     seinas.pointer(&format!("motion {x} {y}"));
     seinas.pointer("press");
     seinas.pointer("release");
@@ -84,7 +86,7 @@ fn a_client_that_does_not_answer_the_ping_is_marked_and_cut_off() {
     frozen.wait_for_line("window: ping");
     seinas.wait_for_screen("the mark of no response", |shot| {
         close_ground(shot, (32, 32)) == UNRESPONSIVE_CLOSE_BUTTON
-            && shot.pixel(34, 33) == ACTIVE_BAR
+            && shot.pixel(34, 32 + FRAME_RADIUS) == ACTIVE_BAR
     });
     assert!(seinas.log().contains("did not answer a ping in 300 ms"));
 

@@ -14,8 +14,9 @@
 mod common;
 
 use common::{
-    bar_color, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, BACKGROUND, BAR, CLOSE_BUTTON,
-    HEIGHT, HOT_CLOSE_BUTTON, INACTIVE_BAR, WIDTH,
+    bar_color, upper_bar_color, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, ACTIVE_BORDER,
+    AROUND, BACKGROUND, BAR, CLOSE_BUTTON, FRAME_RADIUS, HEIGHT, HOT_CLOSE_BUTTON, INACTIVE_BAR,
+    WIDTH,
 };
 
 /// テスト用のクライアントのウィンドウの、コンテンツの大きさと色(橙)。
@@ -26,9 +27,10 @@ const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
 /// 外枠の左上が(`x0`, `y0`)にあるテスト用のウィンドウが、タイトルバーの色 `bar` で、全体が見える形で描かれているか。
 fn shows_window(shot: &Shot, x0: usize, y0: usize, bar: [u8; 3]) -> bool {
     bar_color(shot, x0, y0, WINDOW_WIDTH) == Some(bar)
-        && shot.pixel(x0, y0) == bar
+        // 左の端は、丸く欠いた角の下で見る。下の角も欠いてあるので、右の端は、その上の行で見る。
+        && shot.pixel(x0, y0 + FRAME_RADIUS) == bar
         && shot.pixel(x0, y0 + BAR) == ORANGE
-        && shot.pixel(x0 + WINDOW_WIDTH - 1, y0 + BAR + WINDOW_HEIGHT - 1) == ORANGE
+        && shot.pixel(x0 + WINDOW_WIDTH - 1, y0 + BAR + WINDOW_HEIGHT - 1 - FRAME_RADIUS) == ORANGE
 }
 
 /// 外枠の左上が(`x0`, `y0`)にあるウィンドウの、閉じるボタンの中央。
@@ -84,7 +86,7 @@ fn dragging_the_title_bar_moves_the_window() {
     motion(&mut seinas, 153, 60);
     motion(&mut seinas, 154, 60);
     seinas.wait_for_screen("the window following the pointer by 4", |shot| {
-        shows_window(shot, 54, 50, ACTIVE_BAR) && shot.pixel(53, 60) == BACKGROUND
+        shows_window(shot, 54, 50, ACTIVE_BAR) && shot.pixel(54 - AROUND, 60) == BACKGROUND
     });
     motion(&mut seinas, 250, 200);
     seinas.wait_for_screen("the window following the pointer", |shot| {
@@ -134,27 +136,32 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
     motion(&mut seinas, 100, 10);
     seinas.pointer("press");
 
-    // 右下へ: タイトルバーの全体が、画面の下の端に残る。横は、タイトルバーの左の48ピクセルが残る。
+    // 右下へ: タイトルバーの全体が、画面の下の端に残る。横は、タイトルバーの左の48ピクセルが残る。左と上の外には、
+    // 枠(の線)があり、その外は背景(角は丸く欠いてあるので、角の丸みの内側の行と列で見る)。
     motion(&mut seinas, 5000, 5000);
     let (left, top) = (WIDTH - 48, HEIGHT - BAR);
     seinas.wait_for_screen("the bar kept at the bottom right", |shot| {
-        shot.pixel(left, top) == ACTIVE_BAR
+        shot.pixel(left, top + FRAME_RADIUS) == ACTIVE_BAR
             && shot.pixel(WIDTH - 1, HEIGHT - 1) == ACTIVE_BAR
-            && shot.pixel(left - 1, top) == BACKGROUND
-            && shot.pixel(left, top - 1) == BACKGROUND
+            && shot.pixel(left - 1, top + FRAME_RADIUS) == ACTIVE_BORDER
+            && shot.pixel(left + FRAME_RADIUS, top - 1) == ACTIVE_BORDER
+            && shot.pixel(left - AROUND, top + FRAME_RADIUS) == BACKGROUND
+            && shot.pixel(left + FRAME_RADIUS, top - AROUND) == BACKGROUND
     });
 
-    // 左上へ: タイトルバーの上の端は、画面の上の端で止まる。横は、タイトルバーの右の 120 ピクセル(48 と、
-    // ボタン 3 つ分の 72)が残る。ポインターは、上の端(最大化の予告が出る所)の 1 つ下までにする。
+    // 左上へ: タイトルバーの上の端は、画面の上の端で止まる。横は、タイトルバーの右の 180 ピクセル(48 と、
+    // ボタン 3 つ分の 132)が残る。ポインターは、上の端(最大化の予告が出る所)の 1 つ下までにする。
     motion(&mut seinas, -5000, 1);
+    let keep = 48 + 3 * CLOSE_BUTTON;
     seinas.wait_for_screen("the bar kept at the top left", |shot| {
-        shot.pixel(119, 0) == ACTIVE_BAR
-            && shot.pixel(120, 0) == BACKGROUND
-            && shot.pixel(119, BAR - 1) == ACTIVE_BAR
-            // コンテンツも、右の 120 ピクセルだけが見えている。
-            && shot.pixel(119, BAR) == ORANGE
-            && shot.pixel(120, BAR) == BACKGROUND
-            && shot.pixel(119, BAR + WINDOW_HEIGHT - 1) == ORANGE
+        shot.pixel(keep - 1, FRAME_RADIUS) == ACTIVE_BAR
+            && shot.pixel(keep, FRAME_RADIUS) == ACTIVE_BORDER
+            && shot.pixel(keep + AROUND, FRAME_RADIUS) == BACKGROUND
+            && shot.pixel(keep - 1, BAR - 1) == ACTIVE_BAR
+            // コンテンツも、右の 180 ピクセルだけが見えている。
+            && shot.pixel(keep - 1, BAR) == ORANGE
+            && shot.pixel(keep + AROUND, BAR) == BACKGROUND
+            && shot.pixel(keep - 1, BAR + WINDOW_HEIGHT - 1 - FRAME_RADIUS) == ORANGE
     });
 
     // ポインターを戻すと、限りから離れて、また付いてくる。
@@ -167,13 +174,13 @@ fn a_dragged_window_cannot_leave_the_screen_entirely() {
     // 外へ出した後でも、残ったタイトルバーを grab して、引き戻せる。
     drag(&mut seinas, (300, 110), (-5000, 110));
     seinas.wait_for_screen("the window pushed to the left edge", |shot| {
-        shot.pixel(119, 100) == ACTIVE_BAR && shot.pixel(120, 100) == BACKGROUND
+        shot.pixel(keep - 1, 110) == ACTIVE_BAR && shot.pixel(keep + AROUND, 110) == BACKGROUND
     });
-    // 残っているのは、タイトルバーの右の 120 ピクセル(左は -80)。その左の 72 ピクセル(ボタンでない所)を
+    // 残っているのは、タイトルバーの右の 180 ピクセル(左は -20)。その左の 92 ピクセル(ボタンでない所)を
     // grab する。
     drag(&mut seinas, (10, 110), (310, 210));
     seinas.wait_for_screen("the window pulled back", |shot| {
-        shows_window(shot, 220, 200, ACTIVE_BAR)
+        shows_window(shot, 280, 200, ACTIVE_BAR)
     });
     assert!(seinas.process.is_running());
 }
@@ -224,7 +231,7 @@ fn the_close_button_asks_the_client_to_close() {
     let mut front = connect(&seinas, &["--title", "front"]);
     seinas.wait_for_screen("two windows", |shot| {
         shows_window(shot, 32, 32, ACTIVE_BAR)
-            && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
+            && upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == INACTIVE_BAR
     });
 
     // ポインターを乗せると、そのボタンだけ、地が赤になる。
@@ -235,7 +242,7 @@ fn the_close_button_asks_the_client_to_close() {
             // ボタンの左の端までが赤で、その手前はタイトルバーの色。
             && shot.pixel(32 + WINDOW_WIDTH - CLOSE_BUTTON, 40) == HOT_CLOSE_BUTTON
             && shot.pixel(32 + WINDOW_WIDTH - CLOSE_BUTTON - 1, 40) == ACTIVE_BAR
-            && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
+            && upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == INACTIVE_BAR
     });
 
     // 押して、外へ出して離す: 取り消し。外へ出すと、赤でなくなる。
@@ -264,7 +271,7 @@ fn the_close_button_asks_the_client_to_close() {
     let mut front = connect(&seinas, &["--title", "front again"]);
     seinas.wait_for_screen("two windows again", |shot| {
         shows_window(shot, 32, 32, ACTIVE_BAR)
-            && bar_color(shot, 0, 0, WINDOW_WIDTH) == Some(INACTIVE_BAR)
+            && upper_bar_color(shot, 0, 0, WINDOW_WIDTH) == INACTIVE_BAR
     });
     let (x, y) = close_button(0, 0);
     click(&mut seinas, x, y);
@@ -333,7 +340,7 @@ fn a_client_may_ask_to_be_moved_while_a_button_is_held_on_it() {
 
     // 動かし終えた後も、ポインターの出入りは、いつもどおり知らされる。
     motion(&mut seinas, 220, 300);
-    client.wait_for_line("window: pointer enter 10 76");
+    client.wait_for_line(&format!("window: pointer enter 10 {}", 100 - BAR));
     motion(&mut seinas, 500, 400);
     client.wait_for_line("window: pointer leave");
     assert!(client.process.is_running());

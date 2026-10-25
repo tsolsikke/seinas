@@ -13,7 +13,9 @@ mod common;
 
 use std::fs;
 
-use common::{wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, BAR, HEIGHT, WIDTH};
+use common::{
+    wait_for, Compositor, Shot, TestClient, ACTIVE_BAR, BAR, FRAME_RADIUS, HEIGHT, WIDTH,
+};
 
 /// テスト用のクライアントのウィンドウの色(橙)と、壁紙の色、タスクバーの高さと地の色。
 const ORANGE: [u8; 3] = [0xff, 0x80, 0x00];
@@ -118,15 +120,17 @@ fn a_window_outside_the_smaller_output_comes_back() {
     seinas.pointer("motion 600 410");
     seinas.pointer("release");
     seinas.wait_for_screen("the window at the bottom right", |shot: &Shot| {
-        shot.pixel(501, 401) == ACTIVE_BAR
+        shot.pixel(500 + FRAME_RADIUS, 400 + FRAME_RADIUS) == ACTIVE_BAR
     });
-    // 400x300 にすると、外枠の左上は、右は 400 - 48 = 352、下は 300 - 24 = 276 まで戻る。
+    // 400x300 にすると、外枠の左上は、右は 400 - 48 = 352、下は 300 - 36 = 264 まで戻る(角は丸く欠いてあるので、
+    // 角の丸みの内側の行と列で見る)。
     seinas.pointer("output 400x300");
+    let (left, top) = (400 - 48, 300 - BAR);
     seinas.wait_for_screen("the window brought back", |shot: &Shot| {
         shot.width == 400
-            && shot.pixel(353, 277) == ACTIVE_BAR
-            && shot.pixel(351, 277) != ACTIVE_BAR
-            && shot.pixel(353, 275) != ACTIVE_BAR
+            && shot.pixel(left + FRAME_RADIUS, top + FRAME_RADIUS) == ACTIVE_BAR
+            && shot.pixel(left - 1, top + FRAME_RADIUS) != ACTIVE_BAR
+            && shot.pixel(left + FRAME_RADIUS, top - 1) != ACTIVE_BAR
     });
     // 戻したウィンドウは、また動かせる。
     seinas.pointer("motion 380 285");

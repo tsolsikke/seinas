@@ -23,7 +23,7 @@ use std::{
 
 use common::{
     bar_color, compositor_dir, start_taskbar, wait_for, Compositor, Shot, TestClient, ACTIVE_BAR,
-    BACKGROUND, HEIGHT, WIDTH,
+    BACKGROUND, BAR, HEIGHT, WIDTH,
 };
 
 use seinas_theme::taskbar::{
@@ -86,7 +86,7 @@ fn the_taskbar_sits_at_the_bottom_and_shrinks_the_usable_area() {
             && shot.pixel(WIDTH - 1, HEIGHT - 1) != [0x19, 0x1e, 0x28]
             && shot.pixel(WIDTH / 2, TOP - 1) == [0x19, 0x1e, 0x28]
     });
-    // 新しいウィンドウには、タスクバーの分を除いた大きさを伝える(640x480 - 40 - タイトルバー 24)。
+    // 新しいウィンドウには、タスクバーの分を除いた大きさを伝える(640x480 - 40 - タイトルバー 36)。
     let window = seinas.connect_test_client(&["window"]);
     // タスクバーがあるので、最小化もできる(順は決まっていない)。
     let capabilities = window.next_line("the capabilities");
@@ -102,7 +102,7 @@ fn the_taskbar_sits_at_the_bottom_and_shrinks_the_usable_area() {
         window.next_line("the first configure"),
         format!(
             "window: configure {WIDTH}x{} [activated]",
-            HEIGHT - TASKBAR - 24
+            HEIGHT - TASKBAR - BAR
         )
     );
 }

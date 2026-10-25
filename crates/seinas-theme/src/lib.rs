@@ -81,32 +81,51 @@ pub mod taskbar {
 
 /// ウィンドウのタイトルバー(コンポジタの飾り)。
 pub mod title_bar {
-    use super::Rgb;
+    use super::{color, Rgb};
 
     /// 高さ(ピクセル)。
-    pub const HEIGHT: i32 = 24;
+    pub const HEIGHT: i32 = 36;
     /// タイトルの文字の大きさ(ピクセル)。
-    pub const TEXT_SIZE: f32 = 14.0;
-    /// 左右の端から、タイトルまでの空き。
-    pub const PADDING: i32 = 8;
+    pub const TEXT_SIZE: f32 = 15.0;
+    /// 左の端から、アプリのアイコンまでの空き。アイコンの大きさ(縦は中央)と、アイコンからタイトルまでの空き。
+    pub const PADDING: i32 = 10;
+    pub const ICON_SIZE: i32 = 20;
+    pub const ICON_GAP: i32 = 8;
     /// ボタンの幅(ヒットの範囲。高さはタイトルバーと同じ)。
-    pub const BUTTON_WIDTH: i32 = HEIGHT;
-    /// 最小化と最大化の記号の大きさと、閉じるの「×」の大きさ。
-    pub const MARK_SIZE: i32 = 10;
-    pub const CLOSE_MARK_SIZE: i32 = 10;
+    pub const BUTTON_WIDTH: i32 = 44;
+    /// 最小化・最大化・閉じるの記号の大きさ(ピクセル。線で描く)。
+    pub const MARK_SIZE: i32 = 16;
+    pub const CLOSE_MARK_SIZE: i32 = 16;
 
     /// activated のウィンドウの、地と文字。
-    pub const ACTIVE_BAR: Rgb = [0x2f, 0x6f, 0xb5];
-    pub const ACTIVE_TITLE: Rgb = [0xff, 0xff, 0xff];
+    pub const ACTIVE_BAR: Rgb = [0x1a, 0x27, 0x3d];
+    pub const ACTIVE_TITLE: Rgb = color::TEXT;
     /// activated でないウィンドウの、地と文字。
-    pub const INACTIVE_BAR: Rgb = [0x4a, 0x50, 0x5c];
-    pub const INACTIVE_TITLE: Rgb = [0xc8, 0xcc, 0xd4];
-    /// ポインターが乗ったときの、閉じるボタンの地と記号。
+    pub const INACTIVE_BAR: Rgb = [0x15, 0x20, 0x34];
+    pub const INACTIVE_TITLE: Rgb = color::SUBTLE_TEXT;
+    /// ポインターが乗ったときの、閉じるボタンの地と記号。閉じるボタンの赤は、乗ったときだけ。
     pub const HOT_CLOSE_BUTTON: Rgb = [0xc4, 0x2b, 0x1c];
     pub const HOT_CLOSE_MARK: Rgb = [0xff, 0xff, 0xff];
     /// 応答なしのウィンドウの、閉じるボタンの地。
     pub const UNRESPONSIVE_CLOSE_BUTTON: Rgb = [0x8a, 0x1f, 0x14];
     /// ポインターが乗ったときの、最小化と最大化のボタンの地(activated のウィンドウと、そうでないもの)。
-    pub const HOT_ACTIVE_BUTTON: Rgb = [0x46, 0x82, 0xc4];
-    pub const HOT_INACTIVE_BUTTON: Rgb = [0x5c, 0x63, 0x70];
+    pub const HOT_ACTIVE_BUTTON: Rgb = [0x24, 0x34, 0x4d];
+    pub const HOT_INACTIVE_BUTTON: Rgb = [0x1d, 0x2a, 0x40];
+}
+
+/// ウィンドウの枠・角・影(コンポジタの飾り)。最大化しているときは、どれも付けない。
+pub mod frame {
+    use super::Rgb;
+
+    /// 枠の太さ(ピクセル)。枠は、外枠(タイトルバーとコンテンツ)の外側に描き、並べ方と大きさの計算は変えない。
+    pub const BORDER_WIDTH: i32 = 1;
+    /// 枠の色(activated のウィンドウと、そうでないもの)。
+    pub const ACTIVE_BORDER: Rgb = [0x4c, 0x70, 0xa4];
+    pub const INACTIVE_BORDER: Rgb = [0x43, 0x54, 0x70];
+    /// 角の丸み(枠の外側の線で測る)。外枠の角は、これから枠の太さを引いた丸みで欠く。
+    pub const CORNER_RADIUS: i32 = 8;
+    /// 影:下へのずれ、ぼけの幅(縁から外へ消えるまで)、いちばん濃い所の不透明度。
+    pub const SHADOW_OFFSET_Y: i32 = 2;
+    pub const SHADOW_BLUR: i32 = 12;
+    pub const SHADOW_OPACITY: f32 = 0.35;
 }

@@ -6,13 +6,14 @@
 //! - bottom:左の辺、幅 20。茶
 //! - top:右の辺、幅 24、exclusive zone を無視する。灰
 //! - overlay:anchor なし、40x20(使える範囲の中央)。赤
-//! - ウィンドウ:140x60、タイトルなし。橙。使える範囲の左上(上のバーの下)に置かれる
+//! - ウィンドウ:140x40、タイトルなし。橙。使える範囲の左上(上のバーの下)に置かれる。下の茶と緑が、ウィンドウの
+//!   影の外にも見えるよう、低くしてある
 //!
 //! 手前から、overlay、top、ウィンドウ、bottom、background の順に重なる。
 
 mod common;
 
-use common::{Compositor, Shot};
+use common::{Compositor, Shot, BAR};
 use seinas_golden::{Image, Runner, Tolerance};
 
 const WIDTH: usize = 160;
@@ -81,7 +82,7 @@ fn main() {
         client.wait_for_line("layer: drawn");
         clients.push(client);
     }
-    let window = seinas.connect_test_client(&["window", "--size", "140x60"]);
+    let window = seinas.connect_test_client(&["window", "--size", "140x40"]);
     window.wait_for_line("window: drawn");
     clients.push(window);
 
@@ -92,7 +93,7 @@ fn main() {
             && shot.pixel(80, 66) == [0xc0, 0x20, 0x20]
             && shot.pixel(10, 110) == [0x80, 0x60, 0x20]
             && shot.pixel(100, 110) == [0x20, 0x40, 0x20]
-            && shot.pixel(30, 40) == [0xff, 0x80, 0x00]
+            && shot.pixel(30, 12 + BAR + 4) == [0xff, 0x80, 0x00]
     });
     run.image(
         "layers-stacking",
