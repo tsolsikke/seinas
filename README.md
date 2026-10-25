@@ -44,6 +44,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `tools/` | 静的ビルドや、依存の一覧を作るための道具、フォントを取得する手順、releaseのアセットを作る手順 |
 | `trials/` | 採るかどうかを決める前の試し。本体のワークスペースには入れていない |
 | `THIRD-PARTY/` | 第三者のライセンス文と著作権表示、依存の一覧 |
+| `assets/wallpapers/` | 既定の壁紙の画像(16:9 と 4:3。CC0 1.0。`assets/wallpapers/README.md`) |
 
 ## ビルドに要るもの
 
@@ -143,4 +144,5 @@ tools/build-musl.sh
 ## ライセンス
 
 自作のコードは MIT ライセンスです(`LICENSE`)。
+`assets/wallpapers/` の画像(既定の壁紙)は、コードと別に、CC0 1.0 Universal で配ります(`assets/wallpapers/LICENSE`、`assets/wallpapers/README.md`)。
 フォントと外部のライブラリには、それぞれのライセンスがあります(`THIRD-PARTY/README.md`)。フォントは MIT ではなく、それぞれのフォントのライセンス(SIL Open Font License 1.1)で配ります。
