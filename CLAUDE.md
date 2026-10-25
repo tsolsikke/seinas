@@ -24,3 +24,8 @@
    「重い作業をする側の約束」)。`tools/zeikos-lock.sh` は、同じファイルを排他で取り、取れなければ 1 行出してから待ちます
    (最長 90 分)。`tools/pre-push.sh`(code 以上の段)と `tools/build-musl.sh` は、自分でこのロックを取ります。
    ロックのファイルには書かない・消さないでください。
+5. **Smithay の不具合は、fork の局所パッチで直す。依存と `[patch.crates-io]` は、その作業の中でだけ変える。**
+   直しは、GitHub の fork(`tsolsikke/smithay`)のブランチ `seinas/<バージョン>` に 1 つずつ積み、`[patch.crates-io]` から
+   git と rev を固定して参照します(ADR 0006)。path の形ではコミットしません。fork への push は運用者が行います。
+   パッチを足す・外すときは、`docs/smithay-patches.md` の一覧(中身と理由、上流の状態、回帰のテスト、次のバージョンで外せるか)を
+   一緒に直してください。

@@ -27,7 +27,7 @@ IME の権限は、シェルの部品の権限と分けています(ADR 0004 の
 - キーボードの無い seat への `get_input_method` は、Smithay へ渡す前に断ります(下の「IME は同時に 1 つ」と同じ断り方)。
 - `the_input_method_globals_need_a_keyboard` のテストで、keymap を作れなかった構成では 2 つの global が見えないことを確かめています。
 
-Smithay の側を直した patch は、`docs/notes/smithay-patches/` に在ります(上流には出していません。Smithay のバージョンは上げません)。
+Smithay の側の直しは、fork のブランチ `seinas/0.7.0` に積み、`[patch.crates-io]` から rev を固定して使っています(`docs/smithay-patches.md`、ADR 0006)。キーボードの無い seat の直しは、Seinas の側の上の守りで当たらないので、積んでいません。
 
 ZeikOS でキーボードを有効にするときは、xkb のファイル(ADR 0004 の「足りないもの」の (a))か、keymap を文字列から作る口((b))を先に用意してください。用意していないと、keymap を作れず、キーボードの無い構成として動きます(IME の global も作りません)。
 
