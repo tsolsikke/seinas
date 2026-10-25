@@ -17,7 +17,8 @@
 //! - `shrink`: ウィンドウを1つ描いた後、共有メモリーのプールを縮めて、もう一度commitする。
 //!   `--step` を付けると、縮める前に、標準入力から1行届くまで待つ。くわしくは `shrink.rs`。
 //! - `window`: 行儀よくウィンドウを1つ出し、届いたconfigureの中身を書き続ける。止められるまで動く。
-//!   `--title TEXT` と `--app-id TEXT` で、タイトルとapp_idを付けられる。`--decoration` で、飾りの描き方を尋ねる。
+//!   `--title TEXT` と `--app-id TEXT` で、タイトルとapp_idを付けられる。装飾は、既定では server_side を求める
+//!   (`--no-decoration`・`--client-side` で変える。`--decoration` で答えを書く)。
 //!   ポインターのイベントを書く、動かしてほしいと頼む、閉じる頼みに応じない、という指定もある。くわしくは `window.rs`。
 //! - `layer`: layer surface(wlr-layer-shell)を 1 つ出す。シェルの部品のためのソケットへつなぐこと。
 //!   層・anchor・大きさ・exclusive zone・margin・色を引数で決める。くわしくは `layer.rs`。
@@ -181,7 +182,7 @@ fn main() -> ExitCode {
     let Some(kind) = args.first() else {
         eprintln!("usage: test-client <unknown-opcode|unknown-object|short-message|bad-global>");
         eprintln!("       test-client shrink [--step]");
-        eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration] [--pointer] [--move-on-press] [--ignore-close] [--size WxH] [--color RRGGBB]");
+        eprintln!("       test-client window [--title TEXT] [--app-id TEXT] [--decoration] [--no-decoration] [--client-side] [--margin N] [--pointer] [--move-on-press] [--ignore-close] [--size WxH] [--color RRGGBB]");
         eprintln!("       test-client layer [--layer NAME] [--anchor LIST] [--size WxH] [--exclusive N] [--margin T,R,B,L] [--color RRGGBB] [--namespace NAME]");
         eprintln!("       test-client toplevels [--ext|--ext-only] [--output-after]");
         eprintln!("       test-client ime [--swallow KEY] [--popup WxH] [--popup-text] [--virtual-keyboard-only] [--no-builtin-keymap]");

@@ -165,19 +165,30 @@ pub fn frame_contains(outer: Rect, rounded: bool, point: PointF) -> bool {
     outer.contains(point) && !(rounded && in_cut_corner(outer, point))
 }
 
-/// タイトルバーを含めた、ウィンドウの外枠の大きさ。`content` は、クライアントが描くコンテンツの大きさ。
-pub fn outer_size(content: Size) -> Size {
-    (content.w, content.h + TITLE_BAR_HEIGHT).into()
+/// Seinas が描くタイトルバーの高さ。装飾の取り決めで server_side になっているウィンドウ(`decorated`)は
+/// [`TITLE_BAR_HEIGHT`]、そのほか(取り決めていない、client_side)は 0(タイトルバーも枠も付けない)。
+pub fn bar_height(decorated: bool) -> i32 {
+    if decorated {
+        TITLE_BAR_HEIGHT
+    } else {
+        0
+    }
 }
 
-/// 外枠の左上が `outer` にあるウィンドウの、コンテンツの左上。コンテンツは、タイトルバーの下に置く。
-pub fn content_location(outer: Point) -> Point {
-    (outer.x, outer.y + TITLE_BAR_HEIGHT).into()
+/// タイトルバーを含めた、ウィンドウの外枠の大きさ。`content` は、クライアントが描くコンテンツの大きさ、`bar` は
+/// Seinas が描くタイトルバーの高さ([`bar_height`])。
+pub fn outer_size(content: Size, bar: i32) -> Size {
+    (content.w, content.h + bar).into()
 }
 
-/// 画面の大きさが `screen` のとき、クライアントに伝えるコンテンツの大きさ。タイトルバーのぶんだけ低い。
-pub fn content_size_for(screen: Size) -> Size {
-    (screen.w, (screen.h - TITLE_BAR_HEIGHT).max(1)).into()
+/// 外枠の左上が `outer` にあるウィンドウの、コンテンツの左上。コンテンツは、高さ `bar` のタイトルバーの下に置く。
+pub fn content_location(outer: Point, bar: i32) -> Point {
+    (outer.x, outer.y + bar).into()
+}
+
+/// 画面の大きさが `screen` のとき、クライアントに伝えるコンテンツの大きさ。高さ `bar` のタイトルバーのぶんだけ低い。
+pub fn content_size_for(screen: Size, bar: i32) -> Size {
+    (screen.w, (screen.h - bar).max(1)).into()
 }
 
 /// 外枠の幅が `width` のウィンドウを、左上が `wanted` に来るように動かしたいとき、実際に置く位置。
@@ -496,9 +507,16 @@ mod tests {
 
     #[test]
     fn the_content_sits_below_the_bar() {
-        assert_eq!(outer_size((320, 240).into()), (320, 276).into());
-        assert_eq!(content_location((32, 32).into()), (32, 68).into());
-        assert_eq!(content_size_for((640, 480).into()), (640, 444).into());
+        let bar = bar_height(true);
+        assert_eq!(outer_size((320, 240).into(), bar), (320, 276).into());
+        assert_eq!(content_location((32, 32).into(), bar), (32, 68).into());
+        assert_eq!(content_size_for((640, 480).into(), bar), (640, 444).into());
+        // Seinas が飾りを描かないウィンドウは、外枠とコンテンツが同じ。
+        let none = bar_height(false);
+        assert_eq!(none, 0);
+        assert_eq!(outer_size((320, 240).into(), none), (320, 240).into());
+        assert_eq!(content_location((32, 32).into(), none), (32, 32).into());
+        assert_eq!(content_size_for((640, 480).into(), none), (640, 480).into());
     }
 
     #[test]

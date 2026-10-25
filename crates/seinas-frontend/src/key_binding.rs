@@ -10,7 +10,10 @@
 //! switch-next = Alt+Tab, Alt+F6
 //! switch-prev = Alt+Shift+Tab, Alt+Shift+F6
 //! ime-release = Alt+Shift+F12
+//! window-drag = Alt
 //! ```
+//!
+//! `window-drag` は、ウィンドウを動かす修飾キー(修飾キーだけを `+` でつなぐ。キーの名前は書かない)。
 //!
 //! `,` で区切って、いくつでも書ける。書いたキーは、既定のキーと置き換わる(足すのではない)。読めない値は、
 //! ログに出して、そのキー(次へ・前へ・緊急解除)を既定のままにする。
@@ -67,6 +70,44 @@ pub fn parse_shortcut(text: &str) -> Result<Shortcut, String> {
     })
 }
 
+/// `Alt` や `Ctrl+Alt` の形の文(修飾キーだけ)を、修飾キーの組に直す。
+pub fn parse_modifiers(text: &str) -> Result<Modifiers, String> {
+    let mut modifiers = Modifiers::default();
+    for name in text.split('+').map(str::trim) {
+        let flag = match name.to_ascii_lowercase().as_str() {
+            "alt" => &mut modifiers.alt,
+            "shift" => &mut modifiers.shift,
+            "ctrl" | "control" => &mut modifiers.ctrl,
+            "super" | "logo" | "win" => &mut modifiers.logo,
+            "" => return Err(format!("an empty part in {text:?}")),
+            other => return Err(format!("unknown modifier {other:?} in {text:?}")),
+        };
+        if *flag {
+            return Err(format!("{name} is written twice in {text:?}"));
+        }
+        *flag = true;
+    }
+    if modifiers == Modifiers::default() {
+        return Err(format!("no modifier in {text:?}"));
+    }
+    Ok(modifiers)
+}
+
+/// 修飾キーだけを、`Ctrl+Alt+Shift+Super` の形で書く。
+pub fn describe_modifiers(modifiers: Modifiers) -> String {
+    [
+        (modifiers.ctrl, "Ctrl"),
+        (modifiers.alt, "Alt"),
+        (modifiers.shift, "Shift"),
+        (modifiers.logo, "Super"),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, name)| *name)
+    .collect::<Vec<_>>()
+    .join("+")
+}
+
 /// 修飾キーと keysym を、`Ctrl+Alt+Shift+Super+F6` の形で書く(設定の書き方と同じ順と名前)。
 pub fn describe(modifiers: Modifiers, keysym: u32) -> String {
     let mut text = String::new();
@@ -100,6 +141,16 @@ pub fn switch_keys_from(text: &str, nested: bool) -> (SwitchKeys, Vec<String>) {
         .map(|problem| format!("line {}: {}", problem.line, problem.reason))
         .collect();
     for entry in entries {
+        if entry.key == "window-drag" {
+            match parse_modifiers(&entry.value) {
+                Ok(modifiers) => keys.window_drag = modifiers,
+                Err(reason) => reasons.push(format!(
+                    "line {}: window-drag keeps the default: {reason}",
+                    entry.line
+                )),
+            }
+            continue;
+        }
         let target = match entry.key.as_str() {
             "switch-next" => &mut keys.next,
             "switch-prev" => &mut keys.previous,
@@ -152,6 +203,10 @@ pub fn read_switch_keys(path: Option<&Path>, nested: bool) -> SwitchKeys {
     info!(
         "release the input method: {}",
         names(&keys.release_input_method)
+    );
+    info!(
+        "move windows with {}+drag (the primary button moves, the secondary button resizes)",
+        describe_modifiers(keys.window_drag)
     );
     keys
 }
@@ -240,6 +295,30 @@ mod tests {
             keys.release_input_method,
             [parse_shortcut("Ctrl+Alt+F9").unwrap()]
         );
+    }
+
+    #[test]
+    fn the_window_drag_modifier_has_a_default_and_can_be_set() {
+        let (keys, _) = switch_keys_from("", true);
+        assert_eq!(keys.window_drag, ALT);
+        let (keys, reasons) = switch_keys_from("window-drag = Ctrl+Alt\n", false);
+        assert!(reasons.is_empty(), "{reasons:?}");
+        assert_eq!(
+            keys.window_drag,
+            Modifiers {
+                ctrl: true,
+                alt: true,
+                shift: false,
+                logo: false,
+            }
+        );
+        assert_eq!(describe_modifiers(keys.window_drag), "Ctrl+Alt");
+        // キーの名前を書いたもの、修飾キーの無いもの、知らない名前は読まず、既定のまま。
+        for bad in ["Alt+F6", "", "Hyper"] {
+            let (keys, reasons) = switch_keys_from(&format!("window-drag = {bad}\n"), false);
+            assert_eq!(keys.window_drag, ALT, "{bad}");
+            assert_eq!(reasons.len(), 1, "{bad}: {reasons:?}");
+        }
     }
 
     #[test]

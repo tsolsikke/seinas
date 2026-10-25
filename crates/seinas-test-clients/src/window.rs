@@ -7,7 +7,12 @@
 //!
 //! - `--title TEXT`: タイトルを付ける。無ければ、タイトルを付けない。
 //! - `--app-id TEXT`: app_idを付ける。無ければ、付けない。
-//! - `--decoration`: 飾り(タイトルバーなど)をどちらの側で描くかを、xdg-decorationで尋ねる。
+//! - 装飾(タイトルバーなど)は、既定では、xdg-decoration で server_side(コンポジタが描く)を求める(最初の commit の
+//!   前に)。`--client-side` なら client_side を求め、`--no-decoration` なら装飾のオブジェクトを作らない(取り決めない)。
+//!   どちらのときも、このクライアントは飾りを描かない。
+//! - `--decoration`: 装飾の取り決めの答え(`window: decoration server-side`)を書く。
+//! - `--margin N`: コンテンツのまわりに、幅 N の灰色の縁を描き(自分で描く影のまね)、縁を除いた所をウィンドウの
+//!   幾何(xdg_surface.set_window_geometry)として伝える。最初の絵だけ(`--follow-size` の再描画では付けない)。
 //! - `--pointer`: seat のポインターを使い、届いたイベントを書く。
 //! - `--keyboard`: seat のキーボードを使い、届いたイベントを書く(`window: keyboard enter`(押されているキーが
 //!   あれば `window: keyboard enter keys 56`)、`window: keyboard leave`、
@@ -38,7 +43,9 @@
 //!   `--pointer` も付けたことになる。
 //!
 //! 標準入力から `title TEXT` の行が届くと、タイトルを `TEXT` に変える。`maximize`、`unmaximize`、`minimize` の行が
-//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`cursor X Y W H` の行は、text-input の
+//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`decoration server-side`・
+//! `decoration client-side` の行は、装飾のオブジェクトが無ければ作り、そのモードを求める。届いた configure に
+//! 応じたら commit して、`window: decoration committed` を書く。`cursor X Y W H` の行は、text-input の
 //! カーソルの矩形を変えて commit する。`text-input disable`・`text-input enable` の行は、text-input を無効・有効にして
 //! commit する(有効にするときは、カーソルの矩形も送る)。`pong` の行は、`--ignore-ping` で
 //! 返していない ping に pong を返し、`window: ponged` を書く。`sync` の行が届くと、それまでの
@@ -65,8 +72,8 @@ use std::{
 };
 
 use crate::wire::{
-    commit_buffer_with, connect, open_window_with, protocol_error, Event, Polled, WindowSetup,
-    Wire, XDG_SURFACE,
+    commit_buffer_with, connect, open_window_with, protocol_error, Decoration, Event, Polled,
+    WindowSetup, Wire, XDG_SURFACE,
 };
 
 /// ウィンドウの大きさと色(橙)。
@@ -103,7 +110,14 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
         match arg.as_str() {
             "--title" => options.setup.title = Some(value()?),
             "--app-id" => options.setup.app_id = Some(value()?),
-            "--decoration" => options.setup.decoration = true,
+            "--decoration" => options.setup.print_decoration = true,
+            "--no-decoration" => options.setup.decoration = Decoration::None,
+            "--client-side" => options.setup.decoration = Decoration::ClientSide,
+            "--margin" => {
+                options.setup.margin = value()?
+                    .parse()
+                    .map_err(|_| "--margin needs a number".to_owned())?
+            }
             "--pointer" => options.pointer = true,
             "--keyboard" => options.keyboard = true,
             "--text-input" => (options.keyboard, options.text_input) = (true, true),
@@ -179,6 +193,8 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut seen = (wire.toplevel_size, wire.toplevel_maximized);
     // `sync` の行で送った wl_display.sync の callback の番号。
     let mut sync = None;
+    // `decoration ...` の行で装飾のモードを求めた後、次の configure に応じたら commit するか。
+    let mut commit_decoration = false;
     if options.pointer || options.keyboard {
         wire.watch_seat(options.pointer, options.keyboard)?;
     }
@@ -254,6 +270,13 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 }
                 // xdg_surface.configure(configure のまとまりの終わり)で、届いた大きさに再描画する。
                 let configured = (event.object, event.opcode) == (XDG_SURFACE, 0);
+                if configured && commit_decoration {
+                    // 応じた(ack_configure は送ってある)装飾のモードを、commit で効かせる。
+                    commit_decoration = false;
+                    wire.commit()?;
+                    println!("window: decoration committed");
+                    let _ = std::io::stdout().flush();
+                }
                 let now = (wire.toplevel_size, wire.toplevel_maximized);
                 let changed = configured && now != seen;
                 if changed {
@@ -323,6 +346,15 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     send_cursor(&mut wire, id, cursor)?;
                     wire.send(&crate::message(id, 7, &[]))?;
                 }
+            }
+            let mode = match command.as_str() {
+                "decoration client-side" => Some(1),
+                "decoration server-side" => Some(2),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                wire.ask_decoration(mode)?;
+                commit_decoration = true;
             }
             if command == "pong" && wire.pong()? {
                 println!("window: ponged");

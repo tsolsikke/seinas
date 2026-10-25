@@ -36,12 +36,12 @@ mod switcher;
 mod switcher_view;
 mod title_bar;
 pub use decoration::{
-    clamp_outer_location, content_location, content_size_for, frame_contains, in_cut_corner,
-    load_fonts, outer_size, paint_title_bar, title_text, TitleButton, TitleButtons, TitleLook,
-    ACTIVE_BAR, ACTIVE_TITLE, BORDER_WIDTH, CLOSE_BUTTON_SIZE, CORNER_RADIUS, FRAME_RADIUS,
-    HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON, INACTIVE_BAR,
-    INACTIVE_TITLE, MAX_BUTTONS_WIDTH, MIN_VISIBLE_BAR, NOT_RESPONDING, TITLE_BAR_HEIGHT,
-    TITLE_BUTTON_SIZE, TITLE_ICON_SIZE, TITLE_PADDING, TITLE_SIZE, TITLE_TEXT_X,
+    bar_height, clamp_outer_location, content_location, content_size_for, frame_contains,
+    in_cut_corner, load_fonts, outer_size, paint_title_bar, title_text, TitleButton, TitleButtons,
+    TitleLook, ACTIVE_BAR, ACTIVE_TITLE, BORDER_WIDTH, CLOSE_BUTTON_SIZE, CORNER_RADIUS,
+    FRAME_RADIUS, HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK, HOT_INACTIVE_BUTTON,
+    INACTIVE_BAR, INACTIVE_TITLE, MAX_BUTTONS_WIDTH, MIN_VISIBLE_BAR, NOT_RESPONDING,
+    TITLE_BAR_HEIGHT, TITLE_BUTTON_SIZE, TITLE_ICON_SIZE, TITLE_PADDING, TITLE_SIZE, TITLE_TEXT_X,
     UNRESPONSIVE_CLOSE_BUTTON,
 };
 pub use foreign_toplevel::{ForeignToplevelState, HandleData, Listing};
@@ -250,6 +250,9 @@ pub struct Frontend<D: SeatHandler> {
     pub keyboard: Option<KeyboardHandle<D>>,
     /// Seinas のショートカット。キーを IME とアプリへ渡す前に見る。
     pub shortcuts: Shortcuts,
+    /// ウィンドウを動かす修飾キー(`seinas.conf` の `window-drag`。既定は Alt)。押しながらウィンドウのどこでも
+    /// ドラッグすると、左のボタンで動かし、右のボタンで大きさを変える。
+    pub window_drag: Modifiers,
     /// Alt+Tab での切り替えの最中なら、その状態。
     pub switcher: Option<Switcher>,
     /// 切り替えを始めたキーの修飾キー(Shift を除く)。どれも離したら、切り替えを決める。
@@ -432,8 +435,8 @@ impl<D: FrontendHost> Frontend<D> {
         self.windows
             .rearrange(usable, window_size, clamp_outer_location);
         // 最大化しているウィンドウには、新しい範囲の大きさを伝え直す。
-        let size = content_size_for(usable.size);
         for window in self.windows.iter().filter(|window| window.is_maximized()) {
+            let size = content_size_for(usable.size, bar_height(decorated_pending(&window.item)));
             window.item.with_pending_state(|state| {
                 state.size = Some((size.w, size.h).into());
             });
@@ -539,6 +542,7 @@ impl<D: FrontendHost> Frontend<D> {
     /// `surface` がウィンドウなら、commit に合わせる。サイズ変更で左か上の辺を動かしているときは、反対の辺の
     /// 位置を保つように動かす。絵を出した・外したことで一覧に載るかどうかが変わったら、一覧を合わせる。
     pub fn commit_window(&mut self, surface: &WlSurface) {
+        self.send_initial_configure(surface);
         self.follow_resize(surface);
         let changed = self
             .windows
@@ -550,6 +554,27 @@ impl<D: FrontendHost> Frontend<D> {
         if changed {
             self.update_foreign_toplevels();
         }
+    }
+
+    /// ウィンドウ `surface` の最初の commit で、最初の configure を送る(xdg-shell の決まり)。コンテンツに使える大きさ
+    /// (使える範囲から、取り決めた装飾のタイトルバーのぶんを引いたもの)と、activated の状態を伝える。
+    fn send_initial_configure(&mut self, surface: &WlSurface) {
+        let Some(window) = self
+            .windows
+            .iter()
+            .find(|window| window.item.wl_surface() == surface)
+        else {
+            return;
+        };
+        let toplevel = &window.item;
+        if toplevel.is_initial_configure_sent() {
+            return;
+        }
+        let size = content_size_for(self.usable.size, bar_height(decorated_pending(toplevel)));
+        toplevel.with_pending_state(|state| {
+            state.size = Some((size.w, size.h).into());
+        });
+        toplevel.send_configure();
     }
 
     /// サイズ変更の最中のウィンドウ `surface` の、新しい大きさに合わせて位置を直す。
@@ -733,7 +758,7 @@ impl<D: FrontendHost> Frontend<D> {
                 return false;
             }
             self.resize_anchors.remove(&id);
-            let size = content_size_for(self.usable.size);
+            let size = content_size_for(self.usable.size, bar_height(decorated_pending(&toplevel)));
             toplevel.with_pending_state(|state| {
                 state.size = Some((size.w, size.h).into());
                 state.states.set(xdg_toplevel::State::Maximized);
@@ -880,10 +905,14 @@ impl<D: FrontendHost> Frontend<D> {
         self.windows
             .iter()
             .find(|window| window.item.wl_surface() == surface)
-            .map(|window| {
-                let location = content_location(window.location);
-                let size = content_size(&window.item).unwrap_or_default();
-                Rectangle::new((location.x, location.y).into(), (size.w, size.h).into())
+            .and_then(|window| {
+                let shape = shape(&window.item)?;
+                let location = surface_origin(window.location, shape);
+                let size = shape.content;
+                Some(Rectangle::new(
+                    (location.x, location.y).into(),
+                    (size.w, size.h).into(),
+                ))
             })
             .unwrap_or_default()
     }
@@ -929,7 +958,7 @@ impl<D: FrontendHost> Frontend<D> {
             .windows
             .iter()
             .find(|window| !window.minimized && window.item.wl_surface() == &parent.surface)?;
-        let content = content_location(window.location);
+        let content = surface_origin(window.location, shape(&window.item)?);
         let size: SmithaySize<i32, Logical> =
             with_renderer_surface_state(popup.wl_surface(), |state| state.surface_size())??;
         let cursor = popup.text_input_rectangle();
@@ -945,10 +974,12 @@ impl<D: FrontendHost> Frontend<D> {
     ///
     /// 点がタイトルバーの上にあるときは、Noneを返す(タイトルバーはSeinasのもので、クライアントには渡さない)。
     pub fn window_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
-        let index = self.windows.index_at(point, window_size)?;
+        let index = self.windows.index_at_shaped(point, window_outline)?;
         let window = self.windows.iter().nth(index)?;
-        let content = content_location(window.location).to_f64();
-        (point.y >= content.y).then(|| (window.item.wl_surface().clone(), content))
+        let shape = shape(&window.item)?;
+        let content_top = content_location(window.location, shape.bar).y;
+        let origin = surface_origin(window.location, shape).to_f64();
+        (point.y >= f64::from(content_top)).then(|| (window.item.wl_surface().clone(), origin))
     }
 
     /// 画面の上の点 `point` にある、層が `layers` のどれかの layer surface(手前から探す)。その画面と、
@@ -977,7 +1008,11 @@ impl<D: FrontendHost> Frontend<D> {
         if let Some(found) = self.layer_under(point, &[Layer::Top]) {
             return Some(found);
         }
-        if self.windows.index_at(point, window_size).is_some() {
+        if self
+            .windows
+            .index_at_shaped(point, window_outline)
+            .is_some()
+        {
             // ウィンドウの上なら、タイトルバーの上でも、その下の層には渡さない。
             return self.window_under(point);
         }
@@ -1055,9 +1090,27 @@ impl<D: FrontendHost> Frontend<D> {
         for (window, active) in self.windows.iter_shown() {
             let surface = window.item.wl_surface();
             // まだ絵を出していないウィンドウには、タイトルバーも枠も影も付けない。
-            let Some(content) = content_size(&window.item) else {
+            let Some(shape) = shape(&window.item) else {
                 continue;
             };
+            let content = shape.content;
+            let outer = Rect::new(window.location, outer_size(content, shape.bar));
+            let location = surface_origin(window.location, shape);
+            let surfaces = render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                renderer,
+                surface,
+                // 拡大率は1なので、画面の上の位置とピクセルの位置は同じ。
+                (location.x, location.y),
+                1.0,
+                1.0,
+                Kind::Unspecified,
+            );
+            if shape.bar == 0 {
+                // 装飾を取り決めていない(か、client_side の)ウィンドウには、タイトルバーも枠も角も影も付けない。
+                // クライアントが自分で描く。
+                elements.extend(surfaces.into_iter().map(WindowElement::Surface));
+                continue;
+            }
             let text = toplevel_title(&window.item);
             let (_, app_id) = toplevel_names(&window.item);
             let look = TitleLook {
@@ -1110,19 +1163,7 @@ impl<D: FrontendHost> Frontend<D> {
                 bar.element(renderer, window.location)
                     .map(WindowElement::TitleBar),
             );
-            let outer = Rect::new(window.location, outer_size(content));
-            let rounded = !window.is_maximized();
-            let location = content_location(window.location);
-            let surfaces = render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
-                renderer,
-                surface,
-                // 拡大率は1なので、画面の上の位置とピクセルの位置は同じ。
-                (location.x, location.y),
-                1.0,
-                1.0,
-                Kind::Unspecified,
-            );
-            if !rounded {
+            if window.is_maximized() {
                 // 最大化しているときは、角も枠も影も付けない。
                 elements.extend(surfaces.into_iter().map(WindowElement::Surface));
                 continue;
@@ -1232,11 +1273,20 @@ impl<D: FrontendHost> Frontend<D> {
         elements
     }
 
-    /// クライアントが、飾りの描き方を尋ねてきた・変えようとしたときに呼ぶ。いつも、サーバーの側
-    /// (Seinas)で描くと答える。
+    /// クライアントが、装飾のオブジェクトを作った・モードを求めた(client_side でも)・求めを取り消したときに呼ぶ。
+    /// いつも、サーバーの側(Seinas)で描くと答える(xdg-decoration の決まりで、コンポジタはクライアントの希望と
+    /// 違うモードを選んでよい)。
+    ///
+    /// 答えは次の configure で伝え、Seinas が描き始めるのは、クライアントがそれに応じた commit から(`decorated`)。
+    /// 最初の configure をもう送っていれば、すぐ送る。最大化しているウィンドウには、タイトルバーのぶんを引いた
+    /// 大きさを、一緒に伝え直す。
     pub fn decorate_on_server_side(&self, toplevel: &ToplevelSurface) {
         toplevel.with_pending_state(|state| {
             state.decoration_mode = Some(DecorationMode::ServerSide);
+            if state.states.contains(xdg_toplevel::State::Maximized) {
+                let size = content_size_for(self.usable.size, TITLE_BAR_HEIGHT);
+                state.size = Some((size.w, size.h).into());
+            }
         });
         if toplevel.is_initial_configure_sent() {
             toplevel.send_pending_configure();
@@ -1349,12 +1399,30 @@ where
             location,
             button,
             pressed: true,
-        } => (
-            location,
-            frontend
-                .interaction
-                .press(&mut frontend.windows, location, button, time, &measure),
-        ),
+        } => {
+            // ウィンドウを動かす修飾キーが、ちょうど押されているか。
+            let drag_modifier = frontend.keyboard.as_ref().is_some_and(|keyboard| {
+                let now = keyboard.modifier_state();
+                let held = Modifiers {
+                    ctrl: now.ctrl,
+                    alt: now.alt,
+                    shift: now.shift,
+                    logo: now.logo,
+                };
+                held == frontend.window_drag
+            });
+            (
+                location,
+                frontend.interaction.press_with(
+                    &mut frontend.windows,
+                    location,
+                    button,
+                    time,
+                    drag_modifier,
+                    &measure,
+                ),
+            )
+        }
         PointerInput::Button {
             location,
             button,
@@ -1785,11 +1853,65 @@ where
     pointer.frame(state);
 }
 
-/// ウィンドウのコンテンツ(クライアントが描く所)の大きさ。まだ絵を出していなければNone。
-fn content_size(toplevel: &ToplevelSurface) -> Option<Size> {
+/// ウィンドウの形。Seinas が描くタイトルバーの高さと、クライアントが決めたウィンドウの幾何。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Shape {
+    /// Seinas が描くタイトルバーの高さ([`bar_height`]。飾りを描かないウィンドウは 0)。
+    bar: i32,
+    /// ウィンドウの幾何(xdg_surface.set_window_geometry)の、画面(surface)の中の左上。決めていなければ (0, 0)。
+    /// クライアントが自分で描く影などは、この外にあり、ウィンドウの大きさに数えない。
+    offset: Point,
+    /// コンテンツの大きさ(ウィンドウの幾何の大きさ。決めていなければ、画面の大きさ)。
+    content: Size,
+}
+
+/// 装飾の取り決めで、Seinas が飾り(タイトルバー・枠・角・影)を描くか。いまの状態(クライアントが応じた configure
+/// の後の commit で決まるもの)の装飾のモードが server_side のとき。装飾のオブジェクトを作っていないウィンドウは、
+/// 取り決めていないので描かない(manager を bind しただけでは、取り決めたことにしない)。
+fn decorated(toplevel: &ToplevelSurface) -> bool {
+    toplevel.current_state().decoration_mode == Some(DecorationMode::ServerSide)
+}
+
+/// 次の configure で伝える装飾のモードで、Seinas が飾りを描くことになるか。configure で伝える大きさを決めるのに使う。
+fn decorated_pending(toplevel: &ToplevelSurface) -> bool {
+    toplevel.with_pending_state(|state| state.decoration_mode) == Some(DecorationMode::ServerSide)
+}
+
+/// ウィンドウ `toplevel` の形。まだ絵を出していなければNone。
+fn shape(toplevel: &ToplevelSurface) -> Option<Shape> {
     let size: SmithaySize<i32, Logical> =
         with_renderer_surface_state(toplevel.wl_surface(), |state| state.surface_size())??;
-    Some(Size::new(size.w, size.h))
+    let geometry = with_states(toplevel.wl_surface(), |states| {
+        states
+            .cached_state
+            .get::<SurfaceCachedState>()
+            .current()
+            .geometry
+    });
+    let (offset, content) = match geometry {
+        Some(rect) if rect.size.w > 0 && rect.size.h > 0 => (
+            Point::new(rect.loc.x, rect.loc.y),
+            Size::new(rect.size.w, rect.size.h),
+        ),
+        _ => (Point::new(0, 0), Size::new(size.w, size.h)),
+    };
+    Some(Shape {
+        bar: bar_height(decorated(toplevel)),
+        offset,
+        content,
+    })
+}
+
+/// 外枠の左上が `location`、形が `shape` のウィンドウの、画面(surface)の左上。ウィンドウの幾何の左上を、コンテンツの
+/// 左上(タイトルバーの下)に合わせる。
+fn surface_origin(location: Point, shape: Shape) -> Point {
+    let content = content_location(location, shape.bar);
+    Point::new(content.x - shape.offset.x, content.y - shape.offset.y)
+}
+
+/// ウィンドウのコンテンツ(クライアントが描く所。ウィンドウの幾何)の大きさ。まだ絵を出していなければNone。
+fn content_size(toplevel: &ToplevelSurface) -> Option<Size> {
+    shape(toplevel).map(|shape| shape.content)
 }
 
 /// クライアントが決めた最小と最大の大きさ。最大化・全画面のウィンドウは、サイズ変更できないのでNone。
@@ -1837,6 +1959,9 @@ impl Measure<ToplevelSurface> for Toplevels {
             maximize: can_maximize(toplevel),
         }
     }
+    fn bar_height(&self, toplevel: &ToplevelSurface) -> i32 {
+        bar_height(decorated(toplevel))
+    }
 }
 
 /// xdg_toplevel の辺の指定を、Seinas の型にする。
@@ -1847,7 +1972,12 @@ fn edges_from(edges: xdg_toplevel::ResizeEdge) -> Edges {
 
 /// タイトルバーを含めた、ウィンドウの外枠の大きさ。まだ絵を出していなければNone。
 fn window_size(toplevel: &ToplevelSurface) -> Option<Size> {
-    content_size(toplevel).map(outer_size)
+    shape(toplevel).map(|shape| outer_size(shape.content, shape.bar))
+}
+
+/// ウィンドウの外枠の大きさと、角を欠くか(Seinas が飾りを描くか)。ポインターのヒットの判定に使う。
+fn window_outline(toplevel: &ToplevelSurface) -> Option<(Size, bool)> {
+    shape(toplevel).map(|shape| (outer_size(shape.content, shape.bar), shape.bar > 0))
 }
 
 // 土台(Smithay)の幾何の型と、ウィンドウ管理の決まりの幾何の型(`geometry`)の変換。ADR 0001 の決まりで、
@@ -2028,17 +2158,11 @@ macro_rules! delegate_frontend {
             }
             fn new_toplevel(&mut self, surface: $crate::smithay::wayland::shell::xdg::ToplevelSurface) {
                 let frontend = $crate::FrontendHost::frontend_mut(self);
-                // コンテンツに使える大きさ(画面から、タイトルバーのぶんを引いたもの)を伝える。
-                let size = $crate::content_size_for(frontend.usable.size);
-                let size = $crate::smithay::utils::Size::from((size.w, size.h));
                 frontend.output.enter(surface.wl_surface());
-                surface.with_pending_state(|state| {
-                    state.size = Some(size);
-                });
                 // スタックに加えると、このウィンドウが activated なものになる。その状態も、最初の
-                // configureで一緒に伝える。
+                // configureで一緒に伝える。最初の configure は、最初の commit のときに送る(装飾の取り決めは、
+                // ふつう、その前に届く。`Frontend::commit_window`)。
                 frontend.add_window(surface.clone());
-                surface.send_configure();
                 $crate::log_new_toplevel();
                 // 前に手前だったウィンドウのタイトルバーの色が変わる。
                 $crate::changed(self);
@@ -2268,6 +2392,7 @@ macro_rules! delegate_frontend {
                     pointer,
                     keyboard,
                     shortcuts: $crate::shortcuts_for(&config),
+                    window_drag: config.switch_keys.window_drag,
                     switcher: None,
                     switch_hold: Default::default(),
                     switcher_image: None,

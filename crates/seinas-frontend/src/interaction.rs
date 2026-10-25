@@ -1,7 +1,8 @@
 //! ポインターでのウィンドウの操作(動かす、閉じる、最大化、最小化、サイズ変更)の決まり。
 //!
 //! ボタンを押した所が、ウィンドウのどの部分か(コンテンツ、タイトルバー、タイトルバーのボタン、外枠の外の
-//! サイズ変更の境界)で、することを決める。
+//! サイズ変更の境界)で、することを決める。ウィンドウを動かす修飾キー(既定は Alt)を押しながら押したときは、
+//! どの部分でも、左のボタンで動かし、右のボタンで大きさを変える(Seinas が飾りを描かないウィンドウのため)。
 //! Waylandのオブジェクトに触れずに確かめられるよう、並べるものの型 `T` を決めずに書いてある。
 //! 決まりの説明は `docs/window-placement.md` にある。
 
@@ -11,12 +12,14 @@ use crate::{
     decoration::{
         clamp_outer_location, frame_contains, TitleButton, TitleButtons, TITLE_BAR_HEIGHT,
     },
-    resize::{edges_at, resized_content, Edges, ResizeStart, SizeLimits},
+    resize::{edges_at, edges_toward, resized_content, Edges, ResizeStart, SizeLimits},
     stack::{Stack, WindowId},
 };
 
 /// 左のボタンの番号(Linuxの入力の決まり)。動かす・閉じる操作は、このボタンだけで行う。
 pub const LEFT_BUTTON: u32 = 0x110;
+/// 右のボタンの番号。修飾キーを押しながらのときだけ、大きさを変えるのに使う。
+pub const RIGHT_BUTTON: u32 = 0x111;
 /// タイトルバーを押してから、これだけ(ピクセル)動くまでは、ウィンドウを動かさない。raise するだけのつもりで
 /// 押したときに、ずれないようにする。
 pub const DRAG_SLACK: f64 = 4.0;
@@ -42,11 +45,13 @@ pub enum Part {
     Button(TitleButton),
 }
 
-/// 外枠の左上が `location`、外枠の大きさが `outer`、タイトルバーのボタンが `buttons` のウィンドウの中で、
-/// 点 `point` がどの部分か。ウィンドウの外ならNone。`rounded`(最大化していない)なら、角を欠いた所もウィンドウの外。
+/// 外枠の左上が `location`、外枠の大きさが `outer`、タイトルバーの高さが `bar`(Seinas が飾りを描かないウィンドウは
+/// 0)、タイトルバーのボタンが `buttons` のウィンドウの中で、点 `point` がどの部分か。ウィンドウの外ならNone。
+/// `rounded`(飾りを描いていて、最大化していない)なら、角を欠いた所もウィンドウの外。
 pub fn part_at(
     location: Point,
     outer: Size,
+    bar: i32,
     buttons: TitleButtons,
     rounded: bool,
     point: PointF,
@@ -54,7 +59,7 @@ pub fn part_at(
     if !frame_contains(Rect::new(location, outer), rounded, point) {
         return None;
     }
-    if point.y >= (location.y + TITLE_BAR_HEIGHT) as f64 {
+    if point.y >= (location.y + bar) as f64 {
         return Some(Part::Content);
     }
     Some(match buttons.at(outer.w, point.x - location.x as f64) {
@@ -71,6 +76,10 @@ pub trait Measure<T> {
     fn limits(&self, item: &T) -> Option<SizeLimits>;
     /// タイトルバーに出すボタン。
     fn buttons(&self, item: &T) -> TitleButtons;
+    /// Seinas が描くタイトルバーの高さ(装飾の取り決めで server_side なら [`TITLE_BAR_HEIGHT`]、そのほかは 0)。
+    fn bar_height(&self, _item: &T) -> i32 {
+        TITLE_BAR_HEIGHT
+    }
 }
 
 /// 点の下にあるもの。いちばん手前のウィンドウから順に、外枠の中か、外枠の外のサイズ変更の境界かを見る。
@@ -95,7 +104,9 @@ fn target_at<T>(
         }
         let outer = measure.outer_size(&entry.item)?;
         let buttons = measure.buttons(&entry.item);
-        let target = match part_at(entry.location, outer, buttons, !entry.is_maximized(), point) {
+        let bar = measure.bar_height(&entry.item);
+        let rounded = bar > 0 && !entry.is_maximized();
+        let target = match part_at(entry.location, outer, bar, buttons, rounded, point) {
             Some(part) => Target::Part(part),
             None => {
                 if entry.is_maximized() {
@@ -385,13 +396,14 @@ impl Interaction {
                 snap,
             } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
-                let Some((outer, maximized, restore, buttons)) =
+                let Some((outer, maximized, restore, buttons, bar)) =
                     stack.get(window).and_then(|entry| {
                         Some((
                             measure.outer_size(&entry.item)?,
                             entry.is_maximized(),
                             entry.restore,
                             measure.buttons(&entry.item),
+                            measure.bar_height(&entry.item),
                         ))
                     })
                 else {
@@ -422,7 +434,7 @@ impl Interaction {
                     // 押していることがあるので、元の大きさの外枠に入るようにする)。
                     let height = restore
                         .and_then(|restore| restore.content)
-                        .map_or(outer.h, |size| size.h + TITLE_BAR_HEIGHT);
+                        .map_or(outer.h, |size| size.h + bar);
                     let offset_y =
                         (press.y - origin.y as f64).clamp(0.0, (height - 1).max(0) as f64);
                     let wanted = (
@@ -498,6 +510,24 @@ impl Interaction {
         time: u32,
         measure: &impl Measure<T>,
     ) -> Outcome {
+        self.press_with(stack, point, button, time, false, measure)
+    }
+
+    /// [`Interaction::press`] と同じだが、`drag_modifier` なら、ウィンドウを動かす修飾キーが押されている。
+    ///
+    /// 修飾キーを押しながら、ウィンドウのどの部分(コンテンツ、タイトルバー、ボタン)を押しても、左のボタンなら
+    /// タイトルバーを grab したときと同じに動かし([`DRAG_SLACK`] の後から。ダブルクリックにはしない)、右のボタン
+    /// なら、押した点に近い辺(`resize::edges_toward`)で大きさを変える。どちらもクライアントには渡さない。サイズ変更の
+    /// 境界の上では、修飾キーが無いときと同じ。
+    pub fn press_with<T>(
+        &mut self,
+        stack: &mut Stack<T>,
+        point: PointF,
+        button: u32,
+        time: u32,
+        drag_modifier: bool,
+        measure: &impl Measure<T>,
+    ) -> Outcome {
         self.last = point;
         match &mut self.grab {
             // タイトルバーやボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
@@ -521,10 +551,47 @@ impl Interaction {
         let was_hot = self.hot_button(window);
         let mut command = None;
         let deliver = match target {
+            Target::Part(_) if drag_modifier => {
+                let entry = stack.get(window).expect("the window");
+                let outer = measure.outer_size(&entry.item);
+                let bar = measure.bar_height(&entry.item);
+                let resizable = !entry.is_maximized() && measure.limits(&entry.item).is_some();
+                match (button, outer) {
+                    (LEFT_BUTTON, _) => {
+                        self.grab = Grab::Bar {
+                            window,
+                            press: point,
+                            origin,
+                            moving: false,
+                            movable: true,
+                            snap: false,
+                        };
+                    }
+                    (RIGHT_BUTTON, Some(outer)) if resizable => {
+                        let content = Size::new(outer.w, outer.h - bar);
+                        let start = ResizeStart {
+                            edges: edges_toward(Rect::new(origin, outer), point),
+                            press: point,
+                            location: origin,
+                            content,
+                        };
+                        self.grab = Grab::Resize {
+                            window,
+                            start,
+                            size: content,
+                        };
+                    }
+                    // そのほかのボタン(と、大きさを変えられないウィンドウの右のボタン)は、raise するだけ。
+                    _ => {}
+                }
+                Deliver::Nobody
+            }
             Target::Edges(edges) if button == LEFT_BUTTON => {
+                let item = &stack.get(window).expect("the window").item;
+                let bar = measure.bar_height(item);
                 let content = measure
-                    .outer_size(&stack.get(window).expect("the window").item)
-                    .map(|outer| Size::new(outer.w, outer.h - TITLE_BAR_HEIGHT))
+                    .outer_size(item)
+                    .map(|outer| Size::new(outer.w, outer.h - bar))
                     .expect("a window that was hit has a size");
                 let start = ResizeStart {
                     edges,
@@ -717,7 +784,7 @@ impl Interaction {
         }
         measure.limits(&entry.item)?;
         let outer = measure.outer_size(&entry.item)?;
-        let content = Size::new(outer.w, outer.h - TITLE_BAR_HEIGHT);
+        let content = Size::new(outer.w, outer.h - measure.bar_height(&entry.item));
         self.grab = Grab::Resize {
             window,
             start: ResizeStart {
@@ -881,8 +948,16 @@ mod tests {
     #[test]
     fn a_window_has_three_parts() {
         let (location, outer) = ((32, 32).into(), OUTER.into());
-        let part =
-            |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, false, at(x, y));
+        let part = |x: f64, y: f64| {
+            part_at(
+                location,
+                outer,
+                TITLE_BAR_HEIGHT,
+                TitleButtons::CLOSE_ONLY,
+                false,
+                at(x, y),
+            )
+        };
         // タイトルバーは、上の36ピクセル。その右の端の44ピクセルが、閉じるボタン。
         assert_eq!(part(32.0, 32.0), Some(Part::Bar));
         assert_eq!(part(307.9, 67.9), Some(Part::Bar));
@@ -897,8 +972,16 @@ mod tests {
         assert_eq!(part(352.0, 40.0), None);
         assert_eq!(part(100.0, 308.0), None);
         // 角を丸めたウィンドウ(最大化していない)では、角を欠いた所(丸み 7 の外)も外。
-        let rounded =
-            |x: f64, y: f64| part_at(location, outer, TitleButtons::CLOSE_ONLY, true, at(x, y));
+        let rounded = |x: f64, y: f64| {
+            part_at(
+                location,
+                outer,
+                TITLE_BAR_HEIGHT,
+                TitleButtons::CLOSE_ONLY,
+                true,
+                at(x, y),
+            )
+        };
         assert_eq!(rounded(32.5, 32.5), None);
         assert_eq!(rounded(351.5, 32.5), None);
         assert_eq!(rounded(32.5, 307.5), None);

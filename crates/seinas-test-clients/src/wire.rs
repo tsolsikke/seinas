@@ -35,6 +35,8 @@ const POOL: u32 = 10;
 pub const BUFFER: u32 = 11;
 /// ここから先の番号は、[`Wire::new_id`] が順に配る。
 const FIRST_FREE: u32 = 12;
+/// `WindowSetup::margin` の縁の色(B, G, R, X。灰色)。
+pub const MARGIN_PIXEL: [u8; 4] = [0x50, 0x50, 0x50, 0xff];
 
 /// ウィンドウを作るときの指定。
 #[derive(Default)]
@@ -43,11 +45,39 @@ pub struct WindowSetup {
     pub title: Option<String>,
     /// app_id(xdg_toplevel.set_app_id)。Noneなら付けない。
     pub app_id: Option<String>,
-    /// 飾りの描き方を、xdg-decoration(zxdg_decoration_manager_v1)で尋ねるか。
-    pub decoration: bool,
+    /// xdg-decoration(zxdg_decoration_manager_v1)で、装飾をどう取り決めるか。既定は、server_side を求める。
+    pub decoration: Decoration,
+    /// 装飾の取り決めの答え(zxdg_toplevel_decoration_v1.configure)を、標準出力に書くか。
+    pub print_decoration: bool,
+    /// コンテンツのまわりに描く縁の幅(自分で描く影のまね。色は [`MARGIN_PIXEL`])。0 より大きければ、縁を除いた
+    /// コンテンツの矩形を、ウィンドウの幾何(xdg_surface.set_window_geometry)として伝える。
+    pub margin: i32,
     /// コンテンツの最小と最大の大きさ(xdg_toplevel.set_min_size、set_max_size)。Noneなら送らない。
     pub min_size: Option<(u32, u32)>,
     pub max_size: Option<(u32, u32)>,
+}
+
+/// xdg-decoration での、装飾の取り決め方。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Decoration {
+    /// 装飾のオブジェクトを作らない(取り決めない。クライアントが自分で描くことになる)。
+    None,
+    /// 装飾のオブジェクトを作り、server_side を求める(既定)。
+    #[default]
+    ServerSide,
+    /// 装飾のオブジェクトを作り、client_side を求める。
+    ClientSide,
+}
+
+impl Decoration {
+    /// zxdg_toplevel_decoration_v1 のモードの値。作らないならNone。
+    fn mode(self) -> Option<u32> {
+        match self {
+            Decoration::None => None,
+            Decoration::ClientSide => Some(1),
+            Decoration::ServerSide => Some(2),
+        }
+    }
 }
 
 /// 次のイベントを少しだけ待った結果。
@@ -82,8 +112,11 @@ pub struct Wire {
     pub print_configures: bool,
     /// 次に配る、オブジェクトの番号。
     next_id: u32,
-    /// 飾りの描き方を尋ねるオブジェクト(zxdg_toplevel_decoration_v1)の番号。作っていなければNone。
+    /// 飾りの描き方を尋ねるオブジェクト(zxdg_toplevel_decoration_v1)と、その manager の番号。作っていなければNone。
     decoration: Option<u32>,
+    decoration_manager: Option<u32>,
+    /// 装飾の取り決めの答えを、標準出力に書くか。
+    pub print_decoration: bool,
     /// コンポジタが公開しているグローバル(番号と、インターフェースの名前)。
     globals: Vec<(u32, String)>,
     /// seat(wl_seat)とポインター(wl_pointer)の番号。[`Wire::watch_seat`] を呼ぶまではNone。
@@ -304,6 +337,35 @@ impl Wire {
         body.extend(id.to_le_bytes());
         self.send(&message(REGISTRY, 0, &body))?;
         Ok(id)
+    }
+
+    /// 装飾のモード `mode`(1 が client_side、2 が server_side)を求める(zxdg_toplevel_decoration_v1.set_mode)。
+    /// 装飾のオブジェクトがまだ無ければ作る(manager も、まだなら bind する)。commit はしない。
+    pub fn ask_decoration(&mut self, mode: u32) -> Result<(), String> {
+        let manager = match self.decoration_manager {
+            Some(manager) => manager,
+            None => {
+                let manager = self.bind("zxdg_decoration_manager_v1", 1)?;
+                self.decoration_manager = Some(manager);
+                manager
+            }
+        };
+        let decoration = match self.decoration {
+            Some(decoration) => decoration,
+            None => {
+                // zxdg_decoration_manager_v1.get_toplevel_decoration(新しい番号、toplevel)
+                let decoration = self.new_id();
+                self.send(&message(
+                    manager,
+                    1,
+                    &[decoration.to_le_bytes(), TOPLEVEL.to_le_bytes()].concat(),
+                ))?;
+                self.decoration = Some(decoration);
+                decoration
+            }
+        };
+        // zxdg_toplevel_decoration_v1.set_mode(モード)
+        self.send(&message(decoration, 1, &mode.to_le_bytes()))
     }
 
     /// seat のポインター(`pointer`)とキーボード(`keyboard`)を使い始める。この後、それぞれのイベントが届く
@@ -606,7 +668,7 @@ impl Wire {
             }
             // zxdg_toplevel_decoration_v1.configure(飾りを、どちらの側で描くか)
             (object, 0) if Some(object) == self.decoration => {
-                if self.print_configures {
+                if self.print_decoration {
                     let mode = match event.u32_at(0) {
                         Some(1) => "client-side".to_owned(),
                         Some(2) => "server-side".to_owned(),
@@ -704,6 +766,8 @@ pub fn connect() -> Result<Wire, String> {
         print_configures: false,
         next_id: FIRST_FREE,
         decoration: None,
+        decoration_manager: None,
+        print_decoration: false,
         globals: Vec::new(),
         seat: None,
         pointer: None,
@@ -831,15 +895,29 @@ pub fn open_window_with(
             ))?;
         }
     }
-    wire.commit()?;
-    wire.wait_for("the first configure", |e| {
-        (e.object, e.opcode) == (XDG_SURFACE, 0)
-    })?;
-
-    // プールとバッファを作る。プールのfdは、要求と一緒に送る。
+    // プールとバッファを作る。プールのfdは、要求と一緒に送る。番号を順に使うため、装飾のオブジェクトより先に作る
+    // (バッファを画面に付けるのは、最初の configure の後)。縁があれば、縁を含めた大きさの絵にする。
+    let (content_w, content_h, margin) = (width, height, setup.margin.max(0));
+    let (width, height) = (content_w + 2 * margin, content_h + 2 * margin);
     let stride = width * 4;
     let pool_size = stride * height;
-    let pool = make_pool(width, height, pixel)?;
+    let pool = if margin > 0 {
+        let pixels: Vec<u8> = (0..height)
+            .flat_map(|y| (0..width).map(move |x| (x, y)))
+            .flat_map(|(x, y)| {
+                let inside = (margin..margin + content_w).contains(&x)
+                    && (margin..margin + content_h).contains(&y);
+                if inside {
+                    pixel
+                } else {
+                    MARGIN_PIXEL
+                }
+            })
+            .collect();
+        make_pool_from(&pixels)?
+    } else {
+        make_pool(width, height, pixel)?
+    };
     wire.send_with_fd(
         &message(
             SHM,
@@ -855,18 +933,29 @@ pub fn open_window_with(
     create_buffer.extend(FORMAT_XRGB8888.to_le_bytes());
     wire.send(&message(POOL, 0, &create_buffer))?;
 
-    if setup.decoration {
-        // 番号を順に使うため、バッファを作った後に作る。バッファを画面に付ける前なので、決まりには合っている。
-        let (manager, decoration) = (wire.new_id(), wire.new_id());
-        wire.send(&bind("zxdg_decoration_manager_v1", 1, manager)?)?;
-        // zxdg_decoration_manager_v1.get_toplevel_decoration(新しい番号、toplevel)
+    if margin > 0 {
+        // xdg_surface.set_window_geometry(x, y, 幅, 高さ):縁を除いた所がウィンドウ。
         wire.send(&message(
-            manager,
-            1,
-            &[decoration.to_le_bytes(), TOPLEVEL.to_le_bytes()].concat(),
+            XDG_SURFACE,
+            3,
+            &[margin, margin, content_w, content_h]
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<u8>>(),
         ))?;
-        wire.decoration = Some(decoration);
     }
+    // 装飾の取り決め(xdg-decoration)は、最初の commit の前に始める(決まりで勧められている形)。
+    wire.print_decoration = setup.print_decoration;
+    if let Some(mode) = setup.decoration.mode() {
+        let manager = wire.new_id();
+        wire.send(&bind("zxdg_decoration_manager_v1", 1, manager)?)?;
+        wire.decoration_manager = Some(manager);
+        wire.ask_decoration(mode)?;
+    }
+    wire.commit()?;
+    wire.wait_for("the first configure", |e| {
+        (e.object, e.opcode) == (XDG_SURFACE, 0)
+    })?;
 
     // バッファを出し、frameコールバックが届くまで待つ(コンポジタが描いた通知)。
     let first_frame = wire.new_id();

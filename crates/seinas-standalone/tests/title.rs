@@ -287,13 +287,30 @@ fn a_broken_font_file_does_not_stop_the_compositor() {
 fn the_client_is_told_that_the_server_draws_the_decoration() {
     let seinas = Compositor::start("th");
     let client = seinas.connect_test_client(&["window", "--decoration"]);
-    // 最大化・最小化・全画面はできないと伝える(できることの並びが、空)。
-    client.wait_for_line("window: wm_capabilities [maximize]");
-    // 最初のconfigureで伝える大きさは、画面(640x480)からタイトルバーの高さを引いたもの。
-    assert_eq!(
-        client.next_line("the first configure"),
-        format!("window: configure 640x{} [activated]", 480 - BAR)
+    // 最初の configure のまとまりまでの行。装飾の取り決めは最初の commit の前に始めるので、答え
+    // (zxdg_toplevel_decoration_v1.configure)も、このまとまりに入る。
+    let mut lines = Vec::new();
+    loop {
+        let line = client.next_line("the first configure");
+        let done = line.starts_with("window: configure ");
+        lines.push(line);
+        if done {
+            break;
+        }
+    }
+    // 最大化はできると伝える(最小化と全画面はできない)。
+    assert!(
+        lines.contains(&"window: wm_capabilities [maximize]".to_owned()),
+        "{lines:?}"
     );
     // xdg-decorationで尋ねると、サーバーの側で描くと答える。
-    client.wait_for_line("window: decoration server-side");
+    assert!(
+        lines.contains(&"window: decoration server-side".to_owned()),
+        "{lines:?}"
+    );
+    // 最初のconfigureで伝える大きさは、画面(640x480)からタイトルバーの高さを引いたもの。
+    assert_eq!(
+        lines.last().unwrap(),
+        &format!("window: configure 640x{} [activated]", 480 - BAR)
+    );
 }

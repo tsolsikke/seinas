@@ -4,7 +4,7 @@
 //! 決まりの説明は `docs/window-placement.md` にある。
 
 use crate::{
-    decoration::{in_cut_corner, TITLE_BAR_HEIGHT},
+    decoration::in_cut_corner,
     geometry::{Point, PointF, Rect, Size},
 };
 
@@ -92,6 +92,24 @@ pub fn edges_at(outer: Rect, point: PointF) -> Option<Edges> {
     Some(edges)
 }
 
+/// 修飾キーを押しながら外枠 `outer` の中の点 `point` を押して大きさを変えるときに、動かす辺。外枠を縦と横に
+/// 3 つずつに分け、点に近い側の辺を動かす(左の 3 分の 1 なら左の辺、右の 3 分の 1 なら右の辺。縦も同じ)。真ん中
+/// なら、右下の角。
+pub fn edges_toward(outer: Rect, point: PointF) -> Edges {
+    let third = |start: i32, length: i32, at: f64| {
+        let offset = (at - f64::from(start)) / f64::from(length.max(1));
+        (offset < 1.0 / 3.0, offset >= 2.0 / 3.0)
+    };
+    let (left, right) = third(outer.loc.x, outer.size.w, point.x);
+    let (top, bottom) = third(outer.loc.y, outer.size.h, point.y);
+    let edges = Edges::new(top, bottom, left, right);
+    if edges.is_empty() {
+        Edges::BOTTOM_RIGHT
+    } else {
+        edges
+    }
+}
+
 /// サイズ変更を始めたときの様子。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ResizeStart {
@@ -132,9 +150,10 @@ pub fn resized_content(start: ResizeStart, point: PointF, limits: SizeLimits, ar
         h += dy;
     } else if edges.top {
         h -= dy;
-        // 下の端は動かないので、タイトルバーの上の端が area の上に来る高さまで。
-        let bottom = start.location.y + TITLE_BAR_HEIGHT + start.content.h;
-        h = h.min(bottom - TITLE_BAR_HEIGHT - area.loc.y);
+        // 下の端は動かないので、外枠の上の端(タイトルバーがあればその上の端)が area の上に来る高さまで。外枠の
+        // 下の端は、外枠の左上 + タイトルバー + コンテンツなので、タイトルバーの高さによらず、外枠の左上から
+        // area の上の端までの分だけ伸ばせる。
+        h = h.min(start.location.y + start.content.h - area.loc.y);
     }
     let limit = |value: i32, min: i32, max: i32, own_min: i32| {
         let min = min.max(own_min);
@@ -173,6 +192,7 @@ pub fn anchored_location(start: ResizeStart, now: Size) -> Point {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decoration::TITLE_BAR_HEIGHT;
 
     const AREA: Rect = Rect {
         loc: Point { x: 0, y: 0 },
@@ -228,6 +248,22 @@ mod tests {
         assert_eq!(at(91.9, 200.0), None);
         assert_eq!(at(150.0, 294.0), None);
         assert_eq!(at(308.0, 200.0), None);
+    }
+
+    #[test]
+    fn a_modifier_resize_moves_the_edges_near_the_point() {
+        // 外枠は x 100〜300、y 100〜286。3 つに分けた境は、x 166.7・233.3、y 162・224。
+        let at = |x: f64, y: f64| edges_toward(outer(), (x, y).into());
+        assert_eq!(at(110.0, 110.0), Edges::TOP_LEFT);
+        assert_eq!(at(290.0, 110.0), Edges::TOP_RIGHT);
+        assert_eq!(at(110.0, 280.0), Edges::BOTTOM_LEFT);
+        assert_eq!(at(290.0, 280.0), Edges::BOTTOM_RIGHT);
+        assert_eq!(at(200.0, 110.0), Edges::TOP);
+        assert_eq!(at(200.0, 280.0), Edges::BOTTOM);
+        assert_eq!(at(110.0, 190.0), Edges::LEFT);
+        assert_eq!(at(290.0, 190.0), Edges::RIGHT);
+        // 真ん中は、右下の角。
+        assert_eq!(at(200.0, 190.0), Edges::BOTTOM_RIGHT);
     }
 
     #[test]

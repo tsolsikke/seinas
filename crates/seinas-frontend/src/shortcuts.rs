@@ -75,6 +75,11 @@ pub const RELEASE_INPUT_METHOD: Shortcut = Shortcut {
     modifiers: ALT_SHIFT,
 };
 
+/// ウィンドウを動かす修飾キーの既定(Alt)。押しながら、ウィンドウのどこでも、左のボタンでドラッグすると動かし、
+/// 右のボタンでドラッグすると大きさを変える(Seinas が飾りを描かないウィンドウのため)。入れ子の構成(WSLg)で、
+/// Alt は届く(Alt+Shift+F12 で確かめた。2026-10-15)。Super(Windows キー)は、Windows が先に使う。
+pub const WINDOW_DRAG: Modifiers = ALT;
+
 /// 1 つのショートカット。keysym(xkb の数)と、そのとき押されている修飾キーの組。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Shortcut {
@@ -101,6 +106,8 @@ pub struct SwitchKeys {
     pub next: Vec<Shortcut>,
     pub previous: Vec<Shortcut>,
     pub release_input_method: Vec<Shortcut>,
+    /// ウィンドウを動かす修飾キー(既定は `WINDOW_DRAG`。Alt)。押している修飾キーが、これとちょうど同じときに働く。
+    pub window_drag: Modifiers,
 }
 
 impl SwitchKeys {
@@ -112,6 +119,7 @@ impl SwitchKeys {
             next: vec![SWITCH_NEXT],
             previous: vec![SWITCH_PREVIOUS],
             release_input_method: vec![RELEASE_INPUT_METHOD],
+            window_drag: WINDOW_DRAG,
         };
         if nested {
             keys.next.push(SWITCH_NEXT_NESTED);

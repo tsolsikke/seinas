@@ -287,13 +287,23 @@ impl<T> Stack<T> {
     /// ウィンドウには当たらない。最大化していないウィンドウの、角を欠いた所にも当たらない(後ろのウィンドウに当たる)。
     /// 見せるだけのウィンドウがあれば、それを先に見る([`Stack::iter_shown`] の順)。
     pub fn index_at(&self, point: PointF, size_of: impl Fn(&T) -> Option<Size>) -> Option<usize> {
+        self.index_at_shaped(point, |item| size_of(item).map(|size| (size, true)))
+    }
+
+    /// [`Stack::index_at`] と同じだが、`shape_of` が、大きさと、角を欠くか(Seinas が飾りを描くウィンドウか)を返す。
+    /// 角を欠かないウィンドウは、外枠の矩形の全体で当たる。最大化しているウィンドウは、どちらでも角を欠かない。
+    pub fn index_at_shaped(
+        &self,
+        point: PointF,
+        shape_of: impl Fn(&T) -> Option<(Size, bool)>,
+    ) -> Option<usize> {
         let id = self
             .iter_shown()
             .find(|(entry, _)| {
-                size_of(&entry.item).is_some_and(|size| {
+                shape_of(&entry.item).is_some_and(|(size, rounded)| {
                     frame_contains(
                         Rect::new(entry.location, size),
-                        !entry.is_maximized(),
+                        rounded && !entry.is_maximized(),
                         point,
                     )
                 })
