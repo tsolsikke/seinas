@@ -1698,12 +1698,17 @@ fn a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_
     // 「離した」を送り、事実と違うログを出してしまう。
     let seinas = Compositor::start_with_input("kj");
     let _window = open_window(&seinas, "ウィンドウ");
-    // built-in の virtual-keyboard に keymap を送らない IME は、grab の modifiers を送り直したところで切られる。
-    let mut ime = connect_ime(&seinas, &["--no-builtin-keymap"]);
-    // 接続が切られるので、synced は待たない。
-    ime.send_line("vk-new a");
-    ime.send_line(&format!("vk-key a {KEY_A} press"));
-    wait_for_log(&seinas, "sent before keymap.");
+    // built-in の virtual-keyboard に keymap を送らない IME は、grab の modifiers を送り直したところで、NoKeymap の
+    // エラーで切られて終わる(終わりの値 2)。切られて終わったことを確かめてから先へ進み、終わった IME には何も
+    // 書かない(いつ終わるかは決まっていないので、書くと、先に終わったときに EPIPE になる)。key の道は、modifiers
+    // で先に切られるので、このテストでは通らない(コードの道は modifiers と同じ)。
+    let mut ime = seinas.connect_ime_client(&["ime", "--no-builtin-keymap"]);
+    let code = common::wait_for("the IME to be disconnected and end", || {
+        ime.process.0.try_wait().expect("look at the IME")
+    })
+    .code();
+    assert_eq!(code, Some(2), "{}", seinas.log());
+    wait_for_log(&seinas, "`modifiers` sent before keymap.");
     // 別のクライアントで往復して、切れた接続の片付けが済んだ後にする(時間には頼らない)。
     let other = seinas.connect_test_client(&["window", "--title", "other"]);
     other.wait_for_line("window: drawn");
