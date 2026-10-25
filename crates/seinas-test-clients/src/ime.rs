@@ -21,7 +21,7 @@
 //!
 //! 標準入力の行: `release`(keyboard の grab を手放す)、`quit`(接続を切って終わる)、
 //! `sync`(それまでの頼みをコンポジタが処理し終えたら `ime: synced` を書く)、`again`(同じ接続から 2 つ目の
-//! get_input_method を頼む)、`destroy-input-method`(input method だけを destroy する。grab と virtual-keyboard は
+//! get_input_method を頼む)、`again-grab`(2 つ目の input method で keyboard を grab する)、`destroy-input-method`(input method だけを destroy する。grab と virtual-keyboard は
 //! 残す)、`vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED`(受けたキーと関係なく、virtual-keyboard で
 //! キーと修飾キーの状態を送る)、`hold`(この後、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard の
 //! キーと修飾キー)を送らずにためる)、`send`(ためた要求を、ためた順に送り、ためるのをやめる)、
@@ -38,7 +38,8 @@
 //! - `ime: key 30 pressed`(または `released`): grab でキーが届いた。
 //! - `ime: preedit あい`、`ime: commit あい`: 送った変換中の文字と、確定した文字。
 //! - `ime: released`、`ime: synced`、`ime: holding`、`ime: sent N`: 標準入力の行を処理した(N は送った要求の数)。
-//! - `ime: second unavailable`: `again` の 2 つ目が断られた。`ime: input method destroyed`: `destroy-input-method` を送った。
+//! - `ime: second unavailable`: `again` の 2 つ目が断られた。`ime: second grabbed`: `again-grab` で、2 つ目の input method
+//!   で grab を頼んだ。`ime: second key 30 pressed`(または `released`): 2 つ目の grab でキーが届いた。`ime: input method destroyed`: `destroy-input-method` を送った。
 //! - `ime: protocol error …`: コンポジタからプロトコルのエラーが届いた(この後、終わる)。
 
 use std::{
@@ -165,8 +166,9 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut ready_sync = None;
     let mut sync = None;
     let mut released = false;
-    // 標準入力の `again` で、同じ接続から頼んだ 2 つ目の input method。
+    // 標準入力の `again` で、同じ接続から頼んだ 2 つ目の input method と、`again-grab` で取ったその grab。
     let mut second = None;
+    let mut second_grab = None;
     // 標準入力の `hold` の後、キーを受けて送る要求をためる所。
     let mut held: Option<Vec<Vec<u8>>> = None;
     // grab で届いた keymap の形式とコンテンツ(`vk-keymap` で、ほかの virtual-keyboard にも送るため)。
@@ -255,6 +257,15 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     ready_sync = Some(id);
                 }
                 // key(serial、時刻、キー、状態)
+                // 2 つ目の input method の grab に届いた key(serial、時刻、キー、状態)
+                (object, 1) if Some(object) == second_grab => {
+                    let key = event.u32_at(8).unwrap_or(0);
+                    let pressed = event.u32_at(12) == Some(1);
+                    say(&format!(
+                        "second key {key} {}",
+                        if pressed { "pressed" } else { "released" }
+                    ));
+                }
                 (object, 1) if object == grab => {
                     let time = event.u32_at(4).unwrap_or(0);
                     let key = event.u32_at(8).unwrap_or(0);
@@ -364,6 +375,15 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                         &[seat.to_le_bytes(), id.to_le_bytes()].concat(),
                     ))?;
                     second = Some(id);
+                }
+                "again-grab" => {
+                    // 2 つ目の input method で、keyboard を grab する(zwp_input_method_v2.grab_keyboard)。
+                    if let Some(second) = second {
+                        let id = wire.new_id();
+                        wire.send(&message(second, 5, &id.to_le_bytes()))?;
+                        second_grab = Some(id);
+                        say("second grabbed");
+                    }
                 }
                 "destroy-input-method" => {
                     // zwp_input_method_v2.destroy(grab と virtual-keyboard は残す)

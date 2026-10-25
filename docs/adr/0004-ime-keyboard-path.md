@@ -93,11 +93,13 @@ Kieli について決まっていること:運用者の決定 K1〜K9(2026-10-14
 - input method の destroy(2026-10-16 に決めた):IME が `zwp_input_method_v2` だけを destroy して、grab のオブジェクトを残していても、その世代の grab・virtual-keyboard の認可・候補ウィンドウを片付けて、直接の経路にする(IME が去ったときと同じ片付け)。仕様の根拠は input-method-unstable-v2.xml(wayland-protocols-misc 0.3.12)357〜363 行の `zwp_input_method_v2.destroy`:「Destroys the zwp_text_input_v2 object and any associated child objects, i.e. zwp_input_popup_surface_v2 and zwp_input_method_keyboard_grab_v2.」(対象を zwp_text_input_v2 と書いているのは XML の書き損じで、input method の destroy の説明)。
   - 片付けるのは、その接続・seat・世代のものだけ。keyboard の grab は、それが IME の grab のときだけ外す。物理のキーボードの状態には触れない。
   - 片付けは 1 回だけ行う。input method と grab の destroy の順が違っても、接続断と重なっても、`wl_keyboard` の leave と enter の送り直しは 1 回。
-  - 古い世代の grab のオブジェクトが残っている間は、新しい `get_input_method` を断る(ログに `the destroyed input method still has a keyboard grab`)。古い grab の destroy(Smithay 0.7.0 の部品は、seat の grab を外す)が、新しい IME の grab を外さないようにするため。
-    - これは暫定の守り(2026-10-16 に確かめた)。Smithay 0.7.0 の `src/wayland/input_method/input_method_keyboard_grab.rs` 106〜114 行の `destroyed` は、持ち主も世代も確かめずに、共有の grab を `None` にし(112 行 `data.handle.inner.lock().unwrap().grab = None`)、seat の keyboard の `unset_grab` を呼ぶ(113 行)。共有の grab は seat に 1 つで(`input_method_handle.rs` 30〜35 行の `InputMethod` の `keyboard_grab`)、どの grab のオブジェクトの user data も、その同じものを持つ(同じファイルの 277〜292 行の `GrabKeyboard`)。`unset_grab`(`src/input/keyboard/mod.rs` 892〜898 行)は、そのとき付いている grab を、何のものかを問わずに外す。そのため、古い grab を残したまま新しい IME を受け入れると、古い grab の destroy で、新しい IME の grab が外れる。
-    - 本来の形は、古い grab を効力の無いものとして扱い、新しい IME を受け入れること。それには、grab の破棄の処理で、持ち主と世代を確かめることが要る。Smithay を変えずにできるか(Seinas の側で destroyed を包むなど)は、C1S4 で調べる。
-    - 次の 2 つは、別の条件として扱う。1 つは「古い grab のリソースが残っているだけ」で、本来は新しい IME を受け入れられる(今断っているのは、上の Smithay の動きのため)。もう 1 つは「古い virtual-keyboard の世代を安全に見分けられない」(1.6 の限界)で、これは同じ接続のままでは安全にできず、再接続が要る。
-    - 上流の Smithay は、2026-10-17 の時点で直っていない(master 023b78b1 も同じ。PR #2147 は未マージ)。手元の Smithay の clone に直しの patch(今の grab のオブジェクトが破棄されたときだけ grab を外す)を残しているが、依存と `[patch.crates-io]` を変えない決まりのため、Seinas には当てていない。この守りを外すには、依存の扱いを決め直す必要がある。
+  - 古い世代の grab のオブジェクトが残っていても、新しい `get_input_method` を受け入れる(2026-10-25 に改めた。同じ接続でも、別の接続でも)。古い grab は、効力の無いものとして扱う。
+    - Smithay の側:Smithay 0.7.0 の grab の `destroyed` は、持ち主も世代も確かめずに、共有の grab を空にして seat の keyboard の grab を外していた(`src/wayland/input_method/input_method_keyboard_grab.rs` 106〜114 行。共有の grab は seat に 1 つで、どの grab のオブジェクトの user data も同じものを持つ)。そのため、古い grab の destroy が新しい IME の grab を外した。fork のブランチ `seinas/0.7.0` の直し(`01d2b90d`)で、破棄されたものが共有の grab の今のオブジェクトのときだけ外す形にした(ADR 0006、`docs/smithay-patches.md`)。上流は、2026-10-25 の時点で直っていない(master `24647fc8`。PR #2147 は未マージ)。
+    - Seinas の側の記録:IME(`Connected`)ごとに、今の grab のオブジェクトを 1 つ持つ(最後の `grab_keyboard` で作ったもの。Smithay が今の grab として持つものと同じ)。grab が破棄されたら、その `ObjectId` が今の grab のものと同じときだけ、grab が無くなったとして扱う(ログに `the input method released the keyboard`、IME が去ったかの判定)。前に作ったものや、前の世代のものの破棄は、何もしない。
+    - 作ったオブジェクトの見分け方:wayland-server 0.31.14 の `New` からは、作るオブジェクトの番号を取り出せない。wayland-backend 0.3.17 は、要求の新しいオブジェクトを data の無い形(`UninitObjectData`)で先に作り、要求の処理が返った後で data を入れる(`src/rs/server_impl/client.rs` 653〜684 行、`common_poll.rs` 278 行)。そこで、`grab_keyboard` を Smithay へ渡した後、そのクライアントの grab のオブジェクトのうち、まだ覚えていない、data の無いものを、いま作ったものとする。
+    - 番号の使い回し:`ObjectId` の比べは、プロトコルの番号のほかに、クライアントの中でオブジェクトを作るたびに 1 つ進む serial と、クライアントの id(これも serial つき)と、interface を比べる(wayland-backend 0.3.17 の `src/rs/server_impl/mod.rs` 59〜66 行、`client.rs` 59〜61 行・653〜670 行)。破棄の後に同じ番号が使い回されても、serial が違うので取り違えない(u32 の serial が一周するまで)。
+    - 次の 2 つは、別の条件として扱う。1 つは「古い grab のリソースが残っているだけ」で、上の形で新しい IME を受け入れる。もう 1 つは「古い virtual-keyboard の世代を安全に見分けられない」(1.6 の限界)で、これは同じ接続のままでは安全にできず、再接続が要る。
+    - 2026-10-16〜10-24 は、Smithay を変えない決まりのため、古い grab が残る間は新しい IME を断る暫定の守り(ログに `the destroyed input method still has a keyboard grab`)を置いていた。上の直しで外した。
 - 緊急解除:Seinas が IME より先に見るショートカット(1.8)で、IME のクライアントの接続を切る(R-b)。
   - 既定のキーは Alt+Shift+F12。入れ子(WSLg)では、運用者が、届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認(Seinas のキーボードの入力の装置が、まだ無い)。`seinas.conf` の `ime-release` で変えられる。
   - 発動するのは、物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけ。IME が virtual-keyboard で送ったキーでは発動しない(Smithay 0.7.0 の virtual-keyboard のキーは、ショートカットの判定を通らず、フォーカスのあるクライアントへ直に届く)。
@@ -170,7 +172,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
   - 片付けない時:ふつうの grab の release だけでは、virtual-keyboard の押下を消さない。release の後に、正当な「離した」が遅れて届く形も正常である。
   - 根拠:virtual-keyboard-unstable-v1.xml の `destroy` には、押したキーの扱いの説明が無い(86〜88 行)。input-method-unstable-v2.xml の grab の `release` は「release the grab object」とだけ書き、virtual-keyboard の押下に触れない(438〜440 行)。どちらも wayland-protocols-misc 0.3.12 で確かめた。wlroots 0.19.0 は、キーボードを片付けるとき(`wlr_keyboard_finish`)に、押したままのキーの「離した」を送る(GPT-6 の答えによる。Seinas の側では、wlroots のソースを確かめていない)。
   - 不具合のある IME が、「離した」を送らずに接続を保つ場合(grab を release した後など)は、緊急解除(1.5)で復旧する。
-  - 古い grab を効力の無いものとして扱う本来の形(手元の Smithay の直しを `[patch.crates-io]` で当てる案)は、依存を変えない決まりの例外になるので、運用者の判断の後で別の課題にした。それまでは、1.5 の守り(古い grab が残る間は新しい IME を断る)を残す。
+  - 古い grab を効力の無いものとして扱う本来の形は、Smithay の fork の直しと、Seinas の側の今の grab の記録で入れた(2026-10-25。1.5)。
 
 ### 1.10 変換中の文字と、text-input を使わないアプリ
 

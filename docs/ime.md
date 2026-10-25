@@ -48,7 +48,7 @@ Alt+Tab の最中も、Alt は IME へ渡ります。Alt を離すと、Seinas �
 時間切れで「応答しない」と見なす決まりは、2026-10-15 に取り消し、実装からも外しました(ADR 0004 の 1.5 と「取り消した決定」)。文字を出さずにキーを使うのは、ふつうの IME の動きです。IME にキーごとの返事は求めません。直接の道に戻すのは、次の 2 つのときだけです。
 
 - 接続断:IME のクライアントが去った(接続を切った、input method と grab を destroy した)とき。
-- input method の destroy:IME が `zwp_input_method_v2` だけを destroy し、grab を残したときも、その世代の grab・virtual-keyboard の認可・候補ウィンドウを片付けて、直接の道に戻します(仕様では、input method の destroy は子の grab と候補ウィンドウも破棄する。ADR 0004 の 1.5)。ログに `the input method was destroyed; its keyboard grab is ignored and keys go straight to the applications` を出します。古い grab のオブジェクトが残っている間は、新しい IME を断ります(`the destroyed input method still has a keyboard grab`)。片付けと、`wl_keyboard` の leave と enter の送り直しは、順が違っても 1 回だけです。
+- input method の destroy:IME が `zwp_input_method_v2` だけを destroy し、grab を残したときも、その世代の grab・virtual-keyboard の認可・候補ウィンドウを片付けて、直接の道に戻します(仕様では、input method の destroy は子の grab と候補ウィンドウも破棄する。ADR 0004 の 1.5)。ログに `the input method was destroyed; its keyboard grab is ignored and keys go straight to the applications` を出します。古い grab のオブジェクトが残っていても、新しい IME を受け入れます(同じ接続でも、別の接続でも)。古い grab の破棄は、新しい IME の grab を外しません(Smithay の fork の直し。`docs/smithay-patches.md`)。Seinas は、IME ごとに今の grab のオブジェクトを覚え、それが破棄されたときだけ、grab が無くなったとして扱います(ログに `the input method released the keyboard`)。片付けと、`wl_keyboard` の leave と enter の送り直しは、順が違っても 1 回だけです。
 - 緊急解除:Seinas のショートカット(既定は Alt+Shift+F12。入れ子(WSLg)では、運用者が届くこと・働くことを確かめた(2026-10-15)。ZeikOS では未確認。`seinas.conf` の `ime-release` で変えられる。`docs/config.md`)を押したとき。IME のクライアントの接続を切ります。IME のためのソケットを開かない構成(`--no-ime-socket`)では、このキーを予約せず、アプリへ渡します(ADR 0004 の 1.8)。ログに `the input method was released with the emergency key; its connection is closed and keys go straight to the applications` を出します。
   - IME の側からは、ただの切断に見えます。Seinas は接続を閉じるだけで、`wl_display.error` は送りません(ADR 0004 の 1.5)。IME は、読むと接続の終わり(EOF)、送ると EPIPE になります。切断の理由の文(`a client disconnected: ProtocolError { … }`)は、Seinas のログにだけ出ます。
   - 物理のキーボード(入れ子では親の `wl_keyboard`)から来たキーだけで発動します。IME が virtual-keyboard で送ったキーは、ショートカットの判定を通らないので、発動しません。
@@ -166,7 +166,8 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `a_virtual_keyboard_key_does_not_release_the_ime` | IME が virtual-keyboard で送った Alt+Shift+F12 では、緊急解除にならない |
 | `keys_reach_the_window_after_the_ime_destroys_only_its_input_method` | IME が input method だけを destroy し、grab を残しても、次のキーがウィンドウに届き、IME には届かない |
 | `the_cleanup_runs_once_whatever_the_order` | input method が先・grab が先のどちらの順で消えても、leave の送り直しは 1 回で、次のキーは直接届く |
-| `the_old_cleanup_does_not_remove_the_grab_of_a_new_ime` | 古い世代の grab が残っている間は新しい IME を断り、release の後につないだ IME の grab は、古い接続が切れても外れない |
+| `the_old_cleanup_does_not_remove_the_grab_of_a_new_ime` | 古い世代の grab が残っていても、別の接続の新しい IME を受け入れ、古い grab の release と古い接続の切断で、新しい IME の grab は外れない(手放したログも出ない) |
+| `the_old_grab_on_the_same_connection_does_not_remove_the_new_grab` | 同じ接続で、input method だけを destroy した後に次の input method で grab を取ると、古い grab を release しても、キーは新しい grab に届く(手放したログも出ない) |
 | `a_second_release_before_the_cleanup_says_so` | 緊急解除の後、クリーンアップの前にもう一度押すと、「no input method is running」ではなく、クリーンアップの途中であることをログに書く |
 | `a_new_ime_connection_continues_in_the_same_field` | 古い IME が去った後、新しい接続の IME がつながると、同じウィンドウの同じ欄に enter が届き、クリックし直さずに続けて打てる |
 | `the_candidate_window_follows_the_cursor_inside_the_output` | 候補ウィンドウ(40x30)が、カーソルの矩形の下に出て、カーソルの矩形を右の端へ動かすと、画面の中へ寄る |

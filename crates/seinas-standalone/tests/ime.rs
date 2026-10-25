@@ -1111,24 +1111,55 @@ fn the_old_cleanup_does_not_remove_the_grab_of_a_new_ime() {
     let mut old = connect_ime_to_window(&seinas);
     old.send_line("destroy-input-method");
     old.wait_for_line("ime: input method destroyed");
-    // 古い世代の grab のオブジェクトが残っている間は、新しい IME を受け入れない。
-    let mut refused = seinas.connect_ime_client(&["ime"]);
-    refused.wait_for_line("ime: unavailable");
-    let _ = refused.process.0.wait();
-    wait_for_log(
-        &seinas,
-        "the destroyed input method still has a keyboard grab",
-    );
-    // 古い grab を release した後につないだ IME は使え、古い接続が切れても、その grab は外れない。
+    // 古い世代の grab のオブジェクトが残っていても、別の接続の新しい IME を受け入れる。
+    let new = connect_ime_to_window(&seinas);
+    // 古い grab を release し、古い接続を切っても、新しい IME の grab は外れない。
     old.send_line("release");
     old.wait_for_line("ime: released");
-    wait_for_log(&seinas, "the input method left");
-    let new = connect_ime_to_window(&seinas);
-    old.send_line("quit");
-    let _ = old.process.0.wait();
     tap(&mut seinas, KEY_A);
     new.wait_for_line("ime: key 30 pressed");
     while next_text_line(&window, "あ") != "window: preedit あ" {}
+    old.send_line("quit");
+    let _ = old.process.0.wait();
+    tap(&mut seinas, KEY_X);
+    new.wait_for_line("ime: key 45 pressed");
+    let log = seinas.log();
+    assert!(
+        !log.contains("the destroyed input method still has a keyboard grab"),
+        "{log}"
+    );
+    assert!(
+        !log.contains("the input method released the keyboard"),
+        "{log}"
+    );
+}
+
+#[test]
+fn the_old_grab_on_the_same_connection_does_not_remove_the_new_grab() {
+    let mut seinas = Compositor::start_with_input("jq");
+    let _window = open_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime(&seinas, &[]);
+    // input method だけを destroy し(grab は残す)、同じ接続で次の input method を受け入れて grab を取る。
+    ime_lines(&mut ime, &["destroy-input-method", "again", "again-grab"]);
+    common::wait_for("the second input method", || {
+        (seinas.log().matches("an input method connected").count() == 2).then_some(())
+    });
+    // 古い grab を release しても、新しい grab は外れず、キーは新しい grab に届く。
+    ime_lines(&mut ime, &["release"]);
+    tap(&mut seinas, KEY_A);
+    loop {
+        let line = ime.next_line("a on the second grab");
+        assert_ne!(line, "ime: second unavailable");
+        if line == "ime: second key 30 pressed" {
+            break;
+        }
+    }
+    // 古い grab は今の grab ではないので、「手放した」とは書かない(grab のオブジェクトの同一性で見分ける)。
+    let log = seinas.log();
+    assert!(
+        !log.contains("the input method released the keyboard"),
+        "{log}"
+    );
 }
 
 #[test]

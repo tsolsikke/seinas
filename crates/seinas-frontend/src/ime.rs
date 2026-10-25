@@ -15,6 +15,9 @@
 //!   入れ物([`RefusedInputMethod`])で作って、すぐ `unavailable` を送る。その後の要求は、何もせずに捨てる。
 //! - IME が去ったこと、keyboard の grab を手放したことをログに出す。IME が去ったら、フォーカスのあるアプリへ
 //!   `wl_keyboard` の leave と enter を送り直す(IME が virtual-keyboard で押したキーを、押されたまま残さない)。
+//! - IME ごとに、今の keyboard の grab のオブジェクトを覚え([`new_grab_object`])、それが破棄されたときだけ grab が
+//!   無くなったとして扱う。前に作った grab や前の世代の grab が残っていても、新しい IME を受け入れる(古い grab の
+//!   破棄は、Smithay の fork の直しで、新しい grab を外さない。ADR 0004 の 1.5)。
 //! - 緊急解除([`release_ime`]):Seinas のショートカットで、IME の認可を消し、grab を外し、候補ウィンドウを隠して、
 //!   接続を切る(ADR 0004 の 1.5)。切った接続のクリーンアップ(Smithay の部品の destroy)が済むまで、次の IME は
 //!   受け入れない(Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため)。
@@ -110,6 +113,9 @@ pub struct ImeState {
     vk_generation: HashMap<ObjectId, u64>,
     /// クライアントごとの、生きている virtual-keyboard(Smithay へ通したもの)。
     vk_clients: HashMap<ClientId, ClientKeyboards>,
+    /// 生きている keyboard の grab のオブジェクト(Smithay へ通したもの。どの世代のものも)。grab を作る要求の後に、
+    /// まだ覚えていないものを、いま作ったものとして見分けるのに使う([`new_grab_object`])。
+    grab_objects: HashSet<ObjectId>,
 }
 
 /// 1 つの virtual-keyboard が、アプリへ渡した押下の状態。
@@ -233,8 +239,11 @@ struct Connected {
     refreshed: bool,
     /// `zwp_input_method_v2` が残っているか。
     input_method: bool,
-    /// 残っている keyboard の grab(`zwp_input_method_keyboard_grab_v2`)の数。
-    grabs: usize,
+    /// この IME の、今の keyboard の grab のオブジェクト(`zwp_input_method_keyboard_grab_v2`。最後に作ったもの。
+    /// Smithay が今の grab として持つものと同じ)。前に作ったものや、前の世代のものは、破棄されても grab に
+    /// 効かない(Smithay の fork の直し。ADR 0004 の 1.5)。ObjectId は、プロトコルの番号のほかに、オブジェクトを
+    /// 作るたびに進む serial とクライアントも比べるので、番号が使い回されても取り違えない。
+    grab: Option<ObjectId>,
 }
 
 /// Smithay へ渡さなかった IME(2 つ目から)のオブジェクトに付けるもの。要求は、何もせずに捨てる。
@@ -281,6 +290,7 @@ impl ImeState {
             vk_pending: HashMap::new(),
             vk_generation: HashMap::new(),
             vk_clients: HashMap::new(),
+            grab_objects: HashSet::new(),
         }
     }
 
@@ -314,7 +324,7 @@ impl ImeState {
         if !self
             .connected
             .as_ref()
-            .is_some_and(|connected| !connected.input_method && connected.grabs == 0)
+            .is_some_and(|connected| !connected.input_method && connected.grab.is_none())
         {
             return false;
         }
@@ -453,18 +463,55 @@ pub fn popup_hidden<D: FrontendHost>(state: &mut D, popup: PopupSurface) {
     state.redraw_needed();
 }
 
+/// grab を作る要求(`grab_keyboard`)の処理の中で、いま作っている keyboard の grab のオブジェクト(クライアント
+/// `client` の、`known` に無いもの)。wayland-server の `New` からは、作るオブジェクトの番号を取り出せないので、
+/// Smithay の処理の後に、クライアントのオブジェクトから探す。
+///
+/// wayland-backend 0.3.17 は、要求の新しいオブジェクトを、まだ data の無い形(`UninitObjectData`)で先に作り、
+/// 要求の処理が返った後で data を入れる。そのため、いま作っているものは、data が Smithay のもの
+/// (`InputMethodKeyboardUserData`)でも、断った IME のもの(`RefusedInputMethod`)でもない。
+fn new_grab_object<D>(
+    dhandle: &DisplayHandle,
+    client: &Client,
+    known: &HashSet<ObjectId>,
+) -> Option<ObjectId>
+where
+    D: FrontendHost + 'static,
+{
+    // with_all_objects_for は、backend の状態のロックを持ったまま呼ぶので、中ではオブジェクトを引かない(同じ
+    // ロックを取って止まる)。先に、まだ覚えていない grab の番号を集める。
+    let mut candidates = Vec::new();
+    let _ = dhandle
+        .backend_handle()
+        .with_all_objects_for(client.id(), |id| {
+            if id.interface().name == ZwpInputMethodKeyboardGrabV2::interface().name
+                && !known.contains(&id)
+            {
+                candidates.push(id);
+            }
+        });
+    candidates.into_iter().find(|id| {
+        ZwpInputMethodKeyboardGrabV2::from_id(dhandle, id.clone()).is_ok_and(|grab| {
+            grab.data::<InputMethodKeyboardUserData<D>>().is_none()
+                && grab.data::<RefusedInputMethod>().is_none()
+        })
+    })
+}
+
 /// 新しい IME を断る理由。断らなければNone。
 fn refusal<D: FrontendHost>(state: &D, seat: &Seat<D>) -> Option<&'static str> {
     if seat.get_keyboard().is_none() {
         Some("the seat has no keyboard")
     } else if let Some(connected) = &state.frontend().ime.connected {
-        Some(if connected.revoked {
-            "the released input method is not cleaned up yet"
+        // 古い grab だけが残っているとき(input method は destroy された)は、断らない。Smithay の fork の直しで、
+        // 古い grab の破棄は新しい grab を外さない(ADR 0004 の 1.5)。
+        if connected.revoked {
+            Some("the released input method is not cleaned up yet")
         } else if !connected.input_method {
-            "the destroyed input method still has a keyboard grab"
+            None
         } else {
-            "another input method is running"
-        })
+            Some("another input method is running")
+        }
     } else {
         None
     }
@@ -509,7 +556,7 @@ where
                     retired: false,
                     refreshed: false,
                     input_method: true,
-                    grabs: 0,
+                    grab: None,
                 });
                 info!("an input method connected");
                 zwp_input_method_manager_v2::Request::GetInputMethod { seat, input_method }
@@ -565,9 +612,16 @@ where
         <InputMethodManagerState as Dispatch<ZwpInputMethodV2, InputMethodUserData<D>, D>>::request(
             state, client, resource, request, data, dhandle, data_init,
         );
-        let ime = &mut state.frontend_mut().ime;
-        if let (true, Some(connected)) = (grab, ime.connected.as_mut()) {
-            connected.grabs += 1;
+        if grab {
+            let created = new_grab_object::<D>(dhandle, client, &state.frontend().ime.grab_objects);
+            let ime = &mut state.frontend_mut().ime;
+            if let Some(id) = created {
+                ime.grab_objects.insert(id.clone());
+                if let Some(connected) = ime.connected.as_mut().filter(|c| c.client == client.id())
+                {
+                    connected.grab = Some(id);
+                }
+            }
         }
     }
 
@@ -588,7 +642,7 @@ where
         // 仕様では、input method の destroy は、その子(候補ウィンドウと keyboard の grab)も破棄する
         // (input-method-unstable-v2.xml の destroy)。grab のオブジェクトが残っていても、この世代を片付けて、
         // 直接の道に戻す。Smithay の部品は、ここで text-input の leave を送り終えている。
-        let grab_left = connected.grabs > 0;
+        let grab_left = connected.grab.is_some();
         let retired = retire(state, &client);
         if state.frontend_mut().ime.forget_if_gone() {
             refresh_keyboard_focus(state);
@@ -636,12 +690,19 @@ where
             InputMethodKeyboardUserData<D>,
             D,
         >>::destroyed(state, client.clone(), resource, data);
+        let id = resource.id();
         let ime = &mut state.frontend_mut().ime;
-        let Some(connected) = ime.connected.as_mut().filter(|c| c.client == client) else {
+        ime.grab_objects.remove(&id);
+        // 今の grab のオブジェクトのときだけ(前に作ったものや、前の世代のものの破棄は、grab に効かない)。
+        let Some(connected) = ime
+            .connected
+            .as_mut()
+            .filter(|c| c.client == client && c.grab.as_ref() == Some(&id))
+        else {
             return;
         };
-        connected.grabs = connected.grabs.saturating_sub(1);
-        if connected.grabs == 0 && connected.input_method {
+        connected.grab = None;
+        if connected.input_method {
             info!("the input method released the keyboard; keys go straight to the applications");
         }
         if ime.forget_if_gone() {
