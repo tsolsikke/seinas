@@ -68,11 +68,11 @@ ZeikOS の上では、release の `seinas-standalone`(コンポジタ)と `seina
 
 ### 置くファイル(v0.3.0)
 
-release `v0.3.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じです(2026-10-24 に、`tools/release-standalone.sh` と同じ手順で作って確かめた。CI の musl のビルドと同じバイト)。
+release `v0.3.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じです(2026-10-25 に、`31f907d` で `tools/release-standalone.sh v0.3.0` を動かして作った。CI の musl のビルドと同じバイト)。
 
 | release の上の名前 | 置き場(ZeikOS のイメージ) | 大きさ(バイト) | SHA-256 |
 | --- | --- | --- | --- |
-| `seinas-standalone` | `/bin/linux/seinas-standalone` | 9,074,264 | `68d3d3e3a94cd0c13c5e51fc31ef53870737393c2c1e3b9af0d9e04b61506a83` |
+| `seinas-standalone` | `/bin/linux/seinas-standalone` | 9,095,904 | `a4df394e1fcbd5fb2c2a490666e8de7434149582dda9e38b92e30beaccd55044` |
 | `seinas-standalone-v0.3.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 67,997 | `1fff0478bc19d285839eff17f61b08981bc0e40e88ae530aeff7fba49b44ea2a` |
 | `seinas-taskbar` | `/bin/linux/seinas-taskbar` | 4,966,232 | `4328035d9d04a9e1acbdda0471d54771b522f77c3cf67ee131bb8073b13c37a2` |
 | `seinas-taskbar-v0.3.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 57,048 | `2db60ce438fd4b7dffca5846f8f36e798ae73979e64b47166086553fa042704b` |
