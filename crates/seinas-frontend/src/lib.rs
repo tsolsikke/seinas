@@ -73,7 +73,7 @@ pub use switcher::Switcher;
 pub use switcher_view::{
     paint_switcher, switcher_layout, Row as SwitcherRow, SwitcherEntry, SwitcherLayout, MAX_ROWS,
     PANEL_MARGIN, PANEL_PADDING, PANEL_WIDTH, ROW_HEIGHT, SWITCHER_BACKGROUND, SWITCHER_BORDER,
-    SWITCHER_HIGHLIGHT, UNTITLED,
+    SWITCHER_HIGHLIGHT, SWITCHER_SELECTED_BACKGROUND, UNTITLED,
 };
 pub use title_bar::{SwitcherImage, TitleBar};
 
@@ -222,9 +222,11 @@ render_elements! {
 }
 
 /// 最大化の予告の枠の太さ(ピクセル)。
-pub const MAXIMIZE_MARK_WIDTH: i32 = 4;
-/// 最大化の予告の枠の色(activated のタイトルバーと同じ色)。
-pub const MAXIMIZE_MARK: [u8; 3] = seinas_theme::color::SELECTION;
+pub const MAXIMIZE_MARK_WIDTH: i32 = seinas_theme::maximize_preview::BORDER_WIDTH;
+/// 最大化の予告の枠の色(選んだものの色。オレンジ)。枠の内側には、同じ色の薄い面を重ねる。
+pub const MAXIMIZE_MARK: [u8; 3] = seinas_theme::maximize_preview::COLOR;
+/// 最大化の予告の、枠の内側の面の不透明度。
+pub const MAXIMIZE_FACE_OPACITY: f32 = seinas_theme::maximize_preview::FACE_OPACITY;
 
 /// フロントエンドの状態。`D` は、コンポジタの状態の型。
 pub struct Frontend<D: SeatHandler> {
@@ -284,8 +286,8 @@ pub struct Frontend<D: SeatHandler> {
     pub pings: Pings<ShellClient>,
     /// 接続を切ったクライアントのクリーンアップを、バックエンドに頼む([`reap_dead_clients`])。
     pub reap_requested: bool,
-    /// 最大化の予告の枠(上・下・左・右の 4 本)。
-    pub maximize_marks: [SolidColorBuffer; 4],
+    /// 最大化の予告の枠(上・下・左・右の 4 本)と、内側の薄い面。
+    pub maximize_marks: [SolidColorBuffer; 5],
     /// サイズ変更の最中か、その最後の大きさがまだ届いていないウィンドウ。左か上の辺を動かしたときに、
     /// 反対の辺の位置を保つのに使う。
     pub resize_anchors: HashMap<WindowId, ResizeStart>,
@@ -1173,23 +1175,28 @@ impl<D: FrontendHost> Frontend<D> {
         elements
     }
 
-    /// 最大化の予告の枠(使える範囲の内側に沿った、太さ [`MAXIMIZE_MARK_WIDTH`] の 4 本)を、描画の要素にする。
+    /// 最大化の予告(使える範囲の内側に沿った、太さ [`MAXIMIZE_MARK_WIDTH`] の 4 本の枠と、その内側の薄い面)を、
+    /// 描画の要素にする。面は、不透明度 [`MAXIMIZE_FACE_OPACITY`] で後ろに重ねる(色は premultiplied で渡す)。
     fn maximize_mark_elements(&mut self) -> impl Iterator<Item = SolidColorRenderElement> + '_ {
         let area = self.usable;
         let w = MAXIMIZE_MARK_WIDTH.min(area.size.w).min(area.size.h);
         let (x, y, width, height) = (area.loc.x, area.loc.y, area.size.w, area.size.h);
-        let bars = [
-            (x, y, width, w),
-            (x, y + height - w, width, w),
-            (x, y + w, w, height - 2 * w),
-            (x + width - w, y + w, w, height - 2 * w),
-        ];
         let [r, g, b] = MAXIMIZE_MARK.map(|c| c as f32 / 255.0);
+        let a = MAXIMIZE_FACE_OPACITY;
+        let (line, face) = ([r, g, b, 1.0], [r * a, g * a, b * a, a]);
+        // 手前から、4 本の枠と、内側の面。
+        let parts = [
+            (x, y, width, w, line),
+            (x, y + height - w, width, w, line),
+            (x, y + w, w, height - 2 * w, line),
+            (x + width - w, y + w, w, height - 2 * w, line),
+            (x + w, y + w, width - 2 * w, height - 2 * w, face),
+        ];
         self.maximize_marks
             .iter_mut()
-            .zip(bars)
-            .map(move |(buffer, (x, y, w, h))| {
-                buffer.update((w, h), [r, g, b, 1.0]);
+            .zip(parts)
+            .map(move |(buffer, (x, y, w, h, color))| {
+                buffer.update((w.max(0), h.max(0)), color);
                 SolidColorRenderElement::from_buffer(buffer, (x, y), 1.0, 1.0, Kind::Unspecified)
             })
     }

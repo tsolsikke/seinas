@@ -12,10 +12,12 @@ pub type Rgb = [u8; 3];
 pub mod color {
     use super::Rgb;
 
-    /// 選んでいるものを示す色(Alt+Tab の一覧のいまの候補、最大化の予告の枠)。
-    pub const SELECTION: Rgb = [0x2f, 0x6f, 0xb5];
     /// アクセント(前面のタスクの印、トーチの炎)。見本の画像から読んだ値。
     pub const ACCENT: Rgb = [0xf0, 0x93, 0x11];
+    /// 選んでいるものを示す色(Alt+Tab の一覧のいまの候補の枠、最大化の予告の枠)。アクセントと同じオレンジに揃える
+    /// (2026-10-26。運用者の決定)。線と薄い面にだけ使い、この色の塗りの上に小さな白い文字を置かない(白との
+    /// コントラスト比は約 2.4 で、足りない)。
+    pub const SELECTION: Rgb = ACCENT;
     /// 主な文字と、補助の文字。
     pub const TEXT: Rgb = [0xf8, 0xf8, 0xf8];
     pub const SUBTLE_TEXT: Rgb = [0x90, 0x9c, 0xb0];
@@ -29,8 +31,28 @@ pub mod switcher {
 
     /// 文字の大きさ(ピクセル)。
     pub const TEXT_SIZE: f32 = 14.0;
-    /// いまの候補の行の文字(地は [`crate::color::SELECTION`])。
-    pub const SELECTED_TEXT: Rgb = [0xff, 0xff, 0xff];
+    /// 一覧の地と、外の枠(タイトルバーの背面の地と、背面の枠と同じ)。
+    pub const PANEL_BACKGROUND: Rgb = crate::title_bar::INACTIVE_BAR;
+    pub const PANEL_BORDER: Rgb = crate::frame::INACTIVE_BORDER;
+    /// 候補のタイトル(ふつうと、最小化しているもの)と、隠れた数の行の文字。
+    pub const TITLE: Rgb = crate::color::TEXT;
+    pub const MINIMIZED_TITLE: Rgb = crate::color::SUBTLE_TEXT;
+    /// いまの候補の行:[`crate::color::SELECTION`] の枠(太さ [`SELECTED_BORDER_WIDTH`])と、控えめな地
+    /// (`SELECTION` を 16% だけ [`PANEL_BACKGROUND`] に重ねた色)。文字は主な文字の色のまま。
+    pub const SELECTED_BORDER_WIDTH: i32 = 2;
+    pub const SELECTED_BACKGROUND: Rgb = [0x38, 0x32, 0x2e];
+    pub const SELECTED_TEXT: Rgb = crate::color::TEXT;
+}
+
+/// 最大化の予告(ウィンドウを使える範囲の上端へ動かしたときに出す)。
+pub mod maximize_preview {
+    use super::Rgb;
+
+    /// 使える範囲の内側に沿った枠(太さ [`BORDER_WIDTH`])と、その内の薄い面(不透明度 [`FACE_OPACITY`])の色。
+    /// 背景のぼかしはしない。
+    pub const COLOR: Rgb = crate::color::SELECTION;
+    pub const BORDER_WIDTH: i32 = 2;
+    pub const FACE_OPACITY: f32 = 0.12;
 }
 
 /// タスクバー(`seinas-taskbar`)。
@@ -128,4 +150,19 @@ pub mod frame {
     pub const SHADOW_OFFSET_Y: i32 = 2;
     pub const SHADOW_BLUR: i32 = 12;
     pub const SHADOW_OPACITY: f32 = 0.35;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_selected_row_ground_is_a_little_of_the_selection_over_the_panel() {
+        let blend = |under: u8, over: u8| {
+            (f32::from(under) + 0.16 * (f32::from(over) - f32::from(under))).round() as u8
+        };
+        let expected: Rgb =
+            std::array::from_fn(|i| blend(switcher::PANEL_BACKGROUND[i], color::SELECTION[i]));
+        assert_eq!(switcher::SELECTED_BACKGROUND, expected);
+    }
 }

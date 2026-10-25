@@ -3,7 +3,8 @@
 //! ADR 0001 の決まりで、Smithay の型を使わない。並べ方([`switcher_layout`])と、絵([`paint_switcher`])を分け、
 //! どちらも Smithay 無しで確かめられるようにする。絵のピクセルの形式は、ほかの絵と同じく B, G, R, X。
 //!
-//! - 候補を、切り替えの順(使った順)に 1 行ずつ並べ、今の候補の行を強調する。
+//! - 候補を、切り替えの順(使った順)に 1 行ずつ並べ、今の候補の行を、選んだものの色(オレンジ)の 2 px の枠と、
+//!   控えめな地で強調する(オレンジで塗りつぶさない。文字は主な文字の色のまま)。
 //! - タイトルは `seinas-text` で描き、幅に収まらなければ末尾を切って「…」を付ける。タイトルの無いウィンドウは
 //!   「(タイトルなし)」と書く。
 //! - 最小化しているウィンドウは、行の左に「−」の印を付け、タイトルを暗い色で書く。
@@ -30,15 +31,20 @@ pub const MAX_ROWS: usize = 9;
 /// 枠の太さ。
 const BORDER: i32 = 2;
 
-/// 一覧の地の色、枠の色、今の候補の行の色(赤, 緑, 青)。
-pub const SWITCHER_BACKGROUND: [u8; 3] = [0x20, 0x24, 0x2c];
-pub const SWITCHER_BORDER: [u8; 3] = [0x6a, 0x9c, 0xe0];
+// 色は (赤, 緑, 青)。テーマのトークン(`seinas-theme` の `switcher`)から読む。
+/// 一覧の地の色と、外の枠の色。
+pub const SWITCHER_BACKGROUND: [u8; 3] = seinas_theme::switcher::PANEL_BACKGROUND;
+pub const SWITCHER_BORDER: [u8; 3] = seinas_theme::switcher::PANEL_BORDER;
+/// 今の候補の行の枠の色と、地の色。
 pub const SWITCHER_HIGHLIGHT: [u8; 3] = seinas_theme::color::SELECTION;
-/// タイトルの色(ふつう、今の候補、最小化しているもの)。
-const TITLE: [u8; 3] = [0xd8, 0xdc, 0xe4];
-const MINIMIZED_TITLE: [u8; 3] = [0x8c, 0x92, 0x9c];
+pub const SWITCHER_SELECTED_BACKGROUND: [u8; 3] = seinas_theme::switcher::SELECTED_BACKGROUND;
+/// 今の候補の行の枠の太さ。
+const SELECTED_BORDER: i32 = seinas_theme::switcher::SELECTED_BORDER_WIDTH;
+/// タイトルの色(ふつう、最小化しているもの)。
+const TITLE: [u8; 3] = seinas_theme::switcher::TITLE;
+const MINIMIZED_TITLE: [u8; 3] = seinas_theme::switcher::MINIMIZED_TITLE;
 /// 隠れた数の行の色。
-const MORE: [u8; 3] = [0xa0, 0xa6, 0xb0];
+const MORE: [u8; 3] = seinas_theme::switcher::MINIMIZED_TITLE;
 /// タイトルの無いウィンドウに出す文字。
 pub const UNTITLED: &str = "(タイトルなし)";
 
@@ -141,14 +147,22 @@ pub fn paint_switcher(
                 let entry = &entries[i];
                 let chosen = i == current;
                 if chosen {
-                    fill(
-                        &mut pixels,
-                        w,
+                    // 枠の色で行の矩形を塗り、内側を地の色で塗り直す(枠だけが残る)。
+                    let (x, y, rw, rh) = (
                         PANEL_PADDING / 2,
                         top + 1,
                         w - PANEL_PADDING,
                         ROW_HEIGHT - 2,
-                        SWITCHER_HIGHLIGHT,
+                    );
+                    fill(&mut pixels, w, x, y, rw, rh, SWITCHER_HIGHLIGHT);
+                    fill(
+                        &mut pixels,
+                        w,
+                        x + SELECTED_BORDER,
+                        y + SELECTED_BORDER,
+                        rw - 2 * SELECTED_BORDER,
+                        rh - 2 * SELECTED_BORDER,
+                        SWITCHER_SELECTED_BACKGROUND,
                     );
                 }
                 if entry.minimized {

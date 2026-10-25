@@ -17,9 +17,10 @@ const ESC: u32 = 1;
 const TAB: u32 = 15;
 const ALT: u32 = 56;
 
-const BORDER: [u8; 3] = [0x6a, 0x9c, 0xe0];
-const HIGHLIGHT: [u8; 3] = [0x2f, 0x6f, 0xb5];
-const PANEL: [u8; 3] = [0x20, 0x24, 0x2c];
+// 色は、テーマのトークン(`seinas-theme` の `switcher`)から読む。今の候補の行は、左の端の 2 列が枠(選んだものの色)。
+const BORDER: [u8; 3] = seinas_theme::switcher::PANEL_BORDER;
+const HIGHLIGHT: [u8; 3] = seinas_theme::color::SELECTION;
+const PANEL: [u8; 3] = seinas_theme::switcher::PANEL_BACKGROUND;
 
 /// 出力 (w, h) に、`rows` 行の一覧を置いたときの左上と大きさ。
 fn panel(output: (usize, usize), rows: usize) -> (usize, usize, usize, usize) {
