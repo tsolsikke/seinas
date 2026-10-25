@@ -16,9 +16,9 @@ use seinas_text::{Canvas, Line, TextPainter};
 // 大きさと色は、テーマのトークン(`seinas-theme`)から読む。説明もそこにある。
 pub use seinas_theme::taskbar::{
     ACTIVE_MARK, ACTIVE_MARK_WIDTH, BACKGROUND, CLOCK_DATE_TOP, CLOCK_GAP, CLOCK_LINE_HEIGHT,
-    CLOCK_TIME_TOP, CLOCK_WIDTH, DOT, DOT_DIAMETER, HEIGHT, HIT_RADIUS, HIT_SIZE, HOT, ICON_SIZE,
-    LEFT_MARGIN, MARK_GAP, MARK_HEIGHT, MIN_PITCH, PITCH, PRESSED, RIGHT_MARGIN, TEXT, TEXT_SIZE,
-    TOP_LINE,
+    CLOCK_TIME_TOP, CLOCK_WIDTH, DOT, DOT_DIAMETER, HEIGHT, HIGHLIGHT_RADIUS, HIGHLIGHT_SIZE, HOT,
+    ICON_SIZE, LEFT_MARGIN, MARK_GAP, MARK_HEIGHT, MIN_PITCH, PITCH, PRESSED, RIGHT_MARGIN, TEXT,
+    TEXT_SIZE, TOP_LINE,
 };
 
 /// 時刻が取れないときの、時計の表示。
@@ -58,15 +58,21 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// `index` 番目の場所(トーチが 0、タスク `i` が `i + 1`)の、ヒットの範囲(左上と大きさ)。縦は中央。
-    pub fn hit_rect(&self, index: usize) -> (i32, i32, i32, i32) {
+    /// `index` 番目の場所(トーチが 0、タスク `i` が `i + 1`)の、光る範囲(左上と大きさ)。縦は中央。
+    pub fn highlight_rect(&self, index: usize) -> (i32, i32, i32, i32) {
         let center = self.left + index as i32 * self.pitch + self.pitch / 2;
         (
-            center - HIT_SIZE / 2,
-            (HEIGHT - HIT_SIZE) / 2,
-            HIT_SIZE,
-            HIT_SIZE,
+            center - HIGHLIGHT_SIZE / 2,
+            (HEIGHT - HIGHLIGHT_SIZE) / 2,
+            HIGHLIGHT_SIZE,
+            HIGHLIGHT_SIZE,
         )
+    }
+
+    /// `index` 番目の場所の、押したときの反応を受ける範囲(間隔の枠の全体。縦はタスクバーの高さの全体)。アイコンの
+    /// 間に、押しても何も起きない隙間を作らない。
+    pub fn slot_rect(&self, index: usize) -> (i32, i32, i32, i32) {
+        (self.left + index as i32 * self.pitch, 0, self.pitch, HEIGHT)
     }
 
     /// `index` 番目の場所の、アイコンの左上。
@@ -87,7 +93,7 @@ impl Layout {
     pub fn target_at(&self, x: f64, y: f64) -> Option<Target> {
         (0..=self.tasks)
             .find(|&index| {
-                let (left, top, w, h) = self.hit_rect(index);
+                let (left, top, w, h) = self.slot_rect(index);
                 x >= left as f64 && x < (left + w) as f64 && y >= top as f64 && y < (top + h) as f64
             })
             .map(|index| match index {
@@ -189,8 +195,8 @@ pub fn paint(
             fill_rounded_rect(
                 &mut pixels,
                 width,
-                layout.hit_rect(Layout::index(target)),
-                HIT_RADIUS,
+                layout.highlight_rect(Layout::index(target)),
+                HIGHLIGHT_RADIUS,
                 color,
             );
         }
@@ -554,21 +560,22 @@ mod tests {
 
     #[test]
     fn the_torch_and_the_tasks_are_centered() {
-        // 800 の幅に、トーチとタスク 2 つ:3 × 40 = 120 を中央に。
+        // 800 の幅に、トーチとタスク 2 つ:3 × 48 = 144 を中央に。
         let three = layout(800, 2);
         assert_eq!(
             three,
             Layout {
-                left: 340,
-                pitch: 40,
+                left: 328,
+                pitch: 48,
                 tasks: 2
             }
         );
-        // ヒットの範囲は 36 × 36 で、縦は中央。アイコンは 24 × 24。
-        assert_eq!(three.hit_rect(0), (342, 2, 36, 36));
+        // 光る範囲は 36 × 36 で、縦は中央。押す範囲は間隔の枠の全体。アイコンは 24 × 24。
+        assert_eq!(three.highlight_rect(0), (334, 2, 36, 36));
+        assert_eq!(three.slot_rect(1), (376, 0, 48, 40));
         assert_eq!(three.icon_origin(1), (388, 8));
         // タスクが無くても、トーチは中央。
-        assert_eq!(layout(800, 0).left, 380);
+        assert_eq!(layout(800, 0).left, 376);
     }
 
     #[test]
@@ -577,8 +584,8 @@ mod tests {
         let reserved = RIGHT_MARGIN + CLOCK_WIDTH + CLOCK_GAP;
         assert_eq!(reserved, 122);
         let shifted = layout(480, 5);
-        assert_eq!(shifted.pitch, 40);
-        assert_eq!(shifted.left + 6 * 40, 480 - reserved);
+        assert_eq!(shifted.pitch, 48);
+        assert_eq!(shifted.left + 6 * 48, 480 - reserved);
         // それでも入らなければ、間隔を詰める(36 まで)。
         let narrower = layout(400, 6);
         assert_eq!(narrower.pitch, (400 - reserved - LEFT_MARGIN) / 7);
@@ -597,16 +604,34 @@ mod tests {
     }
 
     #[test]
+    fn how_many_tasks_fit_at_1280_and_1920() {
+        // 並べられる幅は、幅 - 左の空き 8 - 右の 122。1280 では 1150、1920 では 1790。
+        // 1280:間隔 48 のままなら 1150 / 48 = 23 の場所(トーチを除いて 22 のタスク)。詰めると 1150 / 36 = 31 の
+        // 場所(30 のタスク)まで。31 目からは出さない。
+        assert_eq!(layout(1280, 22).pitch, 48);
+        assert_eq!(layout(1280, 23).pitch, 47);
+        assert_eq!(layout(1280, 30).tasks, 30);
+        assert_eq!(layout(1280, 31).tasks, 30);
+        // 1920:間隔 48 のままなら 1790 / 48 = 37 の場所(36 のタスク)。詰めると 1790 / 36 = 49 の場所(48 の
+        // タスク)まで。
+        assert_eq!(layout(1920, 36).pitch, 48);
+        assert!(layout(1920, 37).pitch < 48);
+        assert_eq!(layout(1920, 48).tasks, 48);
+        assert_eq!(layout(1920, 49).tasks, 48);
+    }
+
+    #[test]
     fn a_point_selects_the_torch_or_a_task() {
         let three = layout(800, 2);
-        assert_eq!(three.target_at(342.0, 2.0), Some(Target::Torch));
-        assert_eq!(three.target_at(377.9, 37.9), Some(Target::Torch));
-        assert_eq!(three.target_at(382.0, 20.0), Some(Target::Task(0)));
-        assert_eq!(three.target_at(422.0, 20.0), Some(Target::Task(1)));
-        // ヒットの範囲の間、上下の空き、時計の上は、どれでもない。
-        assert_eq!(three.target_at(379.0, 20.0), None);
-        assert_eq!(three.target_at(400.0, 1.9), None);
-        assert_eq!(three.target_at(400.0, 38.0), None);
+        // 押す範囲は、間隔の枠の全体(縦はタスクバーの高さの全体)。アイコンの間に隙間は無い。
+        assert_eq!(three.target_at(328.0, 0.0), Some(Target::Torch));
+        assert_eq!(three.target_at(375.9, 39.9), Some(Target::Torch));
+        assert_eq!(three.target_at(376.0, 20.0), Some(Target::Task(0)));
+        assert_eq!(three.target_at(471.9, 20.0), Some(Target::Task(1)));
+        // まとまりの外(左右)と、時計の上は、どれでもない。
+        assert_eq!(three.target_at(327.9, 20.0), None);
+        assert_eq!(three.target_at(472.0, 20.0), None);
+        assert_eq!(three.target_at(400.0, 40.0), None);
         assert_eq!(three.target_at(760.0, 20.0), None);
     }
 

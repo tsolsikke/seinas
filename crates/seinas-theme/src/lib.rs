@@ -45,13 +45,15 @@ pub mod taskbar {
 
     /// アイコンの大きさ(正方形)。縦は中央に置く。
     pub const ICON_SIZE: i32 = 24;
-    /// トーチとタスクのヒットの範囲(正方形。縦は中央)と、その角の丸み。
-    pub const HIT_SIZE: i32 = 36;
-    pub const HIT_RADIUS: f32 = 4.0;
-    /// アイコンの間隔(中心から中心)。入りきらないときは、[`MIN_PITCH`] まで詰める。
-    pub const PITCH: i32 = 40;
+    /// ポインターが乗ったとき・押したときに光る範囲(正方形。縦は中央)と、その角の丸み。押したときの反応を受ける
+    /// 範囲は、これより広く、間隔の枠の全体(横は [`PITCH`]、縦はタスクバーの高さ)。
+    pub const HIGHLIGHT_SIZE: i32 = 36;
+    pub const HIGHLIGHT_RADIUS: f32 = 4.0;
+    /// アイコンの間隔(中心から中心)。入りきらないときは、[`MIN_PITCH`] まで詰める。48 は、運用者が見本と並べて
+    /// 決めた(2026-10-26。見本に最も近く、詰まって見えない)。
+    pub const PITCH: i32 = 48;
     pub const MIN_PITCH: i32 = 36;
-    /// ポインターが乗ったときと、押したときの、ヒットの範囲の地。
+    /// ポインターが乗ったときと、押したときの、光る範囲の地。
     pub const HOT: Rgb = [0x1d, 0x2a, 0x40];
     pub const PRESSED: Rgb = [0x24, 0x34, 0x4d];
 
