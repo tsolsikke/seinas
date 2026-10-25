@@ -7,49 +7,41 @@
 
 use std::path::Path;
 
-use seinas_text::{Canvas, FontSetup, Line, TextPainter, DEFAULT_SIZE};
+use seinas_text::{Canvas, FontSetup, Line, TextPainter};
 use tracing::{info, warn};
 
 use crate::geometry::{Point, Rect, Size};
 
+// 大きさと色は、テーマのトークン(`seinas-theme` の `title_bar`)から読む。
 /// タイトルバーの高さ(ピクセル)。
-pub const TITLE_BAR_HEIGHT: i32 = 24;
+pub const TITLE_BAR_HEIGHT: i32 = seinas_theme::title_bar::HEIGHT;
 /// タイトルの文字の大きさ(ピクセル)。
-pub const TITLE_SIZE: f32 = DEFAULT_SIZE;
+pub const TITLE_SIZE: f32 = seinas_theme::title_bar::TEXT_SIZE;
 /// タイトルバーの左右の端から、タイトルまでの空き(ピクセル)。
-pub const TITLE_PADDING: i32 = 8;
-/// タイトルバーのボタンの大きさ(ピクセル)。タイトルバーの右の端から、タイトルバーと同じ高さの正方形で並べる。
-pub const TITLE_BUTTON_SIZE: i32 = TITLE_BAR_HEIGHT;
-/// 閉じるボタンの大きさ(ピクセル)。タイトルバーの右の端に、タイトルバーと同じ高さの正方形で置く。
+pub const TITLE_PADDING: i32 = seinas_theme::title_bar::PADDING;
+/// タイトルバーのボタンの幅(ピクセル)。タイトルバーの右の端から、タイトルバーと同じ高さで並べる。
+pub const TITLE_BUTTON_SIZE: i32 = seinas_theme::title_bar::BUTTON_WIDTH;
+/// 閉じるボタンの幅(ピクセル)。タイトルバーの右の端に置く。
 pub const CLOSE_BUTTON_SIZE: i32 = TITLE_BUTTON_SIZE;
 /// 最小化と最大化の印の大きさ(ピクセル)。ボタンの中央に描く。
-const MARK_SIZE: i32 = 10;
+const MARK_SIZE: i32 = seinas_theme::title_bar::MARK_SIZE;
 /// 閉じるボタンの「×」の印の大きさ(ピクセル)。ボタンの中央に描く。
-const CLOSE_MARK_SIZE: i32 = 10;
+const CLOSE_MARK_SIZE: i32 = seinas_theme::title_bar::CLOSE_MARK_SIZE;
 /// ウィンドウを動かしても、タイトルバーのうち、横にこれだけ(ピクセル)は画面の中に残す。タイトルバーをもう一度 grab できるようにする。
 /// 左へ出すときは、右の端のボタン(いちばん多いときの 3 つ)の分を足して残す。
 pub const MIN_VISIBLE_BAR: i32 = 48;
 /// タイトルバーのボタンが、いちばん多いとき(最小化、最大化、閉じる)の幅。
 pub const MAX_BUTTONS_WIDTH: i32 = 3 * TITLE_BUTTON_SIZE;
 
-// 色は (赤, 緑, 青)。
-/// activated なウィンドウの、タイトルバーとタイトルの色。
-pub const ACTIVE_BAR: [u8; 3] = [0x2f, 0x6f, 0xb5];
-pub const ACTIVE_TITLE: [u8; 3] = [0xff, 0xff, 0xff];
-/// activated でないウィンドウの、タイトルバーとタイトルの色。
-pub const INACTIVE_BAR: [u8; 3] = [0x4a, 0x50, 0x5c];
-pub const INACTIVE_TITLE: [u8; 3] = [0xc8, 0xcc, 0xd4];
-/// ポインターを乗せたときの、閉じるボタンの地と印の色。
-pub const HOT_CLOSE_BUTTON: [u8; 3] = [0xc4, 0x2b, 0x1c];
-pub const HOT_CLOSE_MARK: [u8; 3] = [0xff, 0xff, 0xff];
-/// 応答なしのウィンドウの、閉じるボタンの地の色(印は [`HOT_CLOSE_MARK`])。ポインターを乗せたときは
-/// [`HOT_CLOSE_BUTTON`] にする。
-pub const UNRESPONSIVE_CLOSE_BUTTON: [u8; 3] = [0x8a, 0x1f, 0x14];
+// 色は (赤, 緑, 青)。activated なウィンドウと、そうでないウィンドウの、タイトルバーとタイトルの色。ポインターを
+// 乗せたときの、閉じるボタンの地と印の色。応答なしのウィンドウの、閉じるボタンの地の色(印は `HOT_CLOSE_MARK`。
+// ポインターを乗せたときは `HOT_CLOSE_BUTTON`)。
+pub use seinas_theme::title_bar::{
+    ACTIVE_BAR, ACTIVE_TITLE, HOT_ACTIVE_BUTTON, HOT_CLOSE_BUTTON, HOT_CLOSE_MARK,
+    HOT_INACTIVE_BUTTON, INACTIVE_BAR, INACTIVE_TITLE, UNRESPONSIVE_CLOSE_BUTTON,
+};
 /// 応答なしのウィンドウで、タイトルの後に付ける文字。
 pub const NOT_RESPONDING: &str = "(応答なし)";
-/// ポインターを乗せたときの、最小化と最大化のボタンの地の色(activated のウィンドウと、そうでないもの)。
-pub const HOT_ACTIVE_BUTTON: [u8; 3] = [0x46, 0x82, 0xc4];
-pub const HOT_INACTIVE_BUTTON: [u8; 3] = [0x5c, 0x63, 0x70];
 
 /// タイトルバーのボタン。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

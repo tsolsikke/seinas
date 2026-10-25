@@ -14,6 +14,8 @@ smithay = { workspace = true, features = ["wayland_frontend", "renderer_pixman",
 seinas-text = { path = "../seinas-text" }
 # ウィンドウの切り替えのキーの設定(seinas.conf)を読む。
 seinas-config = { path = "../seinas-config" }
+# 見た目の値(テーマのトークン)。
+seinas-theme = { path = "../seinas-theme" }
 tracing = { workspace = true }
 
 [dev-dependencies]

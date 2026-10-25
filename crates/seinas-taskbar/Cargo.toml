@@ -15,6 +15,8 @@ wayland-protocols-wlr = { workspace = true, features = ["client"] }
 seinas-text = { path = "../seinas-text" }
 # 設定のファイル(taskbar.conf)の読み方。フォントと壁紙の設定と同じもの。
 seinas-config = { path = "../seinas-config" }
+# 見た目の値(テーマのトークン)。
+seinas-theme = { path = "../seinas-theme" }
 # 壁の時計(clock_gettime)を、失敗を見分けて読むのに使う。
 libc = { workspace = true }
 

@@ -1,0 +1,10 @@
+[package]
+name = "seinas-theme"
+description = "Seinasの見た目の値(色・大きさ・余白。テーマのトークン)の置き場。コンポジタの飾りとタスクバーが使う。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]

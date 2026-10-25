@@ -13,10 +13,7 @@
 
 use seinas_text::{Canvas, Line, TextPainter};
 
-use crate::{
-    decoration::{ACTIVE_BAR, ACTIVE_TITLE, TITLE_SIZE},
-    geometry::{Point, Rect, Size},
-};
+use crate::geometry::{Point, Rect, Size};
 
 /// 一覧の幅の上限(ピクセル)。
 pub const PANEL_WIDTH: i32 = 480;
@@ -36,7 +33,7 @@ const BORDER: i32 = 2;
 /// 一覧の地の色、枠の色、今の候補の行の色(赤, 緑, 青)。
 pub const SWITCHER_BACKGROUND: [u8; 3] = [0x20, 0x24, 0x2c];
 pub const SWITCHER_BORDER: [u8; 3] = [0x6a, 0x9c, 0xe0];
-pub const SWITCHER_HIGHLIGHT: [u8; 3] = ACTIVE_BAR;
+pub const SWITCHER_HIGHLIGHT: [u8; 3] = seinas_theme::color::SELECTION;
 /// タイトルの色(ふつう、今の候補、最小化しているもの)。
 const TITLE: [u8; 3] = [0xd8, 0xdc, 0xe4];
 const MINIMIZED_TITLE: [u8; 3] = [0x8c, 0x92, 0x9c];
@@ -157,7 +154,7 @@ pub fn paint_switcher(
                 if entry.minimized {
                     // 最小化の印(タイトルバーの最小化のボタンと同じ「−」)。
                     let mark = if chosen {
-                        ACTIVE_TITLE
+                        seinas_theme::switcher::SELECTED_TEXT
                     } else {
                         MINIMIZED_TITLE
                     };
@@ -172,7 +169,7 @@ pub fn paint_switcher(
                     );
                 }
                 let color = match (chosen, entry.minimized) {
-                    (true, _) => ACTIVE_TITLE,
+                    (true, _) => seinas_theme::switcher::SELECTED_TEXT,
                     (false, true) => MINIMIZED_TITLE,
                     (false, false) => TITLE,
                 };
@@ -190,7 +187,7 @@ pub fn paint_switcher(
             &mut Canvas::new(&mut pixels, w as usize, h as usize),
             &text,
             Line {
-                size: TITLE_SIZE,
+                size: seinas_theme::switcher::TEXT_SIZE,
                 color,
                 x: left,
                 top,

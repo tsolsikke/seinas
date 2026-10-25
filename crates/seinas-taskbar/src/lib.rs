@@ -12,41 +12,12 @@ use std::{
 
 use seinas_text::{Canvas, Line, TextPainter};
 
-/// タスクバーの高さ(ピクセル)。exclusive zone も、この高さにする。
-pub const HEIGHT: i32 = 40;
-/// ボタンの上の端と高さ。
-pub const BUTTON_TOP: i32 = 4;
-pub const BUTTON_HEIGHT: i32 = 32;
-/// 左の端と、ボタンどうしの空き。
-pub const LEFT_MARGIN: i32 = 4;
-pub const BUTTON_GAP: i32 = 4;
-/// ボタンの幅の上限。ウィンドウが多くて入りきらないときは、そろって狭くなる。
-pub const BUTTON_MAX_WIDTH: i32 = 200;
-/// ボタンの中の、タイトルの左右の空き。
-pub const TEXT_PADDING: i32 = 10;
-/// 文字の大きさ(ピクセル)。
-pub const TEXT_SIZE: f32 = 14.0;
-/// 右の端の、時計の場所の幅。時計の文字は、この中で右に寄せる。
-pub const CLOCK_WIDTH: i32 = 72;
-/// ボタンの下の端の、印(インジケーター)の高さと幅。
-pub const INDICATOR_HEIGHT: i32 = 3;
-pub const ACTIVE_INDICATOR_WIDTH: i32 = 24;
-pub const INDICATOR_WIDTH: i32 = 8;
-
-// 色は (赤, 緑, 青)。
-/// タスクバーの地。
-pub const BACKGROUND: [u8; 3] = [0x20, 0x24, 0x2c];
-/// activated のウィンドウのボタンの地。
-pub const ACTIVE_BUTTON: [u8; 3] = [0x3a, 0x40, 0x4c];
-/// ポインターが乗っているボタンの地(activated でないもの)。
-pub const HOT_BUTTON: [u8; 3] = [0x2e, 0x33, 0x3d];
-/// activated のウィンドウの印(アクセントの色)。
-pub const ACTIVE_INDICATOR: [u8; 3] = [0x4c, 0xc2, 0xff];
-/// そのほかの、開いているウィンドウの印。
-pub const INDICATOR: [u8; 3] = [0x8a, 0x90, 0x9c];
-/// 文字の色。最小化しているウィンドウのタイトルは、薄くする。
-pub const TEXT: [u8; 3] = [0xf0, 0xf2, 0xf5];
-pub const MINIMIZED_TEXT: [u8; 3] = [0x9a, 0x9f, 0xa8];
+// 大きさと色は、テーマのトークン(`seinas-theme`)から読む。説明もそこにある。
+pub use seinas_theme::taskbar::{
+    ACTIVE_BUTTON, ACTIVE_INDICATOR, ACTIVE_INDICATOR_WIDTH, BACKGROUND, BUTTON_GAP, BUTTON_HEIGHT,
+    BUTTON_MAX_WIDTH, BUTTON_TOP, CLOCK_WIDTH, HEIGHT, HOT_BUTTON, INDICATOR, INDICATOR_HEIGHT,
+    INDICATOR_WIDTH, LEFT_MARGIN, MINIMIZED_TEXT, TEXT, TEXT_PADDING, TEXT_SIZE,
+};
 
 /// 時刻が取れないときの、時計の表示。
 pub const NO_CLOCK: &str = "--:--";

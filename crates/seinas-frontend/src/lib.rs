@@ -213,7 +213,7 @@ render_elements! {
 /// 最大化の予告の枠の太さ(ピクセル)。
 pub const MAXIMIZE_MARK_WIDTH: i32 = 4;
 /// 最大化の予告の枠の色(activated のタイトルバーと同じ色)。
-pub const MAXIMIZE_MARK: [u8; 3] = ACTIVE_BAR;
+pub const MAXIMIZE_MARK: [u8; 3] = seinas_theme::color::SELECTION;
 
 /// フロントエンドの状態。`D` は、コンポジタの状態の型。
 pub struct Frontend<D: SeatHandler> {

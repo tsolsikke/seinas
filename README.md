@@ -18,6 +18,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
 | `crates/seinas-wallpaper` | 壁紙。コンポジタとは別のプログラム(layer-shell のクライアント)で、background の層に色か画像(PNG)を出す |
 | `crates/seinas-config` | 設定のファイル(1 行に「キー = 値」)の読み方。フォントと壁紙の設定が使う |
+| `crates/seinas-theme` | 見た目の値(色・大きさ・余白。テーマのトークン)の置き場。コンポジタの飾りとタスクバーが読む(`docs/ui-spec.md`) |
 | `crates/zeyes-min` | 動作確認用の小さなクライアント。xeyesのように2つの目を描き、目玉がポインターを追う |
 | `docs/render-boundary.md` | 共通のレンダラーとバックエンドの境界の決まり |
 | `docs/standalone.md` | フロントエンドとfbdevを組み合わせた構成の、動かし方、描く時機、使うシステムコール |

@@ -697,6 +697,7 @@ dependencies = [
  "seinas-config",
  "seinas-golden",
  "seinas-text",
+ "seinas-theme",
  "smithay",
  "tracing",
 ]
@@ -740,6 +741,7 @@ dependencies = [
  "seinas-config",
  "seinas-golden",
  "seinas-text",
+ "seinas-theme",
  "smithay-client-toolkit",
  "wayland-client",
  "wayland-protocols-wlr",
@@ -762,6 +764,10 @@ dependencies = [
  "seinas-golden",
  "unicode-script",
 ]
+
+[[package]]
+name = "seinas-theme"
+version = "0.3.0"
 
 [[package]]
 name = "seinas-wallpaper"
