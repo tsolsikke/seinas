@@ -58,7 +58,7 @@ pub struct Layout {
 }
 
 impl Layout {
-    /// `index` 番目の場所(トーチが 0、タスク `i` が `i + 1`)の、当たりの範囲(左上と大きさ)。縦は中央。
+    /// `index` 番目の場所(トーチが 0、タスク `i` が `i + 1`)の、ヒットの範囲(左上と大きさ)。縦は中央。
     pub fn hit_rect(&self, index: usize) -> (i32, i32, i32, i32) {
         let center = self.left + index as i32 * self.pitch + self.pitch / 2;
         (
@@ -564,7 +564,7 @@ mod tests {
                 tasks: 2
             }
         );
-        // 当たりの範囲は 36 × 36 で、縦は中央。アイコンは 24 × 24。
+        // ヒットの範囲は 36 × 36 で、縦は中央。アイコンは 24 × 24。
         assert_eq!(three.hit_rect(0), (342, 2, 36, 36));
         assert_eq!(three.icon_origin(1), (388, 8));
         // タスクが無くても、トーチは中央。
@@ -603,7 +603,7 @@ mod tests {
         assert_eq!(three.target_at(377.9, 37.9), Some(Target::Torch));
         assert_eq!(three.target_at(382.0, 20.0), Some(Target::Task(0)));
         assert_eq!(three.target_at(422.0, 20.0), Some(Target::Task(1)));
-        // 当たりの範囲の間、上下の空き、時計の上は、どれでもない。
+        // ヒットの範囲の間、上下の空き、時計の上は、どれでもない。
         assert_eq!(three.target_at(379.0, 20.0), None);
         assert_eq!(three.target_at(400.0, 1.9), None);
         assert_eq!(three.target_at(400.0, 38.0), None);
