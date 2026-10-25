@@ -37,7 +37,7 @@ push の前に行う確かめを、変更の種類に応じた段に分けます
 | docs | 文書だけ(`*.md`、`docs/`、`LICENSE`) | 差分の空白(`git diff --check`)、新しく書いた行の課題のキー、古い言い方(「使わない語」の表の語は落とす。対応表の語は表示するだけ)、コミットメッセージの形 |
 | code | コード(上と下のどれにも当たらないもの。`crates/` の多く、`tools/` のほとんど) | 上に加えて、fmt・clippy・rustdoc(警告を止める)・ホストのテスト(golden を含む)・テストの後に残ったプロセスの確かめ(`tools/check-leftovers.py`) |
 | visual | 見た目に関わるもの(`seinas-render`・`seinas-text`・`seinas-fbdev` の全体、`seinas-frontend` の `decoration.rs`・`title_bar.rs`・`lib.rs`、`seinas-taskbar` と `seinas-wallpaper` の `lib.rs`、`tests/golden/`・`tests/golden.rs`) | 上に加えて、golden の決まり(既存の正解データの作り直しと `src/` の変更が、同じコミットに無いか) |
-| full | 依存・ビルド(`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`.github/`、`THIRD-PARTY/`、`tools/build-musl.sh` などのビルドと依存の道具) | 上に加えて、third-party の確かめ、依存の検査、musl の静的ビルドとテスト、SHA-256 |
+| full | 依存・ビルド(`Cargo.toml`、`Cargo.lock`、`rust-toolchain.toml`、`.github/`、`THIRD-PARTY/`、`tools/build-musl.sh` などのビルドと依存の道具) | 上に加えて、third-party の確かめ、ホストのロックの確かめ(`tools/zeikos-lock-test.sh`)、依存の検査、musl の静的ビルドとテスト、SHA-256 |
 
 - 段は、`origin/main` との差のファイルごとに決め、いちばん上の段を選びます。
 - 案から変えたところ:code の段でも golden を動かします。golden は `cargo test` の中で 1 秒ほどで終わり、動かすかどうかを分けるほうが手間だからです。visual の段で増えるのは、golden の決まり(コミットの分け方)の確かめです。
@@ -58,7 +58,7 @@ tools/pre-push.sh
 - code 以上の段は、ZeikOS の QEMU と重ならないように、`tools/zeikos-lock.sh` でホストのロック(`/tmp/zeikos-qemu.lock` の排他)を取ってから動きます。ZeikOS が QEMU を使っている間は、`waiting for ZeikOS's QEMU` を 1 行出して待ちます(最長 90 分。zeikos のリポジトリの ADR-0089)。docs の段と `--dry-run` は、ロックを取りません。
   - ロックは、`tools/zeikos-lock.sh` が fd 9 に開いたロックのファイルで持ち、コマンドとその子孫に受け継がれます。コマンドが終わっても子孫が残っていれば、その子孫が終わるまでロックは外れません(作業が続いたままロックが外れて、ZeikOS の QEMU と重なる形を避けるため)。そのときは `the command ended, but these processes still hold /tmp/zeikos-qemu.lock; the lock stays until they end: <pid>(<コマンド名>) …` を 1 行出すので、その pid を確かめて止めてください。
   - 中から呼ばれたとき(pre-push の中の `tools/build-musl.sh` など)は、環境変数 `SEINAS_HOLDS_QEMU_LOCK` の fd 番号が、ロックのファイル(同じ inode)を指し、排他のロックを持っていることを確かめてから、取り直さずに動きます(`tools/zeikos-lock.sh --held`)。確かめられなければ(偽の値、ロックを持っていない fd など)、ふつうにロックを取ります。
-  - `tools/zeikos-lock-test.sh` が、これらの振る舞い(取る・外す、入れ子、偽の環境変数、上限での終わり方、残った子孫)を、本物のロックに触らずに、コピーしたスクリプトで確かめます。`tools/zeikos-lock.sh` を変えたときに動かしてください。
+  - `tools/zeikos-lock-test.sh` が、これらの振る舞い(取る・外す、入れ子、偽の環境変数、上限での終わり方、残った子孫)を、本物のロックに触らずに、コピーしたスクリプトで確かめます。pre-push の full の段が動かします(3 秒ほど。待つ上限の 1 秒に頼る判定があるので、負荷で揺れたら報告してください)。`tools/zeikos-lock.sh` だけを変えたとき(code の段)は、手で動かしてください。
 
 push の後は、CI を待って確かめます。
 

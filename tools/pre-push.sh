@@ -220,6 +220,8 @@ fi
 # ---- full の段
 if [ "$(rank "$tier")" -ge 4 ]; then
     step "依存の一覧とライセンス文" python3 tools/third-party.py --check
+    # ホストのロック(tools/zeikos-lock.sh)の振る舞い。本物のロックには触らない。待つ上限の 1 秒に頼る判定がある。
+    step "ホストのロックの確かめ" tools/zeikos-lock-test.sh
     step "依存の検査" sh -c '
         tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source &&
         tools/check-deps.sh seinas-fbdev seinas-text cosmic-text swash fontdb &&

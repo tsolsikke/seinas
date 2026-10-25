@@ -17,6 +17,11 @@
 # 終わりの値:0 は全部通った、1 は落ちた確かめがある。
 set -eu
 
+# pre-push の中(本物のロックを持つ zeikos-lock.sh の子)で動くときも、本物のロックを受け継がない。コピーの入れ子の
+# 確かめが、受け継いだ値で揺れないようにし、ここで起こす sleep などが本物のロックを持ち続けないようにする。
+unset SEINAS_HOLDS_QEMU_LOCK SEINAS_QEMU_LOCK_OWNER
+exec 9<&-
+
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 holder=""
