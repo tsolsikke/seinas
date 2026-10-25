@@ -153,7 +153,7 @@ zeyes-min と同じもの(`docs/zeikos-requirements.md`)に加えて、次のも
 ## テスト
 
 - 設定の読み方、置き方、透けた所の重ね方、拡大・縮小、大きすぎる画像と壊れた画像は、`crates/seinas-wallpaper` のユニットテスト(`src/lib.rs`)で確かめます。
-- 置き方ごとの絵は、正解データ(`crates/seinas-wallpaper/tests/golden.rs`。W1 色だけ、W2 塗りつぶし、W3 ページ幅に合わせる、W4 中央に表示、W5 縦長の出力での塗りつぶし、W6 画像より小さな出力での中央に表示)と比べます(`docs/golden.md`)。
+- 置き方ごとの絵は、正解データ(`crates/seinas-wallpaper/tests/golden.rs`。W1 色だけ、W2 塗りつぶし、W3 ページ幅に合わせる、W4 中央に表示、W5 縦長の出力での塗りつぶし、W6 画像より小さな出力での中央に表示、W7 16:9 の出力(64x36。1920x1080 などを縮めた大きさ)での塗りつぶし)と比べます(`docs/golden.md`)。
 - テストに使う画像は、`crates/seinas-wallpaper/tests/data/test-48x32.png`(48x32、362 バイト)と、テストの中で作る小さな単色の PNG だけで、システムの画像と、同梱の壁紙(`assets/wallpapers/`)には左右されません。コンポジタにつなぐテストは、同梱の壁紙の置き場(`SEINAS_WALLPAPERS`・`XDG_DATA_HOME`・`XDG_DATA_DIRS`)を、どれも作業用の場所の中に向けます。
 - 同梱の壁紙の探す順・置き場の選び方・比での選び方は、ユニットテスト(`src/lib.rs`)で、見つかったとき(比の近いものを出し、出力の大きさが変わったら選び直す)・見つからないとき・設定のファイルがあるときは、`crates/seinas-standalone/tests/wallpaper.rs` で確かめます。`tools/make-test-wallpaper.py` が Python の標準ライブラリだけで作る自作のもので、Seinas と同じライセンス(MIT)です。
 - コンポジタにつないだ動き(設定が無いときに見た目が変わらないこと、タスクバーの下まで出力いっぱいに描くこと、画像の余白、読めない画像、ふだんのソケットではつながらないこと、同じ大きさでは再描画しないこと)は、`crates/seinas-standalone/tests/wallpaper.rs` が fake screen のピクセルで確かめます。

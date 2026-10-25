@@ -50,6 +50,13 @@ fn main() {
             image(paint(Some(&picture), mode, MARGIN, 20, 30), 20, 30),
         );
     }
+    // W7: 16:9 の出力(64x36。1920x1080 などを縮めた大きさ)に、3:2 の画像を塗りつぶしで出す。横いっぱいに広げ、
+    // 上下を切る。
+    run.image(
+        "w7-fill-16x9",
+        Tolerance::EXACT,
+        image(paint(Some(&picture), Mode::Fill, MARGIN, 64, 36), 64, 36),
+    );
 
     run.finish();
 }

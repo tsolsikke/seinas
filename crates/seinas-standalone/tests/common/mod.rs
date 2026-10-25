@@ -445,6 +445,12 @@ impl Compositor {
         Self::start_full(name, &font_dir(), false, (width, height), &[], &[])
     }
 
+    /// [`Compositor::start_with_input`] と同じだが、fake screen の大きさを `width` × `height` に、フォントの置き場を
+    /// `fonts` にする。
+    pub fn start_sized_with_input(name: &str, fonts: &Path, width: usize, height: usize) -> Self {
+        Self::start_full(name, fonts, true, (width, height), &[], &[])
+    }
+
     /// [`Compositor::start_with_input`] と同じだが、引数 `args` も付ける(`--ping-timeout 300` など)。
     pub fn start_with_input_and(name: &str, args: &[&str]) -> Self {
         Self::start_full(name, &font_dir(), true, (WIDTH, HEIGHT), args, &[])
