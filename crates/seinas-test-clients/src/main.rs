@@ -33,6 +33,7 @@
 
 mod ime;
 mod layer;
+mod pool_resize;
 mod shrink;
 mod text;
 mod toplevels;
@@ -184,6 +185,7 @@ fn main() -> ExitCode {
         eprintln!("       test-client layer [--layer NAME] [--anchor LIST] [--size WxH] [--exclusive N] [--margin T,R,B,L] [--color RRGGBB] [--namespace NAME]");
         eprintln!("       test-client toplevels [--ext|--ext-only] [--output-after]");
         eprintln!("       test-client ime [--swallow KEY] [--popup WxH] [--popup-text] [--virtual-keyboard-only] [--no-builtin-keymap]");
+        eprintln!("       test-client pool-resize SIZE");
         eprintln!("       test-client globals");
         return ExitCode::from(2);
     };
@@ -193,6 +195,7 @@ fn main() -> ExitCode {
         "layer" => layer::run(&args[1..]),
         "toplevels" => toplevels::run(&args[1..]),
         "ime" => ime::run(&args[1..]),
+        "pool-resize" => pool_resize::run(&args[1..]),
         "globals" => globals(),
         _ => run(kind),
     };
