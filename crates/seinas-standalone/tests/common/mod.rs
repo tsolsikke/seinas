@@ -547,18 +547,31 @@ impl Compositor {
     }
 
     /// 壁紙(seinas-wallpaper)を、シェルの部品のためのソケットへつなぐ。設定のファイルは
-    /// [`Compositor::config_dir`] の下の `seinas/wallpaper.conf`(無ければ、色だけ)。
+    /// [`Compositor::config_dir`] の下の `seinas/wallpaper.conf`(無ければ、色だけ)。同梱の壁紙の置き場は、
+    /// どれも作業用の場所の中の無い場所に向け、機械に置かれた画像に左右されないようにする。
     pub fn connect_wallpaper(&self) -> Running {
+        self.connect_wallpaper_with_bundled(None)
+    }
+
+    /// [`Compositor::connect_wallpaper`] と同じだが、同梱の壁紙の置き場 `SEINAS_WALLPAPERS` を `bundled` にする
+    /// (None なら無し)。
+    pub fn connect_wallpaper_with_bundled(&self, bundled: Option<&Path>) -> Running {
         let log =
             fs::File::create(self.dir.join("wallpaper.log")).expect("create the wallpaper log");
-        Running(
-            child_command(workspace_bin("seinas-wallpaper", "seinas-wallpaper"))
-                .env("WAYLAND_DISPLAY", self.shell_socket())
-                .env("XDG_CONFIG_HOME", &self.dir)
-                .stderr(log)
-                .spawn()
-                .expect("start seinas-wallpaper"),
-        )
+        // 空の値は既定の置き場(`/usr/share` など)を意味するので、無い場所を渡す。
+        let nowhere = self.dir.join("no-data");
+        let mut command = child_command(workspace_bin("seinas-wallpaper", "seinas-wallpaper"));
+        command
+            .env("WAYLAND_DISPLAY", self.shell_socket())
+            .env("XDG_CONFIG_HOME", &self.dir)
+            .env("XDG_DATA_HOME", &nowhere)
+            .env("XDG_DATA_DIRS", &nowhere)
+            .env_remove("SEINAS_WALLPAPERS")
+            .stderr(log);
+        if let Some(bundled) = bundled {
+            command.env("SEINAS_WALLPAPERS", bundled);
+        }
+        Running(command.spawn().expect("start seinas-wallpaper"))
     }
 
     /// これまでに壁紙が標準エラーへ書いたもの。

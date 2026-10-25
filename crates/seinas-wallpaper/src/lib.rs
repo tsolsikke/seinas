@@ -3,6 +3,7 @@
 //! 決まりの説明は `docs/wallpaper.md` にある。
 
 use std::{
+    ffi::OsStr,
     fs::File,
     io::BufReader,
     path::{Path, PathBuf},
@@ -336,6 +337,131 @@ fn resample_axis(rgba: &[u8], width: usize, height: usize, to: usize, horizontal
     out
 }
 
+/// 同梱の壁紙の置き場の名前(データの置き場の下)。
+pub const BUNDLED_DIR: &str = "seinas/wallpapers";
+
+/// 同梱の壁紙を探す置き場を、探す順に並べる。
+///
+/// 1. `seinas_wallpapers`(環境変数 `SEINAS_WALLPAPERS`)そのもの
+/// 2. `$XDG_DATA_HOME/seinas/wallpapers`(無ければ `$HOME/.local/share/seinas/wallpapers`)
+/// 3. `$XDG_DATA_DIRS` の各々の下の `seinas/wallpapers`(無ければ `/usr/local/share` と `/usr/share`)
+///
+/// 相対パスは、XDG Base Directory の決まりのとおり使わない(ZeikOS も、相対のパスの open を断る)。空の値は、
+/// 無いものとして渡すこと。実行ファイルからの相対の置き場は、探さない。
+pub fn bundled_dirs(
+    seinas_wallpapers: Option<&Path>,
+    xdg_data_home: Option<&Path>,
+    home: Option<&Path>,
+    xdg_data_dirs: Option<&OsStr>,
+) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Some(dir) = seinas_wallpapers.filter(|dir| dir.is_absolute()) {
+        dirs.push(dir.to_owned());
+    }
+    let data_home = xdg_data_home
+        .filter(|dir| dir.is_absolute())
+        .map(Path::to_owned)
+        .or_else(|| {
+            home.filter(|dir| dir.is_absolute())
+                .map(|home| home.join(".local/share"))
+        });
+    dirs.extend(data_home.map(|dir| dir.join(BUNDLED_DIR)));
+    let data_dirs: Vec<PathBuf> = xdg_data_dirs
+        .map(|dirs| {
+            std::env::split_paths(dirs)
+                .filter(|dir| dir.is_absolute())
+                .collect()
+        })
+        .filter(|dirs: &Vec<PathBuf>| !dirs.is_empty())
+        .unwrap_or_else(|| vec!["/usr/local/share".into(), "/usr/share".into()]);
+    dirs.extend(data_dirs.into_iter().map(|dir| dir.join(BUNDLED_DIR)));
+    dirs
+}
+
+/// 同梱の壁紙の候補(PNG のパスと、その幅・高さ)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Candidate {
+    pub path: PathBuf,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// PNG のファイルの幅と高さを、見出しだけを読んで返す。大きさが [`MAX_IMAGE_PIXELS`] を越えるもの、読めないものは、
+/// 理由を返す。
+pub fn png_size(path: &Path) -> Result<(u32, u32), String> {
+    let file = File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let reader = png::Decoder::new(BufReader::new(file))
+        .read_info()
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let (width, height) = (reader.info().width, reader.info().height);
+    if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
+        return Err(format!(
+            "{} is {width}x{height}; images over {MAX_IMAGE_PIXELS} pixels are not used",
+            path.display()
+        ));
+    }
+    Ok((width, height))
+}
+
+/// 置き場 `dirs` を順に見て、見出しの読める PNG(名前の終わりが `.png`)が 1 つでもある最初の置き場と、その
+/// 候補(名前の順)を返す。どこにも無ければ None。読めない PNG は、理由を `problems` に足して飛ばす。
+pub fn find_bundled(
+    dirs: &[PathBuf],
+    problems: &mut Vec<String>,
+) -> Option<(PathBuf, Vec<Candidate>)> {
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+            })
+            .collect();
+        paths.sort();
+        let candidates: Vec<Candidate> = paths
+            .into_iter()
+            .filter_map(|path| match png_size(&path) {
+                Ok((width, height)) if width > 0 && height > 0 => Some(Candidate {
+                    path,
+                    width,
+                    height,
+                }),
+                Ok(_) => None,
+                Err(e) => {
+                    problems.push(e);
+                    None
+                }
+            })
+            .collect();
+        if !candidates.is_empty() {
+            return Some((dir.clone(), candidates));
+        }
+    }
+    None
+}
+
+/// 出力 `width`x`height` の縦横の比に、いちばん近い比の候補を選ぶ(比の対数の差がいちばん小さいもの。同じなら
+/// 先のもの)。候補が無いか、出力の大きさが 0 なら None。
+pub fn closest(candidates: &[Candidate], width: u32, height: u32) -> Option<&Candidate> {
+    if width == 0 || height == 0 {
+        return None;
+    }
+    let ratio = |w: u32, h: u32| (f64::from(w) / f64::from(h)).ln();
+    let output = ratio(width, height);
+    candidates.iter().reduce(|best, candidate| {
+        let distance = |c: &Candidate| (ratio(c.width, c.height) - output).abs();
+        if distance(candidate) < distance(best) {
+            candidate
+        } else {
+            best
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,5 +629,143 @@ mod tests {
         };
         let out = resample(&stripes, 1, 1);
         assert!((0x60..=0xa0).contains(&out.rgba[0]), "{}", out.rgba[0]);
+    }
+
+    #[test]
+    fn the_bundled_directories_are_searched_in_order() {
+        let dirs = bundled_dirs(
+            Some(Path::new("/w")),
+            Some(Path::new("/data")),
+            Some(Path::new("/home/a")),
+            Some(OsStr::new("/one:/two")),
+        );
+        assert_eq!(
+            dirs,
+            [
+                "/w",
+                "/data/seinas/wallpapers",
+                "/one/seinas/wallpapers",
+                "/two/seinas/wallpapers"
+            ]
+            .map(PathBuf::from)
+        );
+        // 無ければ、`$HOME/.local/share` と、`/usr/local/share`・`/usr/share`。
+        let dirs = bundled_dirs(None, None, Some(Path::new("/home/a")), None);
+        assert_eq!(
+            dirs,
+            [
+                "/home/a/.local/share/seinas/wallpapers",
+                "/usr/local/share/seinas/wallpapers",
+                "/usr/share/seinas/wallpapers"
+            ]
+            .map(PathBuf::from)
+        );
+        // 相対パスは使わない(XDG_DATA_DIRS が相対パスだけなら、既定の置き場)。
+        let dirs = bundled_dirs(
+            Some(Path::new("w")),
+            Some(Path::new("data")),
+            None,
+            Some(OsStr::new("one:two")),
+        );
+        assert_eq!(
+            dirs,
+            [
+                "/usr/local/share/seinas/wallpapers",
+                "/usr/share/seinas/wallpapers"
+            ]
+            .map(PathBuf::from)
+        );
+    }
+
+    /// `path` に、幅 `width`・高さ `height` の単色の PNG(RGB)を書く。
+    fn write_png(path: &Path, width: u32, height: u32) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), width, height);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer
+            .write_image_data(&vec![0x80; (width * height * 3) as usize])
+            .unwrap();
+    }
+
+    fn candidate(name: &str, width: u32, height: u32) -> Candidate {
+        Candidate {
+            path: PathBuf::from(name),
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn the_first_directory_with_a_readable_png_is_used() {
+        let root = std::env::temp_dir().join(format!("seinas-bundled-{}", std::process::id()));
+        let (empty, broken, found, later) = (
+            root.join("empty"),
+            root.join("broken"),
+            root.join("found"),
+            root.join("later"),
+        );
+        for dir in [&empty, &broken, &found, &later] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        // PNG でないファイルだけの置き場と、読めない PNG だけの置き場は飛ばす。
+        std::fs::write(empty.join("readme.txt"), "not an image").unwrap();
+        std::fs::write(broken.join("broken.png"), "not a png").unwrap();
+        write_png(&found.join("wide.png"), 32, 18);
+        write_png(&found.join("ADD.PNG"), 32, 24);
+        std::fs::write(found.join("notes.txt"), "not an image").unwrap();
+        write_png(&later.join("later.png"), 8, 8);
+        let mut problems = Vec::new();
+        let missing = root.join("missing");
+        let (dir, candidates) = find_bundled(
+            &[missing, empty, broken, found.clone(), later],
+            &mut problems,
+        )
+        .expect("the bundled wallpapers");
+        assert_eq!(dir, found);
+        // 名前の順(バイトの順で、大文字が先)。
+        assert_eq!(
+            candidates,
+            [
+                Candidate {
+                    path: found.join("ADD.PNG"),
+                    width: 32,
+                    height: 24
+                },
+                Candidate {
+                    path: found.join("wide.png"),
+                    width: 32,
+                    height: 18
+                }
+            ]
+        );
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("broken.png"), "{problems:?}");
+        assert!(find_bundled(&[root.join("empty")], &mut Vec::new()).is_none());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_closest_ratio_is_chosen() {
+        let both = [candidate("16x9", 1920, 1080), candidate("4x3", 800, 600)];
+        let name = |width, height| closest(&both, width, height).map(|c| c.path.clone());
+        assert_eq!(name(1920, 1080), Some(PathBuf::from("16x9")));
+        assert_eq!(name(1280, 696), Some(PathBuf::from("16x9")));
+        // 16:10(ZeikOS の 1280x800)は、16:9 のほうが近い。
+        assert_eq!(name(1280, 800), Some(PathBuf::from("16x9")));
+        assert_eq!(name(800, 600), Some(PathBuf::from("4x3")));
+        assert_eq!(name(640, 480), Some(PathBuf::from("4x3")));
+        assert_eq!(name(1024, 768), Some(PathBuf::from("4x3")));
+        // 縦長の出力は、縦横の比の近い(横に短い)4:3 を選ぶ。
+        assert_eq!(name(600, 800), Some(PathBuf::from("4x3")));
+        // 同じ近さなら、先のもの。候補が無いか、出力の大きさが 0 なら選ばない。
+        let same = [candidate("a", 4, 3), candidate("b", 8, 6)];
+        assert_eq!(
+            closest(&same, 640, 480).map(|c| c.path.clone()),
+            Some(PathBuf::from("a"))
+        );
+        assert_eq!(closest(&[], 640, 480), None);
+        assert_eq!(closest(&both, 0, 480), None);
     }
 }

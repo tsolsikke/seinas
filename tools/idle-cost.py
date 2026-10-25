@@ -112,7 +112,11 @@ def setup(kind, run, fonts):
     work = run.work
     config = os.path.join(work, "config")
     os.makedirs(os.path.join(config, "seinas"), exist_ok=True)
-    base = {"XDG_CONFIG_HOME": config, "XDG_RUNTIME_DIR": work, "TZ": "UTC"}
+    # 同梱の壁紙の置き場は、無い場所に向ける(機械に置かれた画像に左右されず、壁紙は色だけになる)。空の値は無いものとして
+    # 扱われる。
+    nowhere = os.path.join(work, "no-data")
+    base = {"XDG_CONFIG_HOME": config, "XDG_RUNTIME_DIR": work, "TZ": "UTC",
+            "XDG_DATA_HOME": nowhere, "XDG_DATA_DIRS": nowhere, "SEINAS_WALLPAPERS": ""}
     parent = run.start("standalone", ["seinas-standalone", "--fake", "1280x720", "--socket",
                                       os.path.join(work, "wl"), "--fonts", fonts], base)
     wait_for(os.path.join(work, "wl"))

@@ -7,11 +7,23 @@
 //!
 //! - `--config PATH`:設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/wallpaper.conf`)。
 //!
+//! 設定のファイルが無いときは、同梱の壁紙の置き場(`SEINAS_WALLPAPERS` → `$XDG_DATA_HOME/seinas/wallpapers` →
+//! `$XDG_DATA_DIRS` の各々の下の `seinas/wallpapers`)で見つかった画像のうち、出力の比にいちばん近いものを、
+//! 塗りつぶし(fill)で出す。見つからなければ、色だけ。
+//!
 //! 決まりの説明は `docs/wallpaper.md` にある。
 
-use std::{error::Error, path::PathBuf, process::ExitCode};
+use std::{
+    error::Error,
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
-use seinas_wallpaper::{load_png, paint, read_config, Config, CONFIG_FILE};
+use seinas_wallpaper::{
+    bundled_dirs, closest, find_bundled, load_png, paint, read_config, Candidate, Config,
+    CONFIG_FILE,
+};
 use smithay_client_toolkit::{
     compositor::{CompositorHandler, CompositorState},
     delegate_registry,
@@ -44,6 +56,9 @@ struct Wallpaper {
     pool: SlotPool,
     layer: LayerSurface,
     config: Config,
+    /// 設定のファイルが無いときの、同梱の壁紙の候補。空でなければ、`config.image` の代わりに、出力の比に
+    /// いちばん近いものを、描くたびに選ぶ。
+    bundled: Vec<Candidate>,
     /// いま出している絵の大きさと、そのバッファ。
     size: (u32, u32),
     buffer: Option<Buffer>,
@@ -53,10 +68,23 @@ struct Wallpaper {
 impl Wallpaper {
     /// 大きさ `(width, height)` の絵を作って出す。画像は、ここで読んで縮め、縮めた後は持たない。
     fn draw(&mut self, width: u32, height: u32) {
-        let picture = self
-            .config
-            .image
-            .as_ref()
+        // 同梱の壁紙は、大きさが変わるたびに、出力の比にいちばん近いものを選び直す。
+        let chosen = closest(&self.bundled, width, height);
+        if let Some(chosen) = chosen {
+            eprintln!(
+                "seinas-wallpaper: the bundled wallpaper {} ({}x{}) for {width}x{height}",
+                chosen
+                    .path
+                    .file_name()
+                    .unwrap_or(chosen.path.as_os_str())
+                    .to_string_lossy(),
+                chosen.width,
+                chosen.height
+            );
+        }
+        let picture = chosen
+            .map(|chosen| &chosen.path)
+            .or(self.config.image.as_ref())
             .and_then(|path| match load_png(path) {
                 Ok(picture) => Some(picture),
                 Err(e) => {
@@ -203,9 +231,66 @@ fn config_path(args: &[String]) -> Result<Option<PathBuf>, String> {
     Ok(path.or_else(|| seinas_config::default_file(CONFIG_FILE)))
 }
 
+/// 環境変数 `name` の値。空の値は、無いものとして扱う。
+fn var(name: &str) -> Option<OsString> {
+    std::env::var_os(name).filter(|value| !value.is_empty())
+}
+
+/// 同梱の壁紙を、環境変数で決まる置き場から探す。見つかった置き場と候補をログに出す。
+fn bundled_wallpapers() -> Vec<Candidate> {
+    let (seinas_wallpapers, data_home, home) =
+        (var("SEINAS_WALLPAPERS"), var("XDG_DATA_HOME"), var("HOME"));
+    let dirs = bundled_dirs(
+        seinas_wallpapers.as_deref().map(Path::new),
+        data_home.as_deref().map(Path::new),
+        home.as_deref().map(Path::new),
+        var("XDG_DATA_DIRS").as_deref(),
+    );
+    let mut problems = Vec::new();
+    let found = find_bundled(&dirs, &mut problems);
+    for problem in problems {
+        eprintln!("seinas-wallpaper: {problem}");
+    }
+    match found {
+        Some((dir, candidates)) => {
+            let names: Vec<String> = candidates
+                .iter()
+                .map(|c| {
+                    format!(
+                        "{} ({}x{})",
+                        c.path.file_name().unwrap_or_default().to_string_lossy(),
+                        c.width,
+                        c.height
+                    )
+                })
+                .collect();
+            eprintln!(
+                "seinas-wallpaper: no config file; the bundled wallpapers in {}: {}",
+                dir.display(),
+                names.join(", ")
+            );
+            candidates
+        }
+        None => {
+            eprintln!("seinas-wallpaper: no config file and no bundled wallpaper");
+            Vec::new()
+        }
+    }
+}
+
 fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let config = match config_path(&args)? {
+    // 設定のファイルがあれば、それに従う(画像を書いていなければ、色だけ)。無ければ、同梱の壁紙を探す。
+    let path = config_path(&args)?;
+    let exists = path
+        .as_deref()
+        .is_some_and(|path| path.try_exists().unwrap_or(true));
+    let bundled = if exists {
+        Vec::new()
+    } else {
+        bundled_wallpapers()
+    };
+    let config = match path.filter(|_| exists) {
         Some(path) => {
             let (config, problems) = read_config(&path);
             for problem in problems {
@@ -223,6 +308,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         None => Config::default(),
     };
     match &config.image {
+        _ if !bundled.is_empty() => eprintln!(
+            "seinas-wallpaper: the bundled wallpaper ({:?}), color {:02x}{:02x}{:02x}",
+            config.mode, config.color[0], config.color[1], config.color[2]
+        ),
         Some(image) => eprintln!(
             "seinas-wallpaper: {} ({:?}), color {:02x}{:02x}{:02x}",
             image.display(),
@@ -279,6 +368,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         pool,
         layer,
         config,
+        bundled,
         size: (0, 0),
         buffer: None,
         exit: false,
