@@ -2,7 +2,7 @@
 
 ## 状態
 
-決定(2026-10-25)。fork のブランチ `seinas/0.7.0` を rev `891533e19ad5a7482eaa4804dfe28fa0c7a71c17` で参照する形にした。
+決定(2026-10-25)。fork のブランチ `seinas/0.7.0` を rev で参照する形にした(今の rev は `793c042e5583dcc75e2e92ce072087be38cb7419`。`docs/smithay-patches.md`)。
 
 ## 背景
 

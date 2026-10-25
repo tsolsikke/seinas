@@ -26,8 +26,9 @@
 //! 残す)、`vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED`(受けたキーと関係なく、virtual-keyboard で
 //! キーと修飾キーの状態を送る)、`hold`(この後、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard の
 //! キーと修飾キー)を送らずにためる)、`send`(ためた要求を、ためた順に送り、ためるのをやめる)、
-//! `commit-string TEXT`(commit_string だけを送り、commit は送らない)、`delete-surrounding BEFORE AFTER`
-//! (delete_surrounding_text だけを送り、commit は送らない)、`vk-new NAME`(名前 NAME の virtual-keyboard を
+//! `preedit-string TEXT`(set_preedit_string だけを送り、commit は送らない)、`commit`(今までに届いた done の数を
+//! serial にした commit だけを送る)、`commit-string TEXT`(commit_string だけを送り、commit は送らない)、
+//! `delete-surrounding BEFORE AFTER`(delete_surrounding_text だけを送り、commit は送らない)、`vk-new NAME`(名前 NAME の virtual-keyboard を
 //! もう 1 つ作る)、`vk-keymap NAME`(grab で届いた keymap を送る)、`vk-key NAME CODE press|release`、`vk-mods NAME DEPRESSED`、
 //! `vk-destroy NAME`。
 //!
@@ -451,6 +452,16 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                         if let Some(id) = named.remove(name) {
                             wire.send(&message(id, 3, &[]))?;
                         }
+                    } else if let Some(text) = other.strip_prefix("preedit-string ") {
+                        // zwp_input_method_v2.set_preedit_string(カーソルは終わり。commit は送らない)
+                        let end = text.len() as i32;
+                        let mut body = string(text);
+                        body.extend(end.to_le_bytes());
+                        body.extend(end.to_le_bytes());
+                        wire.send(&message(input_method, 1, &body))?;
+                    } else if other == "commit" {
+                        // zwp_input_method_v2.commit(今までに届いた done の数)
+                        wire.send(&message(input_method, 3, &serial.to_le_bytes()))?;
                     } else if let Some(text) = other.strip_prefix("commit-string ") {
                         // zwp_input_method_v2.commit_string(commit は送らない)
                         wire.send(&message(input_method, 0, &string(text)))?;

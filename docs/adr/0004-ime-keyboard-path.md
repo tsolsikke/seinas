@@ -123,7 +123,7 @@ text-input と `wl_keyboard` の leave は、別のもの:
 - 変換中の文字(preedit):Seinas から、空の preedit_string と done を送らない。done を送ると、先に届いていた commit_string まで、アプリに適用させるおそれがあるため。text-input の leave で、アプリが preedit を消すこと(text-input-v3 の leave の「The client should reset any preedit string previously set」)に任せる。
 - 戻すのは、IME が新しい接続でつなぎ直したときだけ。古い接続のクリーンアップが終わるまで(Smithay の部品で、古い input method と grab の destroy が済むまで)は、新しい `get_input_method` を断る。古い接続の destroy が、新しい IME の grab や instance を消さないようにするため(Smithay 0.7.0 の destroy は、どの IME のものでも、seat の instance と grab を空にする)。
 - Seinas には、キーの繰り返しのタイマーが無い(繰り返しは、アプリと IME が `repeat_info` で行う)。そのため、Seinas が止める繰り返しは無い。アプリの繰り返しは `wl_keyboard` の leave で止まり、IME の繰り返しは接続を切ると届かなくなる。
-- 未解決(保証していない範囲):serial の合わない古い要求が、新しいアプリに入りうる。Smithay 0.7.0 は、IME の commit_string・preedit・delete_surrounding を、届いたその場で、そのときアクティブな text-input へ送るため(フォーカスを変えた直後に届いた古い要求も入る)。また、commit の前に切れた IME が送っていた commit_string は、アプリの pending の状態に残り、後の done で適用されることがある(アプリの作りによる)。次の課題で扱う。
+- 遅れて届く応答:IME の文字の要求は commit で効き、serial の合わない commit は捨てる(1.16)。commit の前に切れた IME が送っていた commit_string と delete_surrounding_text は、アプリへ届かない。
 - 自動で IME の止まりを見つけることが本当に要るようになったら、そのときに、明示の probe を持つ別の拡張などを設計する。標準の IME に、独自の返事の義務を課さない。
 
 ### 1.6 見せる相手と、IME の権限(2026-10-15 に決めた)
@@ -217,6 +217,39 @@ text-input と `wl_keyboard` の leave は、別のもの:
 | 文字を打っている所(カーソルの矩形、周りの文字)を伝える | 取り次ぐ | 受け取る | ○ |
 | IME の状態の表示 | (申し送り) | (申し送り) | |
 
+### 1.16 遅れて届く応答(2026-10-25 に決めた)
+
+IME が古い入力文脈に向けて送った応答(フォーカスや入力欄が変わる前の変換中の文字や確定)を、新しい入力文脈へ適用しない。
+
+- 決まり:IME の commit_string・set_preedit_string・delete_surrounding_text は、input method の保留の状態に置き、IME の commit で効かせる。commit の serial が、その input method へ送った done の数と同じときだけ、アクティブな text-input へ送って done を送る。違えば、古い状態に対する応答として捨て、text-input には何も送らない。activate を送るときに、保留の状態を空にする。
+- 仕様の根拠(input-method-unstable-v2.xml。wayland-protocols-misc 0.3.12):
+  - `commit`(279〜306 行):「The state relating to these events is double-buffered」。serial は「must be equal to the number of done events already issued by that object」で、違う serial の commit を受けたコンポジタは「must proceed as normal, except it should not change the current state of the zwp_input_method_v2 object」。
+  - `activate`(81〜86 行):「This event resets all state associated with … as well as the state associated with set_preedit_string, commit_string, and delete_surrounding_text requests」。
+- 直す前の Smithay 0.7.0:3 つの要求を、届いたその場でアクティブな text-input へ送り(`src/wayland/input_method/input_method_handle.rs` 208〜229 行)、serial の違う commit には `done(0)` を送るだけだった(`src/wayland/text_input/text_input_handle.rs` 132〜143 行)。text-input-v3 のアプリは、serial の違う done でも変更は適用するので、フォーカスを変える前の応答が新しいアプリに入った。上流の master(`24647fc8`)も同じ形。
+- 直し:fork のブランチ `seinas/0.7.0` の `e132b1c8`(commit で効かせ、古い serial を捨てる)と `a4dc9e68`(activate で保留の状態を空にする)。`e132b1c8` だけでは、activate より前に置かれた要求(前の入力欄への変換中の文字や、inactive の間に送られた要求)が保留に残り、activate の後の commit で新しい入力欄に入った(2026-10-25 にテストで見つけた)。
+- 結果:
+  - commit されない要求はアプリへ届かない。commit の前に切れた IME が送っていた commit_string と delete_surrounding_text も届かない(前は、届いたその場でアプリの pending の状態に入り、アプリの作りによっては後の done で適用されることがあった)。運用者が承認した(2026-10-25)。
+  - フォーカスを変えなければ、遅れて送った応答も、serial が合うので届く。
+
+比べた案(IME の復旧を決めたときの検討で挙がった V1・V2・V4 と、Smithay を直す案。V の番号は、その検討での呼び名):
+
+| 案 | 中身 | 良い点 | 悪い点 |
+| --- | --- | --- | --- |
+| Smithay を手元で直す(採った) | 上の直しを fork のブランチに積む(ADR 0006) | serial と done を持つ所で直すので、数え違いが起きない。仕様の形そのもので、IME に独自の作法を求めない。Seinas のコードは変わらず、テストを Smithay の中にも置ける | fork を保守する(バージョンを上げるたびに当て直す)。上流の PR #2215 は、古い serial の commit をいつも適用する向きで、この直しと逆向きなので、それが入ったバージョンでは当て直しが難しくなりうる(`docs/smithay-patches.md`) |
+| Seinas の外側から done の数を数える(V1) | Seinas が、Smithay が done を送る所に合わせて数え、IME の文字の要求を commit まで Seinas の側でためて、serial が合うときだけ Smithay へ渡す | Smithay を変えない(当時の決まりに合う) | done を送るのは Smithay の中(deactivate、text-input の commit の後の activate と状態の更新)で、Seinas からは送ったことが見えない。Smithay の振る舞いをなぞって数えるので、数え違えると正しい応答を捨てるか、古い応答を通す。Smithay の数(`Instance` の `serial`)は crate の外から読めず、照らし合わせられない。Smithay を上げるたびに数え直しが要る。input-method と text-input の Dispatch に 1 枚ずつかぶせる(約 150 行の見込み) |
+| フォーカスを変えたときに、途中の要求を捨てる(V2) | フォーカスを変えたとき、IME が commit を送る途中なら、その commit までの要求を捨てる。serial は見ない | 小さい | フォーカスを変えた後に、まるごと届いた古い応答(要求と commit の組)は、新しいアプリに入る。項目 3 を満たせない |
+| 取り次ぎを自前で書く(V4) | input-method-v2 と text-input-v3 の取り次ぎを、Smithay の部品を使わずに Seinas で書く | serial も done も Seinas が持てる。Smithay の input-method の不具合(1.5 の grab など)も、まとめて自前で扱える | 約 400〜600 行。grab・候補ウィンドウ・virtual-keyboard との結び付きも書き直し、Smithay と分かれて保守する |
+| 上流を待つ | 上流で直るのを待つ | 手元の保守が要らない | 上流には、この向きの直しが無い(2026-10-25。PR #2215 は逆向き)。Kieli の第 2 段階の前に済ませる、に間に合わない |
+
+緊急解除のとき(V3 の「解除のときは、認可を消して全部捨てる」)は、1.5 と 1.6 の形のまま(解除した接続の要求は、serial と関係なく捨てる)。
+
+virtual-keyboard で戻したキーには、serial が無い:
+
+- 防げる範囲:IME の文字の要求(変換中の文字、確定、周りの文字の削除)は、上の決まりで、古い入力文脈へのものを捨てる。押下の状態は、1.9 の記録で、どのアプリにもキーが押されたまま残らない(「離した」は、「押した」を渡した先が今もフォーカスを持つときだけ渡す)。
+- 防げない場面:IME が、前のフォーカスのアプリへ戻すつもりで virtual-keyboard で送ったキー(変換に使わなかったキー)が、フォーカスを変えた後に届くと、届いたときのフォーカスのアプリに入る(Smithay 0.7.0 の virtual-keyboard の `key` は、届いた時のフォーカスのクライアントへ直に送る。`src/wayland/virtual_keyboard/virtual_keyboard_handle.rs` 93〜123 行)。virtual-keyboard-unstable-v1 の `key` と `modifiers` には serial が無く、どの入力文脈に向けたものかを見分けられない。テストでも、ためてから送った Alt の押下と解放は、新しいウィンドウに届く(`an_answer_sent_before_a_focus_change_does_not_reach_the_new_window` を直す前の fork で回したときの、一つ目のウィンドウの行で見た。2026-10-25。virtual-keyboard の道は、この直しで変わらない)。
+- 影響:フォーカスを変えた直後(IME がキーを戻すまでの短い間)に打ったキーの 1 つか 2 つが、新しいアプリに入りうる。押されたまま残ることはない。修飾キーの状態は、次の物理のキーの入力で物理の状態に戻る。時間で区切って捨てる形は、正しく戻したキーも捨てるので採らない。
+- IME の側でできること:deactivate を受けた後は、前の入力欄のために残っているキーを virtual-keyboard で送らない(3 の申し送り)。
+
 ## 2. 標準の仕様が求めること
 
 出典は、Cargo.lock のバージョンに入っている XML(行の番号も、その XML のもの)。
@@ -277,6 +310,7 @@ Kieli との接点(案 D。運用者の決定、2026-10-24):
 | キーへの返事 | Seinas は、キーごとの返事を求めない(1.3、2.2)。文字を出さずにキーを使ってよい。空の commit を返事の代わりに送らない | Seinas の決定(Kieli に義務は無い) | 標準の IME に独自の返事の義務を課さない |
 | 緊急解除のときの見え方 | 緊急解除(1.5)では、Seinas が IME の接続を閉じる。IME には `wl_display.error` は届かず、ただの切断に見える(読むと EOF、送ると EPIPE)。理由の文は Seinas のログにだけ出る。つなぎ直すのは、IME(または起動の仕組み)の役目で、新しい接続でつなげば戻る | 事実(Seinas の決定。2026-10-15 に確かめた) | — |
 | 使わなかったキー | virtual-keyboard でアプリへ戻す。押したキーは、離したことも戻す | Kieli の設計 | 押下と解放の組、修飾キーの状態、繰り返しを 1 つの配り方の決まりで扱う |
+| 古い入力文脈への応答 | Seinas は、serial が done の数と違う commit を捨て、activate で、それまでの文字の要求(commit していないもの)を空にする(1.16)。commit には、受けた done の数をそのまま serial として付ける。virtual-keyboard のキーには serial が無く、届いた時のフォーカスへ入るので、deactivate の後は、前の入力欄のためのキーを送らない | 事実(Seinas の決定。2026-10-25) | — |
 | unavailable と、activate・deactivate | `unavailable` を受けたら、そのオブジェクトを捨てる(2.4)。deactivate・activate で、入力文脈の状態を作り直す | Kieli の設計(仕様の動き) | 入力欄ごとに 1 つのセッション。モードと未確定の文字を、プロセス全体の状態に置かない |
 | 変換中の文字 | アプリが text-input-v3 の preedit で描く。text-input-v3 を使わないアプリでは変換しない | 運用者(決定 Q5。2026-10-14) | 維持。統合のテストには、専用の小さな文字入力のアプリを使う |
 | 候補ウィンドウ(Q4) | 誰が描くか。最初のバージョン(K5)では要らない | Kieli の設計(かな漢字変換を入れる段階で) | Kieli の入口が popup を描き、Seinas が置く。描画のライブラリは、かな漢字変換に着手するときに決める |
@@ -304,7 +338,7 @@ K6 のとおり、2 つを別々に判定する。
 | --- | --- | --- | --- |
 | 1 | activate・deactivate・done と、アプリの側の enable・disable・commit が対応する | `the_activation_follows_the_application_enabling_and_disabling_the_text_input`、`focus_changes_move_the_text_input_and_the_activation`、`a_window_opened_after_the_ime_gets_the_text_input` | 確かめている |
 | 2 | 変換中の文字の更新・消去・確定が、正しい順で届く | `the_preedit_is_updated_cleared_and_committed_in_order`、`preedit_and_commit_reach_the_window` | 確かめている |
-| 3 | フォーカスを変える前の応答が、新しいアプリへ入らない | `an_answer_sent_before_a_focus_change_does_not_reach_the_new_window`(ignore) | 直していない。今は入る(Smithay 0.7.0 は、IME の要求を、届いたその場で、そのときアクティブな text-input へ送る。1.5 の「未解決」)。古い応答を serial で見分けて捨てる形を、別の課題で直し、Kieli の第 2 段階の前に済ませる。直したら ignore を外す |
+| 3 | フォーカスを変える前の応答が、新しいアプリへ入らない | `an_answer_sent_before_a_focus_change_does_not_reach_the_new_window`、`an_answer_for_a_window_does_not_reach_it_after_the_focus_comes_back`、`a_preedit_committed_only_after_a_focus_change_does_not_reach_the_new_window`、`an_answer_sent_before_the_text_input_is_enabled_again_does_not_reach_it`、`requests_sent_while_the_ime_is_inactive_reach_no_window`、`a_late_answer_without_a_focus_change_still_reaches_the_window` | 確かめている(2026-10-25 に直した。1.16)。フォーカスを変えなければ、遅れた応答も届く。virtual-keyboard で戻したキーは防げない(1.16) |
 | 4 | keymap・修飾キー・押下と解放が整合する | `keys_go_through_the_ime_and_come_back_to_the_window`、`alt_tab_works_while_the_ime_has_the_keyboard`、`alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press`、`modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks`、`a_key_held_on_the_physical_keyboard_is_not_released_with_a_virtual_keyboard` | 押下と解放と修飾キーは確かめている。keymap の変更は Kieli の第 2 段階で確かめる(Smithay 0.7.0 は、keymap を置き換えたとき、新しい keymap を wl_keyboard へだけ送り、IME の grab へは送らない。入れ子で親の keymap に置き換えるときに当たる。seinas-standalone には keymap を変える道が無い) |
 | 5 | IME の切断・destroy・緊急解除で、変換中の文字や押されたキーが残らない | `a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit`、`a_destroyed_input_method_leaves_no_preedit_in_the_window`、`the_release_key_closes_the_ime_and_keys_go_straight_to_the_window`、`a_disconnected_ime_releases_the_keys_of_its_virtual_keyboard`、`a_destroyed_input_method_releases_the_keys_of_its_virtual_keyboard`、`the_release_key_releases_the_keys_of_the_virtual_keyboards`、`a_key_pressed_only_through_the_ime_is_not_left_pressed` | 確かめている |
 | 6 | 文字を出さずにキーを使っても、異常と判定されない | `an_ime_that_swallows_a_key_is_not_bypassed` | 確かめている |

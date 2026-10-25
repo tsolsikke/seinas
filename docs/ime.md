@@ -75,7 +75,8 @@ IME が去った後(接続断でも緊急解除でも)は、次の順に届き�
 - grab の release だけでは、virtual-keyboard の押下を消しません(仕様は、grab の release が押下を消すとは書いていない)。IME が「離した」を遅れて送れば、そのとおりアプリに届きます。IME が「離した」を送らずに接続を保ったままなら、アプリにはキーが押されたまま残るので、緊急解除で復旧します。
 - 繰り返し:Seinas には、キーの繰り返しのタイマーがありません(繰り返しは、アプリと IME が `repeat_info` で行う)。アプリの繰り返しは `wl_keyboard` の leave で止まり、IME の繰り返しは、接続を切ると届かなくなります。
 - 戻すのは、IME が新しい接続でつなぎ直したときだけです。古い接続のクリーンアップ(Smithay の部品で、古い input method と grab の destroy)が済むまでは、新しい `get_input_method` を断ります(ログに `the released input method is not cleaned up yet`)。Smithay 0.7.0 の destroy は、どの IME のものでも seat の instance と grab を空にするため、新しい IME の grab を消さないようにするためです。新しい IME がつながると、フォーカスのあるアプリに text-input の enter が届き、同じ欄で続けて打てます(クリックし直さなくてよい)。
-- 保証していない範囲:serial の合わない古い要求が、新しいアプリに入りえます(Smithay 0.7.0 は、IME の文字の要求を、届いたその場で、そのときアクティブな text-input へ送るため)。commit の前に切れた IME の commit_string は、アプリの pending の状態に残り、アプリの作りによっては、後の done で適用されます。次の課題で扱います(ADR 0004 の 1.5)。
+- 遅れて届く応答:IME の文字の要求(commit_string・set_preedit_string・delete_surrounding_text)は、IME の commit で効きます。commit の serial が、その IME へ送った done の数と同じときだけアプリへ送り、違えば(フォーカスや入力欄を変える前の応答など)捨てます。activate を送るときに、それまでの commit していない要求は空にします(inactive の間に送られた要求も、activate の後の commit で入らない)。commit の前に切れた IME の要求は、アプリへ届きません(Smithay の fork の直し。ADR 0004 の 1.16)。
+  - 防げないもの:virtual-keyboard で戻したキーには serial が無いので、IME が前のアプリへ戻すつもりで送ったキーが、フォーカスを変えた後に届くと、新しいアプリに入ります(押されたまま残ることはない)。
 
 ## 文字の受け渡し
 
@@ -155,14 +156,19 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `the_release_key_is_reserved_while_no_ime_is_connected` | IME のためのソケットを開く構成では、IME がつながっていなくても F12 を渡さず(Alt と Shift は渡る)、続けて F12 だけを押せば届く |
 | `the_activation_follows_the_application_enabling_and_disabling_the_text_input` | アプリが text-input を無効にすると IME に deactivate と done が届き、無効の間のキーは変換されずにアプリへ戻り、有効にし直すと activate と done が届いて、また変換する(ADR 0004 の 4 の項目 1) |
 | `the_preedit_is_updated_cleared_and_committed_in_order` | 変換中の文字の更新(あ・あい)、短くする(あ)、消す(空)、打ち直して確定(あ)が、送った順に、done ごとに届く(項目 2) |
-| `an_answer_sent_before_a_focus_change_does_not_reach_the_new_window` | ignore(直していない)。フォーカスを変える前にためた変換中の文字を、変えた後に送ると、今は新しいウィンドウに入る。直したら ignore を外す(項目 3) |
+| `an_answer_sent_before_a_focus_change_does_not_reach_the_new_window` | フォーカスを変える前にためた変換中の文字を、変えた後に送っても、新しいウィンドウに入らない(古い serial の commit を捨てる)。その後に新しく打った文字は届く(項目 3) |
+| `a_late_answer_without_a_focus_change_still_reaches_the_window` | フォーカスを変えなければ、ためて遅れて送った変換中の文字も、順に届く(done の数を数え違えて、正しい応答を捨てない) |
+| `an_answer_for_a_window_does_not_reach_it_after_the_focus_comes_back` | 二つ目への応答をためたまま、一つ目を経て二つ目へ戻してから送っても、二つ目に入らない。戻った後に新しく打った文字は届く(項目 3) |
+| `a_preedit_committed_only_after_a_focus_change_does_not_reach_the_new_window` | IME が変換中の文字だけを送り(`preedit-string`)、フォーカスを変えた後の done の数で commit しても、新しいウィンドウに入らない(activate で空にする。項目 3) |
+| `an_answer_sent_before_the_text_input_is_enabled_again_does_not_reach_it` | 同じウィンドウで、アプリが text-input を disable して enable する前にためた応答は、enable の後に送っても入らない。その後に新しく打った文字は届く(項目 3) |
+| `requests_sent_while_the_ime_is_inactive_reach_no_window` | deactivate の後に IME が送った要求(commit したものも、commit せずに残したものも)は、どのウィンドウにも入らず、activate の後の commit でも入らない。その後に新しく打った文字は届く(項目 3) |
 | `a_destroyed_input_method_leaves_no_preedit_in_the_window` | 変換中の文字があるときに input method を destroy すると、アプリに text-input の leave が届いて変換中の文字が消え、次のキーは直接届く(項目 5) |
 | `a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_later` | seat で最初の keymap が届く前に、Smithay が断った virtual-keyboard の modifiers は記録せず、接続が切れた後に、渡していない modifiers を送り直さない(ログに `left pressed by a virtual keyboard` を出さない) |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
 | `a_window_opened_after_the_ime_gets_the_text_input` | IME の後に開いたウィンドウにも、text-input の enter が届き、変換中の文字が届く |
-| `a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit` | IME が commit_string を送り、commit の前に接続を切ると、アプリには text-input の leave だけが届き(done は届かない)、アプリが変換中の文字を消す。押されたキーの無い enter が送り直され、次のキーは直接届く |
-| `the_release_key_closes_the_ime_and_keys_go_straight_to_the_window` | delete_surrounding を送った IME を緊急解除すると、IME の接続が切れ、アプリに text-input の leave が届く(done は届かない)。送り直した enter には、押している Alt と Shift だけが入り、F12 は入らない。次のキーは直接届く |
+| `a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit` | IME が commit_string を送り、commit の前に接続を切ると、commit されない commit_string は届かず、アプリには text-input の leave だけが届き(done は届かない)、アプリが変換中の文字を消す。押されたキーの無い enter が送り直され、次のキーは直接届く |
+| `the_release_key_closes_the_ime_and_keys_go_straight_to_the_window` | delete_surrounding を送った(commit はしていない)IME を緊急解除すると、IME の接続が切れ、commit されない delete_surrounding は届かず、アプリに text-input の leave が届く(done は届かない)。送り直した enter には、押している Alt と Shift だけが入り、F12 は入らない。次のキーは直接届く |
 | `an_ime_that_swallows_a_key_is_not_bypassed` | 文字を出さずにキーを使う IME(`--swallow`)は、間を空けて何度使っても、直接の道にならない |
 | `a_key_held_on_the_keyboard_and_through_the_ime_is_not_left_pressed` | 物理のキーボードで押したままのキーを、IME も virtual-keyboard で押していたとき、緊急解除の後の enter にそのキーが入り、離したことが直接届く |
 | `a_key_pressed_only_through_the_ime_is_not_left_pressed` | IME が virtual-keyboard で押したまま(離したことをためている)のキーは、緊急解除の後の enter に入らない |
@@ -195,7 +201,7 @@ WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime
 - `--popup WxH` を付けると、その大きさの候補ウィンドウを、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
 - `--swallow KEY` を付けると、evdev の番号 KEY のキーを、文字を出さずに使います(押下も解放も、何も返さない。半角/全角のように、IME の状態だけを変えるキーのまね)。
 - 標準入力の `hold` で、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard のキーと修飾キー)をためはじめ、`send` で、ためた順に送ります(遅れて届く返事のまね)。
-- 標準入力の `commit-string TEXT`・`delete-surrounding BEFORE AFTER` は、その要求だけを送り、commit は送りません(commit の前に切れる IME のまね)。
+- 標準入力の `commit-string TEXT`・`delete-surrounding BEFORE AFTER` は、その要求だけを送り、commit は送りません(commit の前に切れる IME のまね)。`preedit-string TEXT` は変換中の文字の要求だけを送り、`commit` は、それまでに届いた done の数を serial にした commit だけを送ります(要求と commit の間に、フォーカスや入力欄が変わる場面のまね)。
 - 標準入力の `vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED` は、受けたキーと関係なく、virtual-keyboard でキーと修飾キーの状態を送ります。`again` は、同じ接続から 2 つ目の `get_input_method` を頼み、`again-grab` は、その 2 つ目で keyboard を grab し(届いたキーを `ime: second key 30 pressed` の行で書く)、`destroy-input-method` は、input method だけを destroy します。`--no-builtin-keymap` は、built-in の virtual-keyboard に keymap を送りません(seat に keymap がまだ無いときの確かめ)。`--virtual-keyboard-only` は、`get_input_method` を頼まずに virtual-keyboard を作ります(認可の無いクライアントのまね)。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
 

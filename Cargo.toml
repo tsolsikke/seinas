@@ -39,4 +39,4 @@ cosmic-text = { version = "=0.19.0", default-features = false, features = ["std"
 # Smithay 0.7.0 に、Seinas の側で見つけた不具合の直しを積んだ fork のブランチ(seinas/0.7.0)を、rev を固定して使う
 # (docs/smithay-patches.md、ADR 0006)。
 [patch.crates-io]
-smithay = { git = "https://github.com/tsolsikke/smithay.git", rev = "891533e19ad5a7482eaa4804dfe28fa0c7a71c17" }
+smithay = { git = "https://github.com/tsolsikke/smithay.git", rev = "793c042e5583dcc75e2e92ce072087be38cb7419" }

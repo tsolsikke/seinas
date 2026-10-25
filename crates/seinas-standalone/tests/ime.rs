@@ -748,21 +748,15 @@ fn a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit() {
     tap(&mut seinas, KEY_A);
     assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
     assert_eq!(next_text_line(&window, "done"), "window: text-input done");
-    // commit_string を送り、commit の前に接続を切る。Seinas は、空の preedit も done も送らない。アプリには、
-    // text-input の leave だけが届き、アプリが変換中の文字を消す(text-input-v3 の leave)。
+    // commit_string を送り、commit の前に接続を切る。commit されない変更はアプリへ届かず(input method の状態は
+    // commit で効く)、Seinas は、空の preedit も done も送らない。アプリには、text-input の leave だけが届き、
+    // アプリが変換中の文字を消す(text-input-v3 の leave)。
     ime.send_line("commit-string x");
     ime.send_line("sync");
     ime.wait_for_line("ime: synced");
     ime.send_line("quit");
     let lines = text_lines_until(&window, "window: reset preedit");
-    assert_eq!(
-        lines,
-        [
-            "window: commit x",
-            "window: text-input leave",
-            "window: reset preedit"
-        ]
-    );
+    assert_eq!(lines, ["window: text-input leave", "window: reset preedit"]);
     wait_for_log(&seinas, "the input method left");
     // 次のキーから直接の道。押されたキーは残らない(送り直した enter に、押されているキーは無い)。
     assert_eq!(next_reentered_keys(&window), Vec::<u32>::new());
@@ -828,20 +822,13 @@ fn the_release_key_closes_the_ime_and_keys_go_straight_to_the_window() {
         "the input method was released with the emergency key",
     );
     wait_for_log(&seinas, "the input method left");
-    // delete_surrounding_text の行は、Seinas が IME の sync に答える前に送るので、Alt と Shift の行より先にある。
+    // commit されない delete_surrounding_text は、アプリへ届かない(input method の状態は commit で効く)。
     let mut lines: Vec<String> = before
         .into_iter()
         .filter(|line| line.starts_with("window: delete "))
         .collect();
     lines.extend(text_lines_until(&window, "window: reset preedit"));
-    assert_eq!(
-        lines,
-        [
-            "window: delete 1 0",
-            "window: text-input leave",
-            "window: reset preedit"
-        ]
-    );
+    assert_eq!(lines, ["window: text-input leave", "window: reset preedit"]);
     // 送り直した enter には、物理のキーボードで押している Alt と Shift だけが入り、Seinas が使った F12 は
     // 入らない。離すと、直接ウィンドウに届く。
     assert_eq!(next_reentered_keys(&window), [KEY_LEFT_SHIFT, KEY_LEFT_ALT]);
@@ -1910,8 +1897,41 @@ fn the_preedit_is_updated_cleared_and_committed_in_order() {
     );
 }
 
+/// Alt+Tab で、フォーカスを次のウィンドウへ移す。
+fn alt_tab(seinas: &mut Compositor) {
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
+    tap(seinas, KEY_TAB);
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+}
+
+/// `hold` でためた応答を送り、IME が送り終えるまで待つ。
+fn send_held(ime: &mut TestClient) {
+    ime.send_line("send");
+    while !ime
+        .next_line("the held answers sent")
+        .starts_with("ime: sent ")
+    {}
+}
+
+/// IME の標準入力の行 `line` を処理させ、その要求をコンポジタが処理し終えるまで待つ。
+fn ime_request(ime: &mut TestClient, line: &str) {
+    ime.send_line(line);
+    ime.send_line("sync");
+    ime.wait_for_line("ime: synced");
+}
+
+/// ウィンドウに、500 ms の間に、変換中の文字か確定した文字が届かないことを確かめる。
+fn no_text_arrives(window: &TestClient) {
+    let lines = window.lines_within(std::time::Duration::from_millis(500));
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with("window: preedit ") || line.starts_with("window: commit ")),
+        "{lines:?}"
+    );
+}
+
 #[test]
-#[ignore = "直していない:Smithay 0.7.0 は、IME の要求を届いたその場で、そのときアクティブな text-input へ送る(ADR 0004 の 1.5 の未解決)"]
 fn an_answer_sent_before_a_focus_change_does_not_reach_the_new_window() {
     // 項目 3:フォーカスを変える前の応答(古い入力欄への変換中の文字)が、新しいアプリへ入らない。
     let mut seinas = Compositor::start_with_input("lc");
@@ -1928,24 +1948,162 @@ fn an_answer_sent_before_a_focus_change_does_not_reach_the_new_window() {
     tap(&mut seinas, KEY_A);
     ime.wait_for_line("ime: preedit あ");
     // Alt+Tab で一つ目へ移し、一つ目が有効になってから、ためた応答を送る。
-    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
-    tap(&mut seinas, KEY_TAB);
-    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    alt_tab(&mut seinas);
     assert_eq!(
         next_text_change(&first, "enter"),
         "window: text-input enter"
     );
     wait_for_activate(&ime, "activate on the first");
-    ime.send_line("send");
-    while !ime
-        .next_line("the held answers sent")
-        .starts_with("ime: sent ")
-    {}
-    let lines = first.lines_within(std::time::Duration::from_millis(500));
-    assert!(
-        !lines.iter().any(|line| line == "window: preedit あ"),
-        "{lines:?}"
+    send_held(&mut ime);
+    no_text_arrives(&first);
+    // 捨てるのは古い応答だけで、一つ目で新しく打った文字は届く。
+    tap(&mut seinas, KEY_I);
+    assert_eq!(
+        next_text_change(&first, "い on the first"),
+        "window: preedit い"
     );
+}
+
+#[test]
+fn a_late_answer_without_a_focus_change_still_reaches_the_window() {
+    // 項目 3 の裏:フォーカスを変えなければ、遅れて送った応答も、今までどおり届く(done の数を数え違えて、正しい
+    // 応答を捨てない)。
+    let mut seinas = Compositor::start_with_input("le");
+    let window = open_text_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    ime.send_line("hold");
+    ime.wait_for_line("ime: holding");
+    tap(&mut seinas, KEY_A);
+    ime.wait_for_line("ime: preedit あ");
+    tap(&mut seinas, KEY_I);
+    ime.wait_for_line("ime: preedit あい");
+    send_held(&mut ime);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    assert_eq!(next_text_line(&window, "あい"), "window: preedit あい");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+}
+
+#[test]
+fn an_answer_for_a_window_does_not_reach_it_after_the_focus_comes_back() {
+    // 項目 3 の A→B→A:二つ目への古い応答は、一つ目を経て二つ目に戻った後の二つ目にも入らない(戻った後は、新しい
+    // 入力先として扱う)。戻った後に新しく打った文字は届く。
+    let mut seinas = Compositor::start_with_input("lf");
+    let first = open_text_window(&seinas, "一つ目");
+    let second = open_text_window(&seinas, "二つ目");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(
+        next_text_change(&second, "enter"),
+        "window: text-input enter"
+    );
+    ime.send_line("hold");
+    ime.wait_for_line("ime: holding");
+    tap(&mut seinas, KEY_A);
+    ime.wait_for_line("ime: preedit あ");
+    alt_tab(&mut seinas);
+    assert_eq!(
+        next_text_change(&first, "enter"),
+        "window: text-input enter"
+    );
+    wait_for_activate(&ime, "activate on the first");
+    alt_tab(&mut seinas);
+    assert_eq!(
+        next_text_change(&second, "leave"),
+        "window: text-input leave"
+    );
+    assert_eq!(
+        next_text_change(&second, "enter again"),
+        "window: text-input enter"
+    );
+    wait_for_activate(&ime, "activate on the second again");
+    send_held(&mut ime);
+    no_text_arrives(&second);
+    tap(&mut seinas, KEY_I);
+    assert_eq!(
+        next_text_change(&second, "い on the second"),
+        "window: preedit い"
+    );
+}
+
+#[test]
+fn a_preedit_committed_only_after_a_focus_change_does_not_reach_the_new_window() {
+    // 項目 3 の送る途中:変換中の文字を送り、commit の前にフォーカスが変わると、その分は新しい入力先に入らない
+    // (activate で、IME の要求の状態はリセットされる。commit は、フォーカスを変えた後の done の数で送る)。
+    let mut seinas = Compositor::start_with_input("lg");
+    let first = open_text_window(&seinas, "一つ目");
+    let second = open_text_window(&seinas, "二つ目");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(
+        next_text_change(&second, "enter"),
+        "window: text-input enter"
+    );
+    ime_request(&mut ime, "preedit-string あ");
+    alt_tab(&mut seinas);
+    assert_eq!(
+        next_text_change(&first, "enter"),
+        "window: text-input enter"
+    );
+    wait_for_activate(&ime, "activate on the first");
+    ime_request(&mut ime, "commit");
+    no_text_arrives(&first);
+    tap(&mut seinas, KEY_I);
+    assert_eq!(
+        next_text_change(&first, "い on the first"),
+        "window: preedit い"
+    );
+}
+
+#[test]
+fn an_answer_sent_before_the_text_input_is_enabled_again_does_not_reach_it() {
+    // 項目 3 の同じ surface の中:アプリが text-input を disable して enable する(入力欄の変更に当たる)前の応答は、
+    // 変更の後に入らない。変更の後に新しく打った文字は届く。
+    let mut seinas = Compositor::start_with_input("lh");
+    let mut window = open_text_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    ime.send_line("hold");
+    ime.wait_for_line("ime: holding");
+    tap(&mut seinas, KEY_A);
+    ime.wait_for_line("ime: preedit あ");
+    window.send_line("text-input disable");
+    assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
+    ime.wait_for_line("ime: done");
+    window.send_line("text-input enable");
+    wait_for_activate(&ime, "activate again");
+    send_held(&mut ime);
+    no_text_arrives(&window);
+    tap(&mut seinas, KEY_I);
+    assert_eq!(next_text_change(&window, "い"), "window: preedit い");
+}
+
+#[test]
+fn requests_sent_while_the_ime_is_inactive_reach_no_window() {
+    // 項目 3 の inactive の間:deactivate の後に IME が送った要求は、どのアプリにも入らない。commit しないで残した
+    // 要求も、次の activate の後の commit で入らない。activate の後に新しく打った文字は届く。
+    let mut seinas = Compositor::start_with_input("li");
+    let first = open_text_window(&seinas, "一つ目");
+    let mut second = open_text_window(&seinas, "二つ目");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(
+        next_text_change(&second, "enter"),
+        "window: text-input enter"
+    );
+    second.send_line("text-input disable");
+    assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
+    ime.wait_for_line("ime: done");
+    ime.send_line("preedit-string あ");
+    ime.send_line("commit");
+    ime_request(&mut ime, "commit-string え");
+    no_text_arrives(&first);
+    no_text_arrives(&second);
+    second.send_line("text-input enable");
+    wait_for_activate(&ime, "activate again");
+    ime_request(&mut ime, "commit");
+    no_text_arrives(&second);
+    no_text_arrives(&first);
+    tap(&mut seinas, KEY_I);
+    assert_eq!(next_text_change(&second, "い"), "window: preedit い");
 }
 
 #[test]
