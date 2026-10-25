@@ -153,6 +153,10 @@ IME が 1 つつないでいる間は、2 つ目からの `get_input_method` を
 | `modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks` | キーを押さずに modifiers だけを渡した virtual-keyboard が壊れると、modifiers が物理のキーボードの状態に戻る |
 | `the_release_key_goes_to_the_window_without_the_ime_socket` | `--no-ime-socket` の構成では、Alt+Shift+F12 の押下と解放が、全部ウィンドウへ届く(緊急解除のキーを予約しない) |
 | `the_release_key_is_reserved_while_no_ime_is_connected` | IME のためのソケットを開く構成では、IME がつながっていなくても F12 を渡さず(Alt と Shift は渡る)、続けて F12 だけを押せば届く |
+| `the_activation_follows_the_application_enabling_and_disabling_the_text_input` | アプリが text-input を無効にすると IME に deactivate と done が届き、無効の間のキーは変換されずにアプリへ戻り、有効にし直すと activate と done が届いて、また変換する(ADR 0004 の 4 の項目 1) |
+| `the_preedit_is_updated_cleared_and_committed_in_order` | 変換中の文字の更新(あ・あい)、短くする(あ)、消す(空)、打ち直して確定(あ)が、送った順に、done ごとに届く(項目 2) |
+| `an_answer_sent_before_a_focus_change_does_not_reach_the_new_window` | ignore(直していない)。フォーカスを変える前にためた変換中の文字を、変えた後に送ると、今は新しいウィンドウに入る。直したら ignore を外す(項目 3) |
+| `a_destroyed_input_method_leaves_no_preedit_in_the_window` | 変換中の文字があるときに input method を destroy すると、アプリに text-input の leave が届いて変換中の文字が消え、次のキーは直接届く(項目 5) |
 | `a_virtual_keyboard_request_refused_before_the_first_keymap_is_not_cleaned_up_later` | seat で最初の keymap が届く前に、Smithay が断った virtual-keyboard の modifiers は記録せず、接続が切れた後に、渡していない modifiers を送り直さない(ログに `left pressed by a virtual keyboard` を出さない) |
 | `a_second_ime_is_refused_and_the_first_keeps_working` | 2 つ目の IME に unavailable が届き、2 つ目が grab を取って去っても、1 つ目は使える |
 | `preedit_and_commit_reach_the_window` | `a`・`i` が変換中の文字「あ」「あい」になり、Enter で「あい」が確定してウィンドウに届く。IME が使ったキーは、ウィンドウの wl_keyboard に届かない |
@@ -185,14 +189,14 @@ WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime
 ```
 
 - keyboard を grab し、grab で届いた keymap を、そのまま virtual-keyboard の keymap にします。
-- IME が有効(activate を受けた)なら、`a`・`i`・`u` を変換中の文字の「あ」「い」「う」にし、変換中の文字があるときの Enter で確定します。
+- IME が有効(activate を受けた)なら、`a`・`i`・`u` を変換中の文字の「あ」「い」「う」にし、変換中の文字があるときの Enter で確定します。Backspace で変換中の文字を 1 字短くし、最後の 1 字なら空の変換中の文字を送って消します。
 - ほかのキーは、virtual-keyboard でアプリへ戻します。
 - 標準入力の `release` で grab を手放し、`quit` で接続を切って終わります。
 - `--popup WxH` を付けると、その大きさの候補ウィンドウを、紫(8000ff)の単色で出します。届いたカーソルの矩形を `ime: popup rectangle X Y W H` の行で書きます。
 - `--swallow KEY` を付けると、evdev の番号 KEY のキーを、文字を出さずに使います(押下も解放も、何も返さない。半角/全角のように、IME の状態だけを変えるキーのまね)。
 - 標準入力の `hold` で、キーを受けて送る要求(変換中の文字、確定、virtual-keyboard のキーと修飾キー)をためはじめ、`send` で、ためた順に送ります(遅れて届く返事のまね)。
 - 標準入力の `commit-string TEXT`・`delete-surrounding BEFORE AFTER` は、その要求だけを送り、commit は送りません(commit の前に切れる IME のまね)。
-- 標準入力の `vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED` は、受けたキーと関係なく、virtual-keyboard でキーと修飾キーの状態を送ります。`again` は、同じ接続から 2 つ目の `get_input_method` を頼み、`destroy-input-method` は、input method だけを destroy します。`--virtual-keyboard-only` は、`get_input_method` を頼まずに virtual-keyboard を作ります(認可の無いクライアントのまね)。
+- 標準入力の `vk-press CODE`・`vk-release CODE`・`vk-mods DEPRESSED` は、受けたキーと関係なく、virtual-keyboard でキーと修飾キーの状態を送ります。`again` は、同じ接続から 2 つ目の `get_input_method` を頼み、`again-grab` は、その 2 つ目で keyboard を grab し(届いたキーを `ime: second key 30 pressed` の行で書く)、`destroy-input-method` は、input method だけを destroy します。`--no-builtin-keymap` は、built-in の virtual-keyboard に keymap を送りません(seat に keymap がまだ無いときの確かめ)。`--virtual-keyboard-only` は、`get_input_method` を頼まずに virtual-keyboard を作ります(認可の無いクライアントのまね)。
 - くわしくは `crates/seinas-test-clients/src/ime.rs` にあります。
 
 ### テスト用のアプリ
@@ -202,6 +206,8 @@ WAYLAND_DISPLAY=seinas-0-ime target/debug/test-client ime
 ```bash
 WAYLAND_DISPLAY=seinas-0 target/debug/test-client window --text-input
 ```
+
+標準入力の `text-input disable`・`text-input enable` で、アプリの側から text-input を無効・有効にして commit します(有効にするときは、カーソルの矩形も送る)。
 
 位置の決まり(`popup_location`)のユニットテストは、`cargo test -p seinas-frontend --lib ime_popup` です。
 

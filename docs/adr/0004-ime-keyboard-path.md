@@ -259,13 +259,19 @@ text-input と `wl_keyboard` の leave は、別のもの:
 
 ## 3. Seinas から Kieli への申し送り
 
-Kieli の作り方について、Seinas の側で見えていることを、Kieli の設計の材料として渡す。Seinas の決まりではない。Kieli の設計で別の形に決まったら、Seinas はそれに合わせる(1 の決まりと、2 の仕様の範囲で)。
+Kieli との接点(案 D。運用者の決定、2026-10-24):
+
+- Kieli は、別のプロセスの IME として、標準の input-method-v2(と virtual-keyboard-v1)で Seinas につなぐ。Kieli は、別のリポジトリで作る。
+- 「Seinas は Kieli に準拠する」は、「Kieli に要る入力体験を Seinas が支える。接続の仕様は Wayland 標準で、Kieli 専用にはしない」と整理した。Seinas は、Kieli のための独自の拡張・要求・返事の義務を持たない。Seinas が支える入力体験は、標準の IME なら Kieli でなくても同じように受けられる。
+- 最初に保証する範囲は、Linux の上の Seinas と、ZeikOS の上の Seinas(1.14)。統合の前の確認項目は、4 の表のとおり、Seinas の回帰のテストとして置く。
+
+以下は、Kieli の作り方について、Seinas の側で見えていることを、Kieli の設計の材料として渡すもの。Seinas の決まりではない。Kieli の設計で別の形に決まったら、Seinas はそれに合わせる(1 の決まりと、2 の仕様の範囲で)。
 
 「GPT-6 の推奨」は、2026-10-14 のレビュー(Notion の話題レポート「ZeikOS・Seinas・Kieliの設計方針」)の推奨で、運用者が採ったものではない。
 
 | 項目 | 申し送り | 決めるのは | GPT-6 の推奨 |
 | --- | --- | --- | --- |
-| つなぎ方 | Seinas への入口は、input-method-v2 と virtual-keyboard を使う、別のプロセスの Wayland のクライアント | 運用者(決定 Q1。2026-10-14) | 維持。変換の決まりは Kieli、フォーカス・権限・キーの配り方は Seinas |
+| つなぎ方 | Seinas への入口は、input-method-v2 と virtual-keyboard を使う、別のプロセスの Wayland のクライアント。Kieli 専用の口は作らない(案 D) | 運用者(決定 Q1。2026-10-14。案 D で確かめた。2026-10-24) | 維持。変換の決まりは Kieli、フォーカス・権限・キーの配り方は Seinas |
 | 入口の置き場(Q2) | Wayland の入口を、Kieli のリポジトリの中に置くか、kieli-core・kieli-cli との関係 | Kieli の設計 | Kieli のリポジトリの kieli-wayland。kieli-core は no_std + alloc、CLI と入口は std を使ってよい |
 | 起動と、IME として認められること | Kieli は、起動の仕組みが起こす(コンポジタは起こさない。ADR 0002 の 5)。IME として認められる方法は、Seinas の IME の権限の設計(1.6)で決める | 運用者(ZeikOS の起動の仕組みと一緒に)と Seinas の設計 | IME の権限を、シェルの部品の権限と分ける |
 | キーへの返事 | Seinas は、キーごとの返事を求めない(1.3、2.2)。文字を出さずにキーを使ってよい。空の commit を返事の代わりに送らない | Seinas の決定(Kieli に義務は無い) | 標準の IME に独自の返事の義務を課さない |
@@ -291,6 +297,17 @@ K6 のとおり、2 つを別々に判定する。
 | --- | --- | --- |
 | Kieli の最初のバージョン | Kieli の設計が決める(K5:ローマ字からひらがな)。Seinas の側の条件は付けない。Seinas につながなくても判定できる(kieli-cli など) | Kieli の設計 |
 | Seinas との統合 | テスト用の IME(`test-client ime`)の代わりに Kieli をつなぎ、`crates/seinas-standalone/tests/ime.rs` と同じ流れと、ふつうの入力、文字を出さないキー、フォーカスの切り替え、押しっぱなし、IME の接続断、遅れて届く応答、keymap の変更、text-input を使わないアプリが通ること。入れ子(WSLg)では、親の IME との二重変換が起きないことも見る | 運用者 |
+
+統合の前の確認項目(GPT-6 の第二意見の 5 章。2026-10-25 に、Seinas の回帰のテストと対応を付けた)。どれも `crates/seinas-standalone/tests/ime.rs` のテストで、テスト用の IME とテスト用のアプリを使う(標準の input-method-v2 と text-input-v3 の振る舞いを見るもので、Kieli 専用の決まりは見ない)。Smithay の古い grab の破棄の直しのテスト(1.5 の `the_old_cleanup_does_not_remove_the_grab_of_a_new_ime` と `the_old_grab_on_the_same_connection_does_not_remove_the_new_grab`)とは、別に置く。
+
+| # | 確認項目 | 対応するテスト | 状態 |
+| --- | --- | --- | --- |
+| 1 | activate・deactivate・done と、アプリの側の enable・disable・commit が対応する | `the_activation_follows_the_application_enabling_and_disabling_the_text_input`、`focus_changes_move_the_text_input_and_the_activation`、`a_window_opened_after_the_ime_gets_the_text_input` | 確かめている |
+| 2 | 変換中の文字の更新・消去・確定が、正しい順で届く | `the_preedit_is_updated_cleared_and_committed_in_order`、`preedit_and_commit_reach_the_window` | 確かめている |
+| 3 | フォーカスを変える前の応答が、新しいアプリへ入らない | `an_answer_sent_before_a_focus_change_does_not_reach_the_new_window`(ignore) | 直していない。今は入る(Smithay 0.7.0 は、IME の要求を、届いたその場で、そのときアクティブな text-input へ送る。1.5 の「未解決」)。古い応答を serial で見分けて捨てる形を、別の課題で直し、Kieli の第 2 段階の前に済ませる。直したら ignore を外す |
+| 4 | keymap・修飾キー・押下と解放が整合する | `keys_go_through_the_ime_and_come_back_to_the_window`、`alt_tab_works_while_the_ime_has_the_keyboard`、`alt_through_the_ime_during_alt_tab_reaches_only_the_window_that_got_the_press`、`modifiers_set_by_a_virtual_keyboard_are_restored_when_it_breaks`、`a_key_held_on_the_physical_keyboard_is_not_released_with_a_virtual_keyboard` | 押下と解放と修飾キーは確かめている。keymap の変更は Kieli の第 2 段階で確かめる(Smithay 0.7.0 は、keymap を置き換えたとき、新しい keymap を wl_keyboard へだけ送り、IME の grab へは送らない。入れ子で親の keymap に置き換えるときに当たる。seinas-standalone には keymap を変える道が無い) |
+| 5 | IME の切断・destroy・緊急解除で、変換中の文字や押されたキーが残らない | `a_disconnected_ime_returns_the_keys_and_the_window_resets_its_preedit`、`a_destroyed_input_method_leaves_no_preedit_in_the_window`、`the_release_key_closes_the_ime_and_keys_go_straight_to_the_window`、`a_disconnected_ime_releases_the_keys_of_its_virtual_keyboard`、`a_destroyed_input_method_releases_the_keys_of_its_virtual_keyboard`、`the_release_key_releases_the_keys_of_the_virtual_keyboards`、`a_key_pressed_only_through_the_ime_is_not_left_pressed` | 確かめている |
+| 6 | 文字を出さずにキーを使っても、異常と判定されない | `an_ime_that_swallows_a_key_is_not_bypassed` | 確かめている |
 
 ## 取り消した決定
 

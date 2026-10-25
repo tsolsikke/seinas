@@ -5,7 +5,8 @@
 //!
 //! - keyboard を grab し、grab で届いた keymap を、そのまま virtual-keyboard の keymap にする。
 //! - IME が有効(activate を受けた)なら、`a`・`i`・`u` を、変換中の文字(preedit)の「あ」「い」「う」に足して
-//!   送る。変換中の文字があるときの Enter で、それを確定する(commit_string)。
+//!   送る。変換中の文字があるときの Enter で、それを確定する(commit_string)。Backspace で、変換中の文字を 1 字短くする
+//!   (最後の 1 字なら、空の変換中の文字を送って消す)。
 //! - ほかのキー(IME が有効でないときは、全部のキー)と修飾キーの状態は、virtual-keyboard でアプリへ戻す。
 //!
 //! 引数:
@@ -60,6 +61,7 @@ const KEY_A: u32 = 30;
 const KEY_I: u32 = 23;
 const KEY_U: u32 = 22;
 const KEY_ENTER: u32 = 28;
+const KEY_BACKSPACE: u32 = 14;
 
 fn say(text: &str) {
     println!("ime: {text}");
@@ -283,6 +285,19 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                     if pressed && active {
                         if let Some(kana) = kana(key) {
                             preedit.push(kana);
+                            for request in preedit_requests(input_method, &preedit, serial) {
+                                out(&mut wire, &mut held, request)?;
+                            }
+                            if let Some(view) = &mut popup_view {
+                                view.show(&mut wire, &preedit)?;
+                            }
+                            say(&format!("preedit {preedit}"));
+                            used.insert(key);
+                            continue;
+                        }
+                        if key == KEY_BACKSPACE && !preedit.is_empty() {
+                            // 変換中の文字を 1 字短くする(最後の 1 字なら、空の変換中の文字で消す)。
+                            preedit.pop();
                             for request in preedit_requests(input_method, &preedit, serial) {
                                 out(&mut wire, &mut held, request)?;
                             }

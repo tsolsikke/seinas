@@ -39,7 +39,8 @@
 //!
 //! 標準入力から `title TEXT` の行が届くと、タイトルを `TEXT` に変える。`maximize`、`unmaximize`、`minimize` の行が
 //! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`cursor X Y W H` の行は、text-input の
-//! カーソルの矩形を変えて commit する。`pong` の行は、`--ignore-ping` で
+//! カーソルの矩形を変えて commit する。`text-input disable`・`text-input enable` の行は、text-input を無効・有効にして
+//! commit する(有効にするときは、カーソルの矩形も送る)。`pong` の行は、`--ignore-ping` で
 //! 返していない ping に pong を返し、`window: ponged` を書く。`sync` の行が届くと、それまでの
 //! 頼みをコンポジタが処理し終えたときに `window: synced` を書く。
 //!
@@ -296,6 +297,21 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             };
             if let Some(opcode) = opcode {
                 wire.send(&crate::message(crate::wire::TOPLEVEL, opcode, &[]))?;
+            }
+            // zwp_text_input_v3.disable(2)・enable(1)と、commit(7)。アプリの側から、入力欄を無効・有効にする。
+            if let (Some(id), Some(opcode)) = (
+                text_input,
+                match command.as_str() {
+                    "text-input disable" => Some(2),
+                    "text-input enable" => Some(1),
+                    _ => None,
+                },
+            ) {
+                wire.send(&crate::message(id, opcode, &[]))?;
+                if opcode == 1 {
+                    send_cursor(&mut wire, id, options.cursor)?;
+                }
+                wire.send(&crate::message(id, 7, &[]))?;
             }
             if let (Some(id), Some(rest)) = (text_input, command.strip_prefix("cursor ")) {
                 let numbers: Vec<i32> = rest

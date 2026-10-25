@@ -1845,3 +1845,126 @@ fn the_release_key_is_reserved_while_no_ime_is_connected() {
         seinas.log()
     );
 }
+
+// ---- Kieli との統合の前の確かめ(ADR 0004 の 4)。標準の input-method-v2 と text-input-v3 の振る舞いを、テスト用の
+// IME とアプリで確かめる。
+
+const KEY_BACKSPACE: u32 = 14;
+
+#[test]
+fn the_activation_follows_the_application_enabling_and_disabling_the_text_input() {
+    // 項目 1:アプリの enable・disable・commit が、IME の activate・deactivate・done に対応する。
+    let mut seinas = Compositor::start_with_input("la");
+    let mut window = open_text_window(&seinas, "ウィンドウ");
+    let ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    // アプリが無効にして commit すると、IME に deactivate と done が届く。
+    window.send_line("text-input disable");
+    assert_eq!(next_activation(&ime, "deactivate"), "ime: deactivate");
+    ime.wait_for_line("ime: done");
+    // 無効の間のキーは、変換されずにアプリへ戻る。
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_key_line(&window, "a"), "window: key 30 pressed");
+    // アプリが有効にし直して commit すると、IME に activate と done が届き、また変換する。
+    window.send_line("text-input enable");
+    wait_for_activate(&ime, "activate again");
+    tap(&mut seinas, KEY_I);
+    assert_eq!(next_text_change(&window, "い"), "window: preedit い");
+}
+
+#[test]
+fn the_preedit_is_updated_cleared_and_committed_in_order() {
+    // 項目 2:変換中の文字の更新・消去・確定が、送った順に、done ごとに届く。
+    let mut seinas = Compositor::start_with_input("lb");
+    let window = open_text_window(&seinas, "ウィンドウ");
+    let _ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    let mut lines = Vec::new();
+    for key in [KEY_A, KEY_I, KEY_BACKSPACE, KEY_BACKSPACE, KEY_A, KEY_ENTER] {
+        tap(&mut seinas, key);
+        loop {
+            let line = next_text_line(&window, "the next text-input line");
+            let done = line == "window: text-input done";
+            lines.push(line);
+            if done {
+                break;
+            }
+        }
+    }
+    assert_eq!(
+        lines,
+        [
+            "window: preedit あ",
+            "window: text-input done",
+            "window: preedit あい",
+            "window: text-input done",
+            "window: preedit あ",
+            "window: text-input done",
+            "window: preedit ",
+            "window: text-input done",
+            "window: preedit あ",
+            "window: text-input done",
+            "window: commit あ",
+            "window: text-input done",
+        ]
+    );
+}
+
+#[test]
+#[ignore = "直していない:Smithay 0.7.0 は、IME の要求を届いたその場で、そのときアクティブな text-input へ送る(ADR 0004 の 1.5 の未解決)"]
+fn an_answer_sent_before_a_focus_change_does_not_reach_the_new_window() {
+    // 項目 3:フォーカスを変える前の応答(古い入力欄への変換中の文字)が、新しいアプリへ入らない。
+    let mut seinas = Compositor::start_with_input("lc");
+    let first = open_text_window(&seinas, "一つ目");
+    let second = open_text_window(&seinas, "二つ目");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(
+        next_text_change(&second, "enter"),
+        "window: text-input enter"
+    );
+    // 二つ目への応答を、送らずにためておく。
+    ime.send_line("hold");
+    ime.wait_for_line("ime: holding");
+    tap(&mut seinas, KEY_A);
+    ime.wait_for_line("ime: preedit あ");
+    // Alt+Tab で一つ目へ移し、一つ目が有効になってから、ためた応答を送る。
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} press"));
+    tap(&mut seinas, KEY_TAB);
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    assert_eq!(
+        next_text_change(&first, "enter"),
+        "window: text-input enter"
+    );
+    wait_for_activate(&ime, "activate on the first");
+    ime.send_line("send");
+    while !ime
+        .next_line("the held answers sent")
+        .starts_with("ime: sent ")
+    {}
+    let lines = first.lines_within(std::time::Duration::from_millis(500));
+    assert!(
+        !lines.iter().any(|line| line == "window: preedit あ"),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn a_destroyed_input_method_leaves_no_preedit_in_the_window() {
+    // 項目 5:input method の destroy で、アプリに変換中の文字が残らない(切断と緊急解除は、ほかのテストで見る)。
+    let mut seinas = Compositor::start_with_input("ld");
+    let window = open_text_window(&seinas, "ウィンドウ");
+    let mut ime = connect_ime_to_window(&seinas);
+    assert_eq!(next_text_line(&window, "enter"), "window: text-input enter");
+    tap(&mut seinas, KEY_A);
+    assert_eq!(next_text_line(&window, "あ"), "window: preedit あ");
+    assert_eq!(next_text_line(&window, "done"), "window: text-input done");
+    ime.send_line("destroy-input-method");
+    ime.wait_for_line("ime: input method destroyed");
+    assert_eq!(
+        text_lines_until(&window, "window: reset preedit"),
+        ["window: text-input leave", "window: reset preedit"]
+    );
+    // 次のキーは、直接ウィンドウへ届く(その前に、wl_keyboard の leave と enter の送り直しが届く)。
+    tap(&mut seinas, KEY_X);
+    while next_key_line(&window, "x") != "window: key 45 pressed" {}
+}
