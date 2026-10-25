@@ -167,11 +167,21 @@ fn the_drag_modifier_moves_and_resizes_any_window() {
     seinas.pointer("press right");
     seinas.pointer("motion 290 220");
     seinas.pointer("release right");
-    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
     client.wait_for_line("window: resized 260x190");
     seinas.wait_for_screen("the larger window", |shot| {
         shot.pixel(50 + 259, 50 + 189) == ORANGE
             && shot.pixel(50 + 260 + AROUND, 50 + 100) == BACKGROUND
+    });
+    // 右のボタンを離したら、サイズ変更は終わっている。続けて左のボタンでドラッグすると、また動く。
+    seinas.pointer("motion 100 100");
+    seinas.pointer("press");
+    seinas.pointer("motion 120 110");
+    seinas.pointer("release");
+    seinas.pointer(&format!("key {KEY_LEFT_ALT} release"));
+    seinas.wait_for_screen("the window moved again", |shot| {
+        shot.pixel(70, 60) == ORANGE
+            && shot.pixel(70 + 259, 60 + 189) == ORANGE
+            && shot.pixel(69, 100) == BACKGROUND
     });
     // クライアントには、どのボタンも届いていない。
     client.send_line("sync");

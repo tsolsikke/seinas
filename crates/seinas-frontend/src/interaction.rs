@@ -180,12 +180,14 @@ enum Grab {
         /// いま、ポインターがそのボタンの上にあるか。上で離したときにだけ、働く。
         inside: bool,
     },
-    /// サイズ変更の境界を押している。
+    /// サイズ変更の境界を押している(か、修飾キーを押しながら右のボタンで押した)。
     Resize {
         window: WindowId,
         start: ResizeStart,
         /// 最後に configure で伝えた、コンテンツの大きさ。
         size: Size,
+        /// 始めたボタン。このボタンを離したら終える。
+        button: u32,
     },
     /// コンテンツ(か、何も無い所)を押している。ポインターのイベントは、クライアントへ渡す。
     Client {
@@ -361,6 +363,7 @@ impl Interaction {
                 window,
                 start,
                 size,
+                button,
             } => {
                 let mut outcome = Outcome::new(Deliver::Nobody);
                 let Some(limits) = stack
@@ -377,6 +380,7 @@ impl Interaction {
                         window,
                         start,
                         size: wanted,
+                        button,
                     };
                     outcome.configure = Some(Configure {
                         window,
@@ -579,6 +583,7 @@ impl Interaction {
                             window,
                             start,
                             size: content,
+                            button: RIGHT_BUTTON,
                         };
                     }
                     // そのほかのボタン(と、大きさを変えられないウィンドウの右のボタン)は、raise するだけ。
@@ -603,6 +608,7 @@ impl Interaction {
                     window,
                     start,
                     size: content,
+                    button: LEFT_BUTTON,
                 };
                 Deliver::Nobody
             }
@@ -677,10 +683,12 @@ impl Interaction {
                 }
                 Outcome::new(Deliver::ToClient)
             }
-            // タイトルバーやボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない。
-            Grab::Bar { .. } | Grab::Button { .. } | Grab::Resize { .. }
-                if button != LEFT_BUTTON =>
-            {
+            // タイトルバーやボタン、サイズ変更の境界を grab している間の、ほかのボタンは、使わない(サイズ変更は、
+            // 始めたボタン(修飾キーと右のボタンで始めたときは右)を離したときに終える)。
+            Grab::Bar { .. } | Grab::Button { .. } if button != LEFT_BUTTON => {
+                return Outcome::new(Deliver::Nobody)
+            }
+            Grab::Resize { button: held, .. } if button != *held => {
                 return Outcome::new(Deliver::Nobody)
             }
             Grab::Bar { window, snap, .. } => {
@@ -794,6 +802,8 @@ impl Interaction {
                 content,
             },
             size: content,
+            // クライアントが頼むのは、ふつう左のボタンを押している間。
+            button: LEFT_BUTTON,
         };
         Some(self.motion(stack, area, self.last, measure))
     }
@@ -990,6 +1000,74 @@ mod tests {
         assert_eq!(rounded(39.0, 32.5), Some(Part::Bar));
         assert_eq!(rounded(347.0, 36.0), Some(Part::Button(TitleButton::Close)));
         assert_eq!(rounded(36.0, 304.0), Some(Part::Content));
+    }
+
+    #[test]
+    fn the_drag_modifier_moves_or_resizes_from_anywhere_in_the_window() {
+        let mut world = World::two();
+        let b = world.id("b");
+        // 修飾キーを押しながら、b のコンテンツ(外枠は x 32〜352、y 32〜308)を左のボタンで押す。クライアントには
+        // 渡さず、4 ピクセルの後から動かす。
+        world.time += 1000;
+        let pressed = world.interaction.press_with(
+            &mut world.stack,
+            at(100.0, 200.0),
+            LEFT_BUTTON,
+            world.time,
+            true,
+            &Windows,
+        );
+        assert_eq!(pressed.deliver, Deliver::Nobody);
+        world.motion(103.0, 200.0);
+        assert_eq!(world.place("b").0, (32, 32));
+        world.motion(150.0, 250.0);
+        assert_eq!(world.place("b").0, (82, 82));
+        assert_eq!(
+            world.release(150.0, 250.0, LEFT_BUTTON).deliver,
+            Deliver::Nobody
+        );
+        // 右のボタンで、右下の 3 分の 1(外枠は x 82〜402、y 82〜358)を押すと、右下の角で大きさを変え、右のボタンを
+        // 離したら終わる。
+        world.time += 1000;
+        world.interaction.press_with(
+            &mut world.stack,
+            at(390.0, 350.0),
+            RIGHT_BUTTON,
+            world.time,
+            true,
+            &Windows,
+        );
+        assert_eq!(
+            world.interaction.cursor(),
+            Cursor::Resize(Edges::BOTTOM_RIGHT)
+        );
+        let moved = world.motion(410.0, 360.0);
+        assert_eq!(
+            moved.configure,
+            Some(Configure {
+                window: b,
+                size: Size::new(340, 250),
+                resizing: true
+            })
+        );
+        // 左のボタンを離しても、終わらない。右のボタンを離すと、終わる。
+        assert_eq!(world.release(410.0, 360.0, LEFT_BUTTON).configure, None);
+        assert!(world.interaction.resizing().is_some());
+        let released = world.release(410.0, 360.0, RIGHT_BUTTON);
+        assert_eq!(
+            released.configure,
+            Some(Configure {
+                window: b,
+                size: Size::new(340, 250),
+                resizing: false
+            })
+        );
+        assert!(world.interaction.is_idle());
+        // 修飾キーが無ければ、コンテンツの押下はクライアントへ渡す。
+        assert_eq!(
+            world.press(100.0, 200.0, LEFT_BUTTON).deliver,
+            Deliver::ToClient
+        );
     }
 
     #[test]
