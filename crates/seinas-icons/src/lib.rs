@@ -1,9 +1,10 @@
 //! Seinas のアイコン。
 //!
-//! - アプリのアイコンを探す所:app_id → `.desktop` のファイルの `Icon` → アイコンのテーマ(freedesktop の
-//!   決まりの hicolor)→ `pixmaps`。探すのは PNG だけ(SVG は探さない)。
-//!   - PNG を読むクレートは、壁紙のほかに入れない決まり(CI と pre-push の check-deps)なので、今は見つけても読まず、
-//!     既定のアイコンを出す。読むかどうかは、運用者が決める(`docs/ui-spec.md` の「アプリのアイコン」)。
+//! - アプリのアイコンを探して読む所:app_id → `.desktop` のファイルの `Icon` → アイコンのテーマ(freedesktop の
+//!   決まりの hicolor)→ `pixmaps`。読むのは PNG だけ(SVG は読まない)で、データの置き場(XDG のディレクトリの
+//!   `icons` と `pixmaps`)のファイルだけ。クライアントから受け取った画像は読まない(ADR 0007)。読む前に、ファイルの大きさと、画像の
+//!   幅・高さを確かめる([`MAX_ICON_FILE_BYTES`]、[`MAX_ICON_SIDE`])。見つからない・越える・読めないときは、既定の
+//!   アイコン。読んだものは、app_id ごとに覚えて使い回す。
 //! - Seinas が自分で描くアイコン:既定のアイコンと、トーチ(炎)。どちらも自作の簡単な絵柄で、外の画像を使わない。
 //! - 小さな図形(角の丸い四角、点、四角)を、B, G, R, X の絵に重ねて描く所。
 //!
@@ -12,8 +13,17 @@
 use std::{
     collections::HashMap,
     ffi::OsStr,
+    fs::File,
+    io::BufReader,
     path::{Path, PathBuf},
 };
+
+/// 読むアイコンのファイルの大きさの上限(1 MiB)。アイコンのテーマの PNG は、いちばん大きい 512x512 でも、ふつうは
+/// 数百 KB に収まる。これを越えるものは、読み始めない(展開の手間とメモリーを、コンポジタの中で抑えるため)。
+pub const MAX_ICON_FILE_BYTES: u64 = 1024 * 1024;
+/// 読むアイコンの幅と高さの上限(ピクセル)。hicolor のいちばん大きい大きさ(512x512)まで。これより大きな画像は、
+/// どうせ 24 や 20 に縮めるので要らない。展開した絵は、上限でも 1 MiB(1 ピクセル 4 バイト)に収まる。
+pub const MAX_ICON_SIDE: u32 = 512;
 
 /// 色(赤, 緑, 青)。
 pub type Rgb = [u8; 3];
@@ -352,24 +362,26 @@ fn sizes_for(size: u32) -> Vec<u32> {
     sizes
 }
 
-/// アイコンの名前 `name` の PNG を、アイコンのテーマ(hicolor)と `pixmaps` から探す。探す所は、`$HOME/.icons` と、
-/// データの置き場の各々の `icons`(テーマ)と `pixmaps`。
-pub fn find_icon_file(
-    name: &str,
-    dirs: &[PathBuf],
-    home: Option<&Path>,
-    size: u32,
-) -> Option<PathBuf> {
+/// アイコンの名前 `name` の PNG を、アイコンのテーマ(hicolor)と `pixmaps` から探す。探す所は、データの置き場の
+/// 各々の `icons`(テーマ)と `pixmaps` だけ。絶対パスの名前は、データの置き場の中のファイルのときだけ使う。
+pub fn find_icon_file(name: &str, dirs: &[PathBuf], size: u32) -> Option<PathBuf> {
     let path = Path::new(name);
     if path.is_absolute() {
         let is_png = path
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("png"));
-        return (is_png && path.is_file()).then(|| path.to_owned());
+        // データの置き場の外のファイルは読まない。
+        let inside = |root: &Path| {
+            let (Ok(file), Ok(root)) = (path.canonicalize(), root.canonicalize()) else {
+                return false;
+            };
+            file.starts_with(root)
+        };
+        let allowed = dirs.iter().any(|dir| inside(dir));
+        return (is_png && allowed && path.is_file()).then(|| path.to_owned());
     }
     let name = name.strip_suffix(".png").unwrap_or(name);
-    let mut themes: Vec<PathBuf> = home.map(|home| home.join(".icons")).into_iter().collect();
-    themes.extend(dirs.iter().map(|dir| dir.join("icons")));
+    let themes: Vec<PathBuf> = dirs.iter().map(|dir| dir.join("icons")).collect();
     for size in sizes_for(size) {
         for base in &themes {
             let file = base
@@ -388,12 +400,7 @@ pub fn find_icon_file(
 }
 
 /// app_id のアイコンの PNG を探す。`.desktop` の `Icon` の名前で探し、無ければ app_id そのものを名前にして探す。
-pub fn find_app_icon(
-    app_id: &str,
-    dirs: &[PathBuf],
-    home: Option<&Path>,
-    size: u32,
-) -> Option<PathBuf> {
+pub fn find_app_icon(app_id: &str, dirs: &[PathBuf], size: u32) -> Option<PathBuf> {
     if app_id.trim().is_empty() {
         return None;
     }
@@ -401,7 +408,74 @@ pub fn find_app_icon(
     names.push(app_id.to_owned());
     names
         .iter()
-        .find_map(|name| find_icon_file(name, dirs, home, size))
+        .find_map(|name| find_icon_file(name, dirs, size))
+}
+
+/// PNG のファイルを読み、大きさ `size` の正方形に収める(縦横の比を保ち、中央に置く)。ファイルの大きさが
+/// [`MAX_ICON_FILE_BYTES`] を越えるもの、幅か高さが [`MAX_ICON_SIDE`] を越えるもの(画像のデータを読む前に断る)、
+/// 読めないものは、理由を返す。
+pub fn load_icon(path: &Path, size: u32) -> Result<Icon, String> {
+    let file = File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let bytes = file
+        .metadata()
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?
+        .len();
+    if bytes > MAX_ICON_FILE_BYTES {
+        return Err(format!(
+            "{} is {bytes} bytes; icon files over {MAX_ICON_FILE_BYTES} bytes are not read",
+            path.display()
+        ));
+    }
+    let limits = png::Limits {
+        bytes: (MAX_ICON_SIDE * MAX_ICON_SIDE * 4) as usize + (1 << 20),
+    };
+    let mut decoder = png::Decoder::new_with_limits(BufReader::new(file), limits);
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let (width, height) = (reader.info().width, reader.info().height);
+    if width == 0 || height == 0 || width > MAX_ICON_SIDE || height > MAX_ICON_SIDE {
+        return Err(format!(
+            "{} is {width}x{height}; icons from 1x1 to {MAX_ICON_SIDE}x{MAX_ICON_SIDE} are read",
+            path.display()
+        ));
+    }
+    let buffer_size = reader
+        .output_buffer_size()
+        .ok_or_else(|| format!("{} is too large", path.display()))?;
+    let mut data = vec![0; buffer_size];
+    let info = reader
+        .next_frame(&mut data)
+        .map_err(|e| format!("cannot decode {}: {e}", path.display()))?;
+    let channels = match info.color_type {
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Indexed => return Err(format!("{}: unexpected palette", path.display())),
+    };
+    // premultiplied の R, G, B, A にする。
+    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
+    for row in data.chunks(info.line_size).take(height as usize) {
+        for pixel in row.chunks(channels).take(width as usize) {
+            let [r, g, b, a] = match *pixel {
+                [v] => [v, v, v, 0xff],
+                [v, a] => [v, v, v, a],
+                [r, g, b] => [r, g, b, 0xff],
+                [r, g, b, a] => [r, g, b, a],
+                _ => [0, 0, 0, 0xff],
+            };
+            let mul = |v: u8| ((u32::from(v) * u32::from(a) + 127) / 255) as u8;
+            rgba.extend_from_slice(&[mul(r), mul(g), mul(b), a]);
+        }
+    }
+    let source = Icon {
+        width,
+        height,
+        rgba,
+    };
+    Ok(fit(&source, size))
 }
 
 /// 絵 `source` を、大きさ `size` の正方形に収める(縦横の比を保ち、中央に置く)。
@@ -458,31 +532,31 @@ pub fn resample(source: &Icon, width: u32, height: u32) -> Icon {
     out
 }
 
-/// app_id ごとのアイコン(大きさは 1 つ)を、1 回だけ探して覚えておく所。
+/// app_id ごとのアイコン(大きさは 1 つ)を、1 回だけ探して読んで覚えておく所。
 pub struct IconCache {
     size: u32,
     dirs: Vec<PathBuf>,
-    home: Option<PathBuf>,
     icons: HashMap<String, Icon>,
     default: Icon,
 }
 
-/// アイコンを探した結果(ログに出すため)。どちらも、今は既定のアイコンを使う。
+/// アイコンを探した結果(ログに出すため)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found {
-    /// その PNG を見つけた(まだ読まない)。
+    /// その PNG を読んだ。
     File(PathBuf),
-    /// 見つからなかった。
+    /// その PNG を見つけたが、上限を越えたか読めなかった(理由)。既定のアイコンを使う。
+    Unreadable(PathBuf, String),
+    /// 見つからなかった。既定のアイコンを使う。
     Missing,
 }
 
 impl IconCache {
-    /// 大きさ `size` のアイコンを、データの置き場 `dirs` と、ホームの置き場 `home` から探す。
-    pub fn new(size: u32, dirs: Vec<PathBuf>, home: Option<PathBuf>) -> Self {
+    /// 大きさ `size` のアイコンを、データの置き場 `dirs` から探す。
+    pub fn new(size: u32, dirs: Vec<PathBuf>) -> Self {
         IconCache {
             size,
             dirs,
-            home,
             icons: HashMap::new(),
             default: default_icon(size),
         }
@@ -490,10 +564,7 @@ impl IconCache {
 
     /// 環境変数から決めた置き場で探す。
     pub fn from_env(size: u32) -> Self {
-        let home = std::env::var_os("HOME")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from);
-        IconCache::new(size, data_dirs_from_env(), home)
+        IconCache::new(size, data_dirs_from_env())
     }
 
     /// 既定のアイコン。
@@ -506,11 +577,14 @@ impl IconCache {
         if app_id.trim().is_empty() || self.icons.contains_key(app_id) {
             return None;
         }
-        let found = match find_app_icon(app_id, &self.dirs, self.home.as_deref(), self.size) {
-            Some(path) => Found::File(path),
-            None => Found::Missing,
+        let (icon, found) = match find_app_icon(app_id, &self.dirs, self.size) {
+            Some(path) => match load_icon(&path, self.size) {
+                Ok(icon) => (icon, Found::File(path)),
+                Err(e) => (self.default.clone(), Found::Unreadable(path, e)),
+            },
+            None => (self.default.clone(), Found::Missing),
         };
-        self.icons.insert(app_id.to_owned(), self.default.clone());
+        self.icons.insert(app_id.to_owned(), icon);
         Some(found)
     }
 
@@ -563,39 +637,140 @@ mod tests {
         let dirs = vec![PathBuf::from("/nowhere"), test_data()];
         // .desktop の Icon(seinas-test-folder)の 24x24。
         assert_eq!(
-            find_app_icon("seinas.test.files", &dirs, None, 24),
+            find_app_icon("seinas.test.files", &dirs, 24),
             Some(test_data().join("icons/hicolor/24x24/apps/seinas-test-folder.png"))
         );
         // .desktop が無くても、app_id の名前のアイコンがあれば、それ。24 が無ければ、大きいもの(48)。
         assert_eq!(
-            find_app_icon("seinas.test.large", &dirs, None, 24),
+            find_app_icon("seinas.test.large", &dirs, 24),
             Some(test_data().join("icons/hicolor/48x48/apps/seinas.test.large.png"))
         );
         // テーマに無ければ pixmaps。
         assert_eq!(
-            find_app_icon("seinas.test.pixmap", &dirs, None, 24),
+            find_app_icon("seinas.test.pixmap", &dirs, 24),
             Some(test_data().join("pixmaps/seinas.test.pixmap.png"))
         );
-        assert_eq!(find_app_icon("seinas.test.missing", &dirs, None, 24), None);
-        assert_eq!(find_app_icon("", &dirs, None, 24), None);
+        assert_eq!(find_app_icon("seinas.test.missing", &dirs, 24), None);
+        assert_eq!(find_app_icon("", &dirs, 24), None);
     }
 
     #[test]
-    fn icons_are_looked_up_once_and_the_default_is_shown() {
+    fn icons_are_loaded_fitted_and_cached() {
         let dirs = vec![test_data()];
-        let mut cache = IconCache::new(24, dirs, None);
-        // 見つけた PNG は、今は読まずに、既定のアイコンを出す。
-        assert_eq!(
-            cache.load("seinas.test.large"),
-            Some(Found::File(
-                test_data().join("icons/hicolor/48x48/apps/seinas.test.large.png")
-            ))
-        );
-        assert_eq!(cache.get("seinas.test.large"), cache.default_icon());
+        let mut cache = IconCache::new(24, dirs);
+        // 48x48 の緑の丸は、24x24 に縮める(中ほどは緑)。
+        let large = test_data().join("icons/hicolor/48x48/apps/seinas.test.large.png");
+        assert_eq!(cache.load("seinas.test.large"), Some(Found::File(large)));
+        let icon = cache.get("seinas.test.large");
+        assert_eq!(icon.width, 24);
+        assert_eq!(icon.pixel(12, 12), [0x5c, 0xb8, 0x7a, 0xff]);
         // 2 回目は探さない。
         assert_eq!(cache.load("seinas.test.large"), None);
         assert_eq!(cache.load("seinas.test.missing"), Some(Found::Missing));
+        assert_eq!(cache.get("seinas.test.missing"), cache.default_icon());
         assert_eq!(cache.get("never.asked"), cache.default_icon());
+    }
+
+    /// 一時の置き場(データの置き場の形)。
+    fn temporary_share(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("seinas-icons-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("icons/hicolor/24x24/apps")).unwrap();
+        std::fs::create_dir_all(dir.join("applications")).unwrap();
+        dir
+    }
+
+    /// PNG の chunk(長さ、種類、データ、CRC)。
+    fn chunk(kind: &[u8], data: &[u8]) -> Vec<u8> {
+        let mut crc = 0xffff_ffffu32;
+        for &byte in kind.iter().chain(data) {
+            crc ^= u32::from(byte);
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 {
+                    (crc >> 1) ^ 0xedb8_8320
+                } else {
+                    crc >> 1
+                };
+            }
+        }
+        [
+            &(data.len() as u32).to_be_bytes()[..],
+            kind,
+            data,
+            &(!crc).to_be_bytes(),
+        ]
+        .concat()
+    }
+
+    #[test]
+    fn too_large_or_broken_icons_get_the_default_with_a_reason() {
+        let share = temporary_share("limits");
+        let apps = share.join("icons/hicolor/24x24/apps");
+        // 513x512 の見出しだけを持つ PNG(幅が上限を越える。画像のデータを読む前に断る)。
+        let header = [513u32.to_be_bytes(), 512u32.to_be_bytes()].concat();
+        let wide = [
+            &b"\x89PNG\r\n\x1a\n"[..],
+            &chunk(b"IHDR", &[&header[..], &[8, 6, 0, 0, 0]].concat()),
+            &chunk(b"IDAT", &[]),
+            &chunk(b"IEND", &[]),
+        ]
+        .concat();
+        std::fs::write(apps.join("seinas.test.wide.png"), wide).unwrap();
+        // 1 MiB を越えるファイル(中身は読まない)。
+        std::fs::write(
+            apps.join("seinas.test.heavy.png"),
+            vec![0u8; MAX_ICON_FILE_BYTES as usize + 1],
+        )
+        .unwrap();
+        // PNG でないファイル。
+        std::fs::write(apps.join("seinas.test.broken.png"), "not a png").unwrap();
+        let mut cache = IconCache::new(24, vec![share.clone()]);
+        for (app_id, words) in [
+            ("seinas.test.wide", "513x512"),
+            ("seinas.test.heavy", "1048577 bytes"),
+            ("seinas.test.broken", "cannot read"),
+        ] {
+            match cache.load(app_id) {
+                Some(Found::Unreadable(_, reason)) => assert!(reason.contains(words), "{reason}"),
+                other => panic!("{app_id}: {other:?}"),
+            }
+            assert_eq!(cache.get(app_id), cache.default_icon());
+        }
+        std::fs::remove_dir_all(&share).unwrap();
+    }
+
+    #[test]
+    fn an_absolute_icon_path_is_read_only_inside_the_data_directories() {
+        let share = temporary_share("absolute");
+        let outside = temporary_share("outside");
+        let inside_icon = share.join("icons/hicolor/24x24/apps/inside.png");
+        let outside_icon = outside.join("outside.png");
+        for path in [&inside_icon, &outside_icon] {
+            std::fs::copy(
+                test_data().join("icons/hicolor/24x24/apps/seinas-test-folder.png"),
+                path,
+            )
+            .unwrap();
+        }
+        for (app_id, icon) in [
+            ("seinas.test.in", &inside_icon),
+            ("seinas.test.out", &outside_icon),
+        ] {
+            std::fs::write(
+                share.join(format!("applications/{app_id}.desktop")),
+                format!("[Desktop Entry]\nIcon={}\n", icon.display()),
+            )
+            .unwrap();
+        }
+        let dirs = vec![share.clone()];
+        assert_eq!(
+            find_app_icon("seinas.test.in", &dirs, 24),
+            Some(inside_icon)
+        );
+        // 置き場の外のファイルは、.desktop に書いてあっても読まない。
+        assert_eq!(find_app_icon("seinas.test.out", &dirs, 24), None);
+        std::fs::remove_dir_all(&share).unwrap();
+        std::fs::remove_dir_all(&outside).unwrap();
     }
 
     #[test]

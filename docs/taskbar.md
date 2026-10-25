@@ -65,8 +65,12 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 ### アイコン
 
 - app_id から、`.desktop` のファイル(データの置き場の各々の `applications/<app_id>.desktop`)の `Icon` を読み、アイコンのテーマ(hicolor の `<大きさ>x<大きさ>/apps/<名前>.png`。`$HOME/.icons` とデータの置き場の各々の `icons`)と `pixmaps` から PNG を探します。`.desktop` が無ければ、app_id そのものを名前にして探します。大きさは 24 を先に、無ければ大きいもの、それも無ければ小さいものを使い、24 × 24 に収めます(縦横の比を保って中央)。
-- 探すのは PNG だけです(SVG は探さない)。ただし、PNG を読むクレートは壁紙のほかに入れない決まり(CI と `tools/pre-push.sh` の check-deps)があるので、今は見つけても読まず、どのタスクも既定のアイコン(角の丸い四角の上の端に、タイトルバーの形の横の帯を付けた、自作の絵柄)にします。PNG を読むかは、運用者が決めます(`docs/ui-spec.md`)。
-- アイコンは、app_id ごとに 1 回だけ探して覚えます。ログに `the icon of <app_id>: <パス> (PNG icons are not read yet; the default icon is used)` か `no icon for <app_id>; the default icon is used` を 1 回出します。
+- 読むのは PNG だけです(SVG は読まない)。読むのは、データの置き場のファイルだけで、`.desktop` に絶対パスが書いてあっても、データの置き場の外は読みません。読む前に、ファイルの大きさ(1 MiB まで)と、画像の幅・高さ(512 まで)を確かめます(`docs/adr/0007-png-for-app-icons.md`)。
+- 見つからない・上限を越える・読めないときは、既定のアイコン(角の丸い四角の上の端に、タイトルバーの形の横の帯を付けた、自作の絵柄)にします。
+- アイコンは、app_id ごとに 1 回だけ探して読み、覚えて使い回します。ログに、次のどれかを 1 回出します。
+  - `the icon of <app_id>: <パス>`
+  - `the icon of <app_id> (<パス>) is not used: <理由>; the default icon is used`
+  - `no icon for <app_id>; the default icon is used`
 - 探し方と読み方は `crates/seinas-icons` にあり、コンポジタのタイトルバーと分け合います。
 
 ## ボタンを押したとき

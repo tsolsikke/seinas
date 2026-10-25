@@ -54,11 +54,14 @@ jobs:
         run: |
           tools/check-deps.sh seinas-fbdev seinas-text cosmic-text swash fontdb
           tools/check-deps.sh seinas-render seinas-text cosmic-text swash fontdb
-      - name: PNG を読むクレートが、壁紙のほかに入っていないこと
+      - name: PNG を読むクレートを直に使うのが、壁紙とアイコンのクレートだけであること(ADR 0007)
         run: |
-          tools/check-deps.sh seinas-standalone png
-          tools/check-deps.sh seinas png
-          tools/check-deps.sh seinas-taskbar png
+          tools/check-deps.sh --direct-users png seinas-wallpaper seinas-icons
+          tools/check-deps.sh seinas-fbdev png
+          tools/check-deps.sh seinas-render png
+          tools/check-deps.sh seinas-text png
+          tools/check-deps.sh zeyes-min png
+          tools/check-deps.sh seinas-test-clients png
       - name: 依存の一覧とライセンス文が最新か
         run: python3 tools/third-party.py --check
 

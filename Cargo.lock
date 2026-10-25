@@ -712,6 +712,9 @@ dependencies = [
 [[package]]
 name = "seinas-icons"
 version = "0.3.0"
+dependencies = [
+ "png",
+]
 
 [[package]]
 name = "seinas-render"

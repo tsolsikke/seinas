@@ -428,10 +428,12 @@ fn the_taskbar_shows_app_icons_a_fixed_clock_and_logs_the_torch() {
         &seinas,
         "no icon for seinas.test.missing; the default icon is used",
     );
-    // PNG は、まだ読まないので、どちらも既定のアイコン(中ほど、アイコンの左上から (12, 14) は、中の色)。
+    // フォルダーのアイコンの中ほど(アイコンの左上から (12, 14))はフォルダーの青、アイコンの無いものは既定の
+    // アイコンの中の色。
+    let folder = [0x68, 0xa0, 0xe8];
     let body = seinas_icons_default_body();
-    seinas.wait_for_screen("the default icons", |shot| {
-        shot.pixel(center(2, 1), TOP + 8 + 14) == body
+    seinas.wait_for_screen("the folder and the default icon", |shot| {
+        shot.pixel(center(2, 1), TOP + 8 + 14) == folder
             && shot.pixel(center(2, 2), TOP + 8 + 14) == body
     });
     // トーチを押すと、ログに 1 行出る(メニューはまだ無い)。ポインターが乗った地と、押した地が付く。

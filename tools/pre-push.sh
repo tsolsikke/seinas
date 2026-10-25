@@ -226,8 +226,10 @@ if [ "$(rank "$tier")" -ge 4 ]; then
         tools/check-deps.sh seinas-standalone smithay-client-toolkit wayland-client calloop-wayland-source &&
         tools/check-deps.sh seinas-fbdev seinas-text cosmic-text swash fontdb &&
         tools/check-deps.sh seinas-render seinas-text cosmic-text swash fontdb &&
-        tools/check-deps.sh seinas-standalone png && tools/check-deps.sh seinas png &&
-        tools/check-deps.sh seinas-taskbar png'
+        tools/check-deps.sh --direct-users png seinas-wallpaper seinas-icons &&
+        tools/check-deps.sh seinas-fbdev png && tools/check-deps.sh seinas-render png &&
+        tools/check-deps.sh seinas-text png && tools/check-deps.sh zeyes-min png &&
+        tools/check-deps.sh seinas-test-clients png'
     step "musl の静的ビルド" tools/build-musl.sh
     step "musl のテスト" env CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_RUSTFLAGS="-L native=$root/target/musl-libs/lib" \
         cargo test --workspace --locked --target x86_64-unknown-linux-musl

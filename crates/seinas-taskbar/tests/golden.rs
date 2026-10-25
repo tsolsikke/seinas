@@ -22,7 +22,7 @@ fn entry(app_id: &str, activated: bool, minimized: bool) -> Entry {
 /// テスト用のアイコンを読んだ置き場。
 fn icons(entries: &[Entry]) -> IconCache {
     let share = Path::new(env!("CARGO_MANIFEST_DIR")).join("../seinas-icons/tests/data/share");
-    let mut cache = IconCache::new(ICON_SIZE as u32, vec![share], None);
+    let mut cache = IconCache::new(ICON_SIZE as u32, vec![share]);
     for entry in entries {
         cache.load(&entry.app_id);
     }

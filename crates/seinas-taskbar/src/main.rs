@@ -17,8 +17,7 @@
 //!   どちらもテストで短くするためのもの。
 //! - `--fixed-time SECONDS`:時計を、この UNIX 時刻に止める(正解の画像を取るためのもの。時計は進まない)。
 //!
-//! アプリのアイコンは、データの置き場(`XDG_DATA_HOME`・`XDG_DATA_DIRS`)から探す(`seinas-icons`。PNG は、まだ読まず、
-//! 既定のアイコンを出す)。
+//! アプリのアイコンは、データの置き場(`XDG_DATA_HOME`・`XDG_DATA_DIRS`)から探して読む(`seinas-icons`。ADR 0007)。
 //!
 //! 決まりの説明は `docs/taskbar.md` にある。
 
@@ -520,10 +519,13 @@ impl Dispatch2<ZwlrForeignToplevelHandleV1, Taskbar> for HandleData {
                     minimized,
                 };
                 toplevel.shown = true;
-                // アイコンは、app_id ごとに初めてのときだけ探す。PNG は、まだ読まない(`seinas-icons`)。
+                // アイコンは、app_id ごとに初めてのときだけ探して読む(`seinas-icons`)。
                 match state.icons.load(&app_id) {
-                    Some(Found::File(path)) => eprintln!(
-                        "seinas-taskbar: the icon of {app_id}: {} (PNG icons are not read yet; the default icon is used)",
+                    Some(Found::File(path)) => {
+                        eprintln!("seinas-taskbar: the icon of {app_id}: {}", path.display())
+                    }
+                    Some(Found::Unreadable(path, reason)) => eprintln!(
+                        "seinas-taskbar: the icon of {app_id} ({}) is not used: {reason}; the default icon is used",
                         path.display()
                     ),
                     Some(Found::Missing) => eprintln!(

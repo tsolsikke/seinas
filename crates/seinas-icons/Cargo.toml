@@ -8,4 +8,6 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
-# PNG を読むクレートは、壁紙のほかに入れない決まり(CI と pre-push の check-deps)なので、まだ使わない。
+# アプリのアイコンの PNG を読む。壁紙(seinas-wallpaper)と同じもの。純 Rust。png を直に使ってよいのは、壁紙と
+# このクレートだけ(ADR 0007。CI と pre-push の check-deps で確かめる)。
+png = "=0.18.1"

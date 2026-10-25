@@ -40,6 +40,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `docs/adr/0003-font-selection.md` | ADR: 利用者が選んだフォントで描けるようにする(置き場、一覧、役ごとの選び方、設定のファイル、mmap での読み込み) |
 | `docs/adr/0004-ime-keyboard-path.md` | ADR: キーボードの入力は、IME(Kieli)を通る経路にする(Seinas の決定、標準の仕様が求めること、Kieli への申し送り、取り消した決定) |
 | `docs/adr/0005-self-hosting.md` | ADR: セルフホスティングを長期のゴールにする(Seinas の側の条件、proc-macro と build.rs の一覧、開発する環境として要るもの) |
+| `docs/adr/0007-png-for-app-icons.md` | ADR: アプリのアイコンのために、PNG を読むクレートを、タスクバーとコンポジタへ広げる(条件、上限、確かめ方) |
 | `docs/golden.md` | 正解データ(golden)のテスト:置き換える前の出力を保存して比べる決まりと、作り直しの手順 |
 | `docs/ui-spec.md` | デスクトップの見た目の仕様(タスクバー・トーチ・時計・ウィンドウの枠とタイトルバー。決定と仮の値と未決、比べた値、色のトークン) |
 | `docs/terminology.md` | 用語と書き方の決まり(IT 用語の使い方と、これまでの言い方との対応表) |
