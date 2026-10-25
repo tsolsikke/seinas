@@ -57,6 +57,7 @@ tools/pre-push.sh
 - 終わりに、段と、かかった秒数と、落ちた確かめを出します。落ちたものがあれば、終わりの値は 1 です。
 - code 以上の段は、ZeikOS の QEMU と重ならないように、`tools/zeikos-lock.sh` でホストのロック(`/tmp/zeikos-qemu.lock` の排他)を取ってから動きます。ZeikOS が QEMU を使っている間は、`waiting for ZeikOS's QEMU` を 1 行出して待ちます(最長 90 分。zeikos のリポジトリの ADR-0089)。docs の段と `--dry-run` は、ロックを取りません。
   - ロックは、`tools/zeikos-lock.sh` が fd 9 に開いたロックのファイルで持ち、コマンドとその子孫に受け継がれます。コマンドが終わっても子孫が残っていれば、その子孫が終わるまでロックは外れません(作業が続いたままロックが外れて、ZeikOS の QEMU と重なる形を避けるため)。そのときは `the command ended, but these processes still hold /tmp/zeikos-qemu.lock; the lock stays until they end: <pid>(<コマンド名>) …` を 1 行出すので、その pid を確かめて止めてください。
+    - よくある原因(2026-10-25 に確かめた):テストのバイナリは、ほかのパッケージの実行ファイルを使う前に `cargo build --quiet --locked -p <パッケージ>` を起こします(`crates/seinas-standalone/tests/common/mod.rs` の `workspace_bin`)。テストを途中で止めると、その cargo build が親を失って、ロックの fd を持ったまま少しの間残ります。テストを繰り返すスクリプトなどで途中で止めるときは、テストを `setsid` で別のプロセスグループに起こし、グループごと止めて(`kill -- -<pgid>`)、グループが空になってから次へ進んでください。
   - 中から呼ばれたとき(pre-push の中の `tools/build-musl.sh` など)は、環境変数 `SEINAS_HOLDS_QEMU_LOCK` の fd 番号が、ロックのファイル(同じ inode)を指し、排他のロックを持っていることを確かめてから、取り直さずに動きます(`tools/zeikos-lock.sh --held`)。確かめられなければ(偽の値、ロックを持っていない fd など)、ふつうにロックを取ります。
   - `tools/zeikos-lock-test.sh` が、これらの振る舞い(取る・外す、入れ子、偽の環境変数、上限での終わり方、残った子孫)を、本物のロックに触らずに、コピーしたスクリプトで確かめます。pre-push の full の段が動かします(3 秒ほど。待つ上限の 1 秒に頼る判定があるので、負荷で揺れたら報告してください)。`tools/zeikos-lock.sh` だけを変えたとき(code の段)は、手で動かしてください。
 
