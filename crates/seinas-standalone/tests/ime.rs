@@ -1196,23 +1196,25 @@ fn virtual_keyboards_of_one_generation_work_in_any_order() {
     }
 }
 
-#[test]
-fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
-    let seinas = Compositor::start_with_input("jj");
-    let window = open_window(&seinas, "ウィンドウ");
-    let mut ime = connect_ime(&seinas, &[]);
+/// 前の世代の virtual-keyboard A(要求を送らない)と、同じ接続の次の世代の B を作る。A と B のどちらの要求か
+/// 見分けられない形で、B の最初の要求を待つところまで進める。
+fn two_generations(seinas: &Compositor) -> TestClient {
+    let mut ime = connect_ime(seinas, &[]);
     // A を前の世代で作り(要求は送らない)、IME を去らせてから、同じ接続で次の世代を受け入れ、B を作る。
     ime_lines(&mut ime, &["vk-new a", "destroy-input-method", "release"]);
-    wait_for_log(&seinas, "the input method left");
+    wait_for_log(seinas, "the input method left");
     ime_lines(&mut ime, &["again", "vk-new b"]);
     common::wait_for("the second generation", || {
         (seinas.log().matches("an input method connected").count() == 2).then_some(())
     });
-    // B(今の世代)が最初の要求を送る。A と B のどちらの要求か見分けられないので、認めず、IME の接続を
-    // unauthorized のエラーで切る(つなぎ直しを求める)。
-    for line in ["vk-keymap b", "vk-key b 45 press", "vk-key b 45 release"] {
-        ime.send_line(line);
-    }
+    ime
+}
+
+/// B の最初の要求 `line` を送り、見分けられないので、認めずに IME の接続を unauthorized のエラーで切ったことを
+/// 確かめる(つなぎ直しを求める)。切られた後に書く要求があると、IME がエラーを読む前に、切られた接続への書き込み
+/// (EPIPE)で終わることがあるので、要求は 1 つだけにする。
+fn refused_as_ambiguous(seinas: &Compositor, ime: &mut TestClient, line: &str) {
+    ime.send_line(line);
     let line = loop {
         let line = ime.next_line("the refusal");
         if line.starts_with("ime: protocol error") {
@@ -1221,9 +1223,18 @@ fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
     };
     assert!(line.contains("cannot tell which input method"), "{line}");
     wait_for_log(
-        &seinas,
+        seinas,
         "a virtual keyboard was refused (it cannot be told whether it was made for the past or the current input method); the input method is disconnected and has to reconnect",
     );
+}
+
+#[test]
+fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
+    let seinas = Compositor::start_with_input("jj");
+    let window = open_window(&seinas, "ウィンドウ");
+    let mut ime = two_generations(&seinas);
+    // B(今の世代)が最初の要求(キーの押下)を送る。
+    refused_as_ambiguous(&seinas, &mut ime, "vk-key b 45 press");
     assert!(!key_arrived(
         &window,
         45,
@@ -1247,6 +1258,16 @@ fn virtual_keyboards_of_two_generations_are_not_mixed_up() {
             break;
         }
     }
+}
+
+#[test]
+fn a_keymap_from_a_virtual_keyboard_of_an_unknown_generation_is_refused() {
+    // 最初の要求が keymap でも、キーと同じく、見分けられないので認めずに切る(要求の種類で、断る道が分かれない)。
+    let seinas = Compositor::start_with_input("jp");
+    let _window = open_window(&seinas, "ウィンドウ");
+    let mut ime = two_generations(&seinas);
+    refused_as_ambiguous(&seinas, &mut ime, "vk-keymap b");
+    wait_for_log(&seinas, "the input method left");
 }
 
 #[test]
