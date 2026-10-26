@@ -308,9 +308,6 @@ fn the_client_is_told_that_the_server_draws_the_decoration() {
         lines.contains(&"window: decoration server-side".to_owned()),
         "{lines:?}"
     );
-    // 最初のconfigureで伝える大きさは、画面(640x480)からタイトルバーの高さを引いたもの。
-    assert_eq!(
-        lines.last().unwrap(),
-        &format!("window: configure 640x{} [activated]", 480 - BAR)
-    );
+    // 最初のconfigureで伝える大きさは 0x0(クライアントに任せる)。
+    assert_eq!(lines.last().unwrap(), "window: configure 0x0 [activated]");
 }

@@ -12,7 +12,7 @@
 //! フロントエンドを持たない構成(共通のレンダラーだけ)では、このクレートごと使わない。
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -283,6 +283,8 @@ pub struct Frontend<D: SeatHandler> {
     pub frame_corners: (BorderCorners, BorderCorners),
     /// 作った影の絵。ウィンドウ(の画面)ごとに覚えておき、大きさが変わったときだけ作り直す。
     pub shadows: HashMap<ObjectId, Shadow>,
+    /// 最初の絵を出した(開いた)ウィンドウ(の画面)。開いた大きさが使える範囲に収まるかを、1 回だけ見るのに使う。
+    pub opened: HashSet<ObjectId>,
     /// ポインターでの操作(動かす、閉じる、サイズ変更)の状態。
     pub interaction: Interaction,
     /// 閉じるように頼んだクライアントへの ping の答えを待つ一覧と、応答なしの印。
@@ -491,6 +493,7 @@ impl<D: FrontendHost> Frontend<D> {
             .remove(|window| window.wl_surface() == toplevel.wl_surface());
         self.title_bars.remove(&toplevel.wl_surface().id());
         self.shadows.remove(&toplevel.wl_surface().id());
+        self.opened.remove(&toplevel.wl_surface().id());
         self.forget_closed_candidates();
         self.pings.forget(|client| !client.alive());
         self.update_activation();
@@ -543,6 +546,7 @@ impl<D: FrontendHost> Frontend<D> {
     /// 位置を保つように動かす。絵を出した・外したことで一覧に載るかどうかが変わったら、一覧を合わせる。
     pub fn commit_window(&mut self, surface: &WlSurface) {
         self.send_initial_configure(surface);
+        self.fit_opened_window(surface);
         self.follow_resize(surface);
         let changed = self
             .windows
@@ -556,8 +560,10 @@ impl<D: FrontendHost> Frontend<D> {
         }
     }
 
-    /// ウィンドウ `surface` の最初の commit で、最初の configure を送る(xdg-shell の決まり)。コンテンツに使える大きさ
-    /// (使える範囲から、取り決めた装飾のタイトルバーのぶんを引いたもの)と、activated の状態を伝える。
+    /// ウィンドウ `surface` の最初の commit で、最初の configure を送る(xdg-shell の決まり)。大きさは 0x0(クライアントに
+    /// 任せる。重ねて使う画面では、アプリが自分の大きさで開くのがふつう)で、activated の状態を伝える。最大化・全画面を
+    /// 頼まれていれば(最初の commit の前の set_maximized など)、今までどおり、使える範囲から取り決めた装飾のタイトル
+    /// バーのぶんを引いた大きさを伝える。
     fn send_initial_configure(&mut self, surface: &WlSurface) {
         let Some(window) = self
             .windows
@@ -572,9 +578,50 @@ impl<D: FrontendHost> Frontend<D> {
         }
         let size = content_size_for(self.usable.size, bar_height(decorated_pending(toplevel)));
         toplevel.with_pending_state(|state| {
-            state.size = Some((size.w, size.h).into());
+            let filled = state.states.contains(xdg_toplevel::State::Maximized)
+                || state.states.contains(xdg_toplevel::State::Fullscreen);
+            state.size = filled.then(|| (size.w, size.h).into());
         });
         toplevel.send_configure();
+    }
+
+    /// ウィンドウ `surface` が最初の絵を出した(開いた)とき、その大きさが使える範囲より大きければ、範囲に収まる大きさ
+    /// (使える範囲から、タイトルバーのぶんを引いたもの。はみ出した向きだけ縮める)を configure で伝え直す。1 回だけ見る。
+    /// 置く位置は、置き方の決まりのまま。最大化・全画面のウィンドウは見ない。
+    fn fit_opened_window(&mut self, surface: &WlSurface) {
+        let Some(window) = self
+            .windows
+            .iter()
+            .find(|window| window.item.wl_surface() == surface)
+        else {
+            return;
+        };
+        let toplevel = &window.item;
+        let Some(shape) = shape(toplevel) else {
+            return;
+        };
+        if !self.opened.insert(surface.id()) {
+            return;
+        }
+        let states = toplevel.current_state().states;
+        if states.contains(xdg_toplevel::State::Maximized)
+            || states.contains(xdg_toplevel::State::Fullscreen)
+        {
+            return;
+        }
+        let room = content_size_for(self.usable.size, shape.bar);
+        let fitted = Size::new(shape.content.w.min(room.w), shape.content.h.min(room.h));
+        if fitted == shape.content {
+            return;
+        }
+        info!(
+            "a window opened at {}x{}, larger than the usable area; asking for {}x{}",
+            shape.content.w, shape.content.h, fitted.w, fitted.h
+        );
+        toplevel.with_pending_state(|state| {
+            state.size = Some((fitted.w, fitted.h).into());
+        });
+        toplevel.send_pending_configure();
     }
 
     /// サイズ変更の最中のウィンドウ `surface` の、新しい大きさに合わせて位置を直す。
@@ -2413,6 +2460,7 @@ macro_rules! delegate_frontend {
                         $crate::BorderCorners::new($crate::INACTIVE_BORDER),
                     ),
                     shadows: Default::default(),
+                    opened: Default::default(),
                     interaction: Default::default(),
                     pings: $crate::Pings::new(config.ping_timeout),
                     reap_requested: false,

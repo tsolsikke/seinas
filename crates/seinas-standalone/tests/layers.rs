@@ -89,14 +89,19 @@ fn the_first_configure_tells_the_usable_size() {
         "40",
     ]);
     panel.wait_for_line("layer: drawn");
-    let window = seinas.connect_test_client(&["window"]);
-    // 画面(640x480)から、パネル(40)とタイトルバー(24)を引いた大きさ。
+    // 最初の configure の大きさは 0x0(クライアントに任せる)。使える範囲より大きく開いたら、画面(640x480)から
+    // パネル(40)とタイトルバー(36)を引いた大きさに収めるよう、configure し直す。
+    let window = seinas.connect_test_client(&["window", "--size", "1000x1000"]);
     assert_eq!(
         window.next_line("the first configure"),
         "window: wm_capabilities [maximize]"
     );
     assert_eq!(
         window.next_line("the first configure"),
+        "window: configure 0x0 [activated]"
+    );
+    assert_eq!(
+        window.next_line("the configure to fit"),
         format!(
             "window: configure {WIDTH}x{} [activated]",
             HEIGHT - PANEL_SIZE - BAR
