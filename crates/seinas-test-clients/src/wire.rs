@@ -57,6 +57,40 @@ pub struct WindowSetup {
     pub max_size: Option<(u32, u32)>,
 }
 
+/// ポップアップ(xdg_popup)を出すときの指定。位置と大きさは、親のウィンドウの幾何の左上からのピクセル。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PopupSpec {
+    /// anchor rect の左上(大きさは 1x1)と、ポップアップの大きさ。
+    pub anchor_x: i32,
+    pub anchor_y: i32,
+    pub width: i32,
+    pub height: i32,
+    /// xdg_positioner の anchor と gravity(8 は bottom_right)、constraint_adjustment(slide_x 1、slide_y 2、
+    /// flip_x 4、flip_y 8、resize_x 16、resize_y 32 の和)。
+    pub anchor: u32,
+    pub gravity: u32,
+    pub adjust: u32,
+    /// xdg_popup.grab を、直前の押下(かキー)の serial で頼むか。
+    pub grab: bool,
+    /// 親を、いちばん新しいポップアップにするか(入れ子)。しなければ、ウィンドウが親。
+    pub child: bool,
+    /// 色(B, G, R, X)。
+    pub pixel: [u8; 4],
+}
+
+/// 出したポップアップの番号と状態。
+struct Popup {
+    surface: u32,
+    xdg_surface: u32,
+    popup: u32,
+    spec: PopupSpec,
+    /// いちばん新しい xdg_popup.configure の大きさ(届いていなければNone)。
+    size: Option<(i32, i32)>,
+    /// 絵を置いた pool(捨てると閉じる)。
+    pools: Vec<File>,
+    done: bool,
+}
+
 /// xdg-decoration での、装飾の取り決め方。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Decoration {
@@ -141,6 +175,12 @@ pub struct Wire {
     /// コンポジタから届いた fd(keymap など)を、届いた順に残すか。残さなければ、すぐ閉じる。
     pub keep_fds: bool,
     pub fds: VecDeque<OwnedFd>,
+    /// 出したポップアップ(番号は、出した順に 1 から)。
+    popups: Vec<Popup>,
+    /// 直前の入力(ポインターの押下か、キーの押下)の serial。ポップアップの grab に使う。
+    last_input_serial: Option<u32>,
+    /// layer surface のポップアップのために bind した xdg_wm_base(ウィンドウの xdg_wm_base は `WM_BASE`)。
+    layer_wm_base: Option<u32>,
 }
 
 impl Wire {
@@ -399,6 +439,212 @@ impl Wire {
         Ok(())
     }
 
+    /// ポップアップを 1 つ出す(新しい wl_surface と xdg_surface と positioner を作り、xdg_surface.get_popup)。最初の
+    /// commit までする。configure が届いたら、その大きさの絵を出す([`Wire::answer`])。返すのは、ポップアップの番号。
+    pub fn open_popup(&mut self, spec: PopupSpec) -> Result<usize, String> {
+        // layer surface のポップアップは、親を null にして作り、zwlr_layer_surface_v1.get_popup で親を決める。
+        let on_layer = self.layer_surface.filter(|_| !spec.child);
+        let parent = if spec.child {
+            self.popups
+                .last()
+                .ok_or("no popup for the parent")?
+                .xdg_surface
+        } else if on_layer.is_some() {
+            0
+        } else {
+            XDG_SURFACE
+        };
+        let wm_base = self.wm_base()?;
+        let surface = self.new_id();
+        self.send(&message(COMPOSITOR, 0, &surface.to_le_bytes()))?;
+        let xdg_surface = self.new_id();
+        self.send(&message(
+            wm_base,
+            2,
+            &[xdg_surface.to_le_bytes(), surface.to_le_bytes()].concat(),
+        ))?;
+        let positioner = self.positioner(spec, spec.anchor_x, spec.anchor_y)?;
+        let popup = self.new_id();
+        // xdg_surface.get_popup(新しい番号、親の xdg_surface、positioner)
+        self.send(&message(
+            xdg_surface,
+            2,
+            &[
+                popup.to_le_bytes(),
+                parent.to_le_bytes(),
+                positioner.to_le_bytes(),
+            ]
+            .concat(),
+        ))?;
+        self.send(&message(positioner, 0, &[]))?;
+        if let Some(layer) = on_layer {
+            // zwlr_layer_surface_v1.get_popup(xdg_popup)
+            self.send(&message(layer, 5, &popup.to_le_bytes()))?;
+        }
+        if spec.grab {
+            let seat = self.seat.ok_or("the seat is not watched")?;
+            let serial = self.last_input_serial.ok_or("no input to grab with")?;
+            // xdg_popup.grab(seat、serial)
+            self.send(&message(
+                popup,
+                1,
+                &[seat.to_le_bytes(), serial.to_le_bytes()].concat(),
+            ))?;
+        }
+        self.send(&message(surface, 6, &[]))?;
+        self.popups.push(Popup {
+            surface,
+            xdg_surface,
+            popup,
+            spec,
+            size: None,
+            pools: Vec::new(),
+            done: false,
+        });
+        Ok(self.popups.len())
+    }
+
+    /// `spec` の大きさと向きで、anchor rect の左上が (`x`, `y`) の positioner を作る。
+    fn positioner(&mut self, spec: PopupSpec, x: i32, y: i32) -> Result<u32, String> {
+        let wm_base = self.wm_base()?;
+        let positioner = self.new_id();
+        self.send(&message(wm_base, 1, &positioner.to_le_bytes()))?;
+        let values = |values: &[i32]| {
+            values
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<u8>>()
+        };
+        self.send(&message(positioner, 1, &values(&[spec.width, spec.height])))?;
+        self.send(&message(positioner, 2, &values(&[x, y, 1, 1])))?;
+        self.send(&message(positioner, 3, &spec.anchor.to_le_bytes()))?;
+        self.send(&message(positioner, 4, &spec.gravity.to_le_bytes()))?;
+        self.send(&message(positioner, 5, &spec.adjust.to_le_bytes()))?;
+        Ok(positioner)
+    }
+
+    /// ポップアップを作るのに使う xdg_wm_base。layer surface のクライアントでは、初めて使うときに bind する
+    /// (layer surface の手順は、xdg_wm_base を bind しない)。
+    fn wm_base(&mut self) -> Result<u32, String> {
+        if self.layer_surface.is_none() {
+            return Ok(WM_BASE);
+        }
+        match self.layer_wm_base {
+            Some(id) => Ok(id),
+            None => {
+                let id = self.bind("xdg_wm_base", 3)?;
+                self.layer_wm_base = Some(id);
+                Ok(id)
+            }
+        }
+    }
+
+    /// ポップアップ `index`(1 から)の anchor rect の左上を (`x`, `y`) へ変えるよう頼む(xdg_popup.reposition)。
+    pub fn reposition_popup(
+        &mut self,
+        index: usize,
+        x: i32,
+        y: i32,
+        token: u32,
+    ) -> Result<(), String> {
+        let (popup, spec) = {
+            let popup = self
+                .popups
+                .get(index.wrapping_sub(1))
+                .ok_or("no such popup")?;
+            (popup.popup, popup.spec)
+        };
+        let positioner = self.positioner(spec, x, y)?;
+        self.send(&message(
+            popup,
+            2,
+            &[positioner.to_le_bytes(), token.to_le_bytes()].concat(),
+        ))?;
+        self.send(&message(positioner, 0, &[]))
+    }
+
+    /// ポップアップ `index`(1 から)を消す(xdg_popup・xdg_surface・wl_surface の destroy)。
+    pub fn close_popup(&mut self, index: usize) -> Result<(), String> {
+        let (popup, xdg_surface, surface) = {
+            let popup = self
+                .popups
+                .get(index.wrapping_sub(1))
+                .ok_or("no such popup")?;
+            (popup.popup, popup.xdg_surface, popup.surface)
+        };
+        self.send(&message(popup, 0, &[]))?;
+        self.send(&message(xdg_surface, 0, &[]))?;
+        self.send(&message(surface, 0, &[]))
+    }
+
+    /// 面 `surface` を、書き出すときの名前にする(ウィンドウなら空、ポップアップなら ` popup N`)。
+    fn surface_name(&self, surface: u32) -> String {
+        self.popups
+            .iter()
+            .position(|popup| popup.surface == surface)
+            .map(|index| format!(" popup {}", index + 1))
+            .unwrap_or_default()
+    }
+
+    /// ポップアップのイベントを扱う。扱ったらtrue。
+    fn answer_popup(&mut self, event: &Event) -> Result<bool, String> {
+        let Some(index) = self
+            .popups
+            .iter()
+            .position(|popup| event.object == popup.popup || event.object == popup.xdg_surface)
+        else {
+            return Ok(false);
+        };
+        let n = index + 1;
+        let int = |at: usize| event.u32_at(at).unwrap_or(0) as i32;
+        if event.object == self.popups[index].popup {
+            match event.opcode {
+                // xdg_popup.configure(x、y、幅、高さ)
+                0 => {
+                    self.popups[index].size = Some((int(8), int(12)));
+                    self.say(&format!(
+                        "popup {n} configure {} {} {} {}",
+                        int(0),
+                        int(4),
+                        int(8),
+                        int(12)
+                    ));
+                }
+                // xdg_popup.popup_done:書いてから、ふつうのクライアントと同じく、すぐ消す。
+                1 => {
+                    self.popups[index].done = true;
+                    self.say(&format!("popup {n} done"));
+                    self.close_popup(n)?;
+                }
+                // xdg_popup.repositioned(token)
+                2 => self.say(&format!("popup {n} repositioned {}", int(0))),
+                _ => {}
+            }
+            return Ok(true);
+        }
+        // xdg_surface.configure(serial):応じて、届いた大きさの絵を出す。
+        if event.opcode == 0 {
+            let xdg_surface = self.popups[index].xdg_surface;
+            self.send(&message(xdg_surface, 4, &event.body[..4]))?;
+            if let (Some((w, h)), false) = (self.popups[index].size, self.popups[index].done) {
+                if w > 0 && h > 0 {
+                    let (buffer, pool) = self.new_buffer(w, h, self.popups[index].spec.pixel)?;
+                    let surface = self.popups[index].surface;
+                    self.popups[index].pools.push(pool);
+                    let mut attach = buffer.to_le_bytes().to_vec();
+                    attach.extend([0i32.to_le_bytes(), 0i32.to_le_bytes()].concat());
+                    let damage: Vec<u8> =
+                        [0, 0, w, h].iter().flat_map(|v| v.to_le_bytes()).collect();
+                    self.send(&message(surface, 1, &attach))?;
+                    self.send(&message(surface, 2, &damage))?;
+                    self.send(&message(surface, 6, &[]))?;
+                    self.say(&format!("popup {n} drawn {w}x{h}"));
+                }
+            }
+        }
+        Ok(true)
+    }
+
     /// `event` が、ポインターのボタンが押されたイベントなら、その通し番号(serial)。
     pub fn button_press_serial(&self, event: &Event) -> Option<u32> {
         // wl_pointer.button(通し番号、時刻、ボタン、状態)。状態の1が「押された」。
@@ -544,8 +790,13 @@ impl Wire {
 
     /// 返事の要るイベント(ping、configure)に返事をする。届いたイベントの中身も、求められていれば書く。
     pub fn answer(&mut self, event: &Event) -> Result<(), String> {
-        if let Some(layer) = self.layer_surface {
-            // layer surface を作ったときは、xdg のオブジェクトは無い(番号が重なるので、先に見る)。
+        // layer surface を作ったときは、xdg のオブジェクトは無い(番号が重なるので、先に見る)。キーボードと
+        // ポインターのイベントだけは、ウィンドウと同じに扱う。
+        let input = Some(event.object) == self.keyboard || Some(event.object) == self.pointer;
+        if let (Some(layer), false) = (self.layer_surface, input) {
+            if self.answer_popup(event)? {
+                return Ok(());
+            }
             return match (event.object, event.opcode) {
                 // zwlr_layer_surface_v1.configure(serial、幅、高さ)→ ack_configure
                 (object, 0) if object == layer => {
@@ -567,8 +818,15 @@ impl Wire {
                     }
                     Ok(())
                 }
+                // xdg_wm_base.ping → pong(ポップアップのために bind した xdg_wm_base)
+                (object, 0) if Some(object) == self.layer_wm_base => {
+                    self.send(&message(object, 3, &event.body[..4]))
+                }
                 _ => Ok(()),
             };
+        }
+        if self.answer_popup(event)? {
+            return Ok(());
         }
         match (event.object, event.opcode) {
             // xdg_wm_base.ping → pong(返さない形では、`window: ping` を書いて、serial を残す)
@@ -619,7 +877,10 @@ impl Wire {
             (object, opcode) if Some(object) == self.pointer => {
                 let fixed = |at: usize| event.u32_at(at).unwrap_or(0) as i32 >> 8;
                 match opcode {
-                    0 => self.say(&format!("pointer enter {} {}", fixed(8), fixed(12))),
+                    0 => {
+                        let name = self.surface_name(event.u32_at(4).unwrap_or(0));
+                        self.say(&format!("pointer enter{name} {} {}", fixed(8), fixed(12)))
+                    }
                     1 => self.say("pointer leave"),
                     2 => self.say(&format!("pointer motion {} {}", fixed(4), fixed(8))),
                     3 => {
@@ -628,6 +889,9 @@ impl Wire {
                             _ => "released",
                         };
                         let button = event.u32_at(8).unwrap_or(0);
+                        if state == "pressed" {
+                            self.last_input_serial = event.u32_at(0);
+                        }
                         self.say(&format!("pointer button {button:#x} {state}"));
                     }
                     _ => {}
@@ -644,15 +908,19 @@ impl Wire {
                         let keys: Vec<String> = (0..at(2) as usize / 4)
                             .map(|i| at(3 + i).to_string())
                             .collect();
+                        let name = self.surface_name(at(1));
                         if keys.is_empty() {
-                            self.say("keyboard enter");
+                            self.say(&format!("keyboard enter{name}"));
                         } else {
-                            self.say(&format!("keyboard enter keys {}", keys.join(" ")));
+                            self.say(&format!("keyboard enter{name} keys {}", keys.join(" ")));
                         }
                     }
                     2 => self.say("keyboard leave"),
                     3 => {
                         let state = if at(3) == 1 { "pressed" } else { "released" };
+                        if at(3) == 1 {
+                            self.last_input_serial = Some(at(0));
+                        }
                         self.say(&format!("key {} {state}", at(2)));
                     }
                     4 => self.say(&format!(
@@ -781,6 +1049,9 @@ pub fn connect() -> Result<Wire, String> {
         toplevel_maximized: false,
         keep_fds: false,
         fds: VecDeque::new(),
+        popups: Vec::new(),
+        last_input_serial: None,
+        layer_wm_base: None,
     })
 }
 
@@ -980,6 +1251,8 @@ pub struct LayerSetup {
     pub namespace: String,
     /// 色(B, G, R, X)。
     pub pixel: [u8; 4],
+    /// keyboard_interactivity(0 は none、1 は exclusive、2 は on_demand)。
+    pub keyboard_interactivity: u32,
 }
 
 /// layer surface を 1 つ出し、コンポジタが描くまで待つ。返すのは、絵を置いた pool(memfd)。
@@ -1048,6 +1321,12 @@ pub fn open_layer(wire: &mut Wire, setup: &LayerSetup) -> Result<File, String> {
     ))?;
     let margin: Vec<u8> = setup.margin.iter().flat_map(|m| m.to_le_bytes()).collect();
     wire.send(&message(LAYER_SURFACE, 3, &margin))?;
+    // zwlr_layer_surface_v1.set_keyboard_interactivity
+    wire.send(&message(
+        LAYER_SURFACE,
+        4,
+        &setup.keyboard_interactivity.to_le_bytes(),
+    ))?;
     wire.commit()?;
     wire.wait_for("the first configure of the layer surface", |e| {
         (e.object, e.opcode) == (LAYER_SURFACE, 0)

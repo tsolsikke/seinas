@@ -13,7 +13,7 @@ ADR 0001(`docs/adr/0001-replaceable-boundaries.md`)の決定 4 の実装です�
 | C. タイトルバー | `seinas-frontend` | activated とそうでないもの × close ボタンの hover の有無、長いタイトルの切り詰め、フォントなし、close ボタンより狭い幅(ここまでは閉じるボタンだけ)。3 つのボタン、最大化しているとき(元に戻すの印)と最大化のボタンの hover、最大化のボタンの無いウィンドウと最小化のボタンの hover、応答なしの長いタイトル、テスト用のアイコンの置き場から読んだアプリのアイコン。左にアプリのアイコン(ほかのケースは既定のアイコン)、上の 2 つの角を丸く欠く(最大化しているときは欠かない)。12 ケース | PPM |
 | S. 切り替えの一覧 | `seinas-frontend` | 日本語・長いタイトルの切り詰め・最小化の印・タイトルの無いウィンドウ(1280x720 の出力)、320x240 の出力に 20 個(隠れた数の行)、フォントなし。3 ケース | PPM |
 | D. fbdev の blit | `seinas-fbdev` | XRGB、ARGB、XBGR、RGBX、オフセットと行の余白つき。5 ケース | raw(バッファのバイト列) |
-| E. layer surface の重なりと、デスクトップの全体 | `seinas-standalone`(`tests/golden_layers.rs`) | 160x120 の fake screen に、background・bottom・top(exclusive zone あり・なし)・overlay の layer surface と、ウィンドウを 1 つ出した画面の全体。1920x1080 の fake screen に、見本の画像(`docs/ui-spec.md`)と同じ配置(時刻を止めたタスクバー、テスト用のアイコンの置き場の app_id の前面と背面のウィンドウ、最小化した 2 つ。壁紙は出さず、地は単色)を出した画面の全体(フォントの要るもの)。2 ケース | PPM |
+| E. layer surface の重なりと、デスクトップの全体 | `seinas-standalone`(`tests/golden_layers.rs`) | 160x120 の fake screen に、background・bottom・top(exclusive zone あり・なし)・overlay の layer surface と、ウィンドウを 1 つ出した画面の全体。160x120 の fake screen に、ウィンドウと、画面の右下の端で左上へ反転したポップアップを出した画面の全体。1920x1080 の fake screen に、見本の画像(`docs/ui-spec.md`)と同じ配置(時刻を止めたタスクバー、テスト用のアイコンの置き場の app_id の前面と背面のウィンドウ、最小化した 2 つ。壁紙は出さず、地は単色)を出した画面の全体(フォントの要るもの)。3 ケース | PPM |
 | F. タスクバー | `seinas-taskbar` | トーチとタスク 4 つ(前面の線、背面の点、ポインターが乗っているもの、既定のアイコン)と 2 段の時計、最小化しているタスクと時刻が取れないときの `--:--`、押しているトーチ、入りきらないほどのタスク、フォントなし。5 ケース | PPM |
 | W. 壁紙 | `seinas-wallpaper` | 色だけ、3:2 の画像を横長の出力(96x40)に塗りつぶし・ページ幅に合わせる・中央に表示、縦長で画像より小さな出力(20x30)に塗りつぶし・中央に表示、16:9 の出力(64x36)に塗りつぶし。7 ケース | PPM |
 

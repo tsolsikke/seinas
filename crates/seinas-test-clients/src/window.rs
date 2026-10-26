@@ -43,7 +43,14 @@
 //!   `--pointer` も付けたことになる。
 //!
 //! 標準入力から `title TEXT` の行が届くと、タイトルを `TEXT` に変える。`maximize`、`unmaximize`、`minimize` の行が
-//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。`decoration server-side`・
+//! 届くと、xdg_toplevel の set_maximized、unset_maximized、set_minimized を頼む。
+//! `popup X Y W H [grab] [child] [adjust=N] [anchor=N] [gravity=N] [color=RRGGBB]` の行は、ポップアップ(xdg_popup)を
+//! 出す。anchor rect は、ウィンドウの幾何の左上から (X, Y) の 1x1。anchor と gravity は xdg_positioner の値(既定は 8、
+//! bottom_right)、adjust は constraint_adjustment(slide_x 1、slide_y 2、flip_x 4、flip_y 8、resize_x 16、resize_y 32 の
+//! 和。既定は 0)。grab は、直前の押下かキーの serial で xdg_popup.grab を頼む(`--pointer` か `--keyboard` が要る)。
+//! child は、いちばん新しいポップアップを親にする(入れ子)。色の既定は 8000ff(紫)。`popup-move N X Y TOKEN` の行は、
+//! ポップアップ N の anchor rect を (X, Y) へ変える(xdg_popup.reposition)。`popup-close N` の行は、ポップアップ N を
+//! 消す。ポップアップは、出した順に 1 から番号を付ける。`decoration server-side`・
 //! `decoration client-side` の行は、装飾のオブジェクトが無ければ作り、そのモードを求める。届いた configure に
 //! 応じたら commit して、`window: decoration committed` を書く。`cursor X Y W H` の行は、text-input の
 //! カーソルの矩形を変えて commit する。`text-input disable`・`text-input enable` の行は、text-input を無効・有効にして
@@ -57,6 +64,9 @@
 //!   状態が無ければ `[]`。
 //! - `window: decoration server-side`: 飾りを描く側のイベント(zxdg_toplevel_decoration_v1.configure)が
 //!   届くたびに1行(`--decoration` を付けたとき)。クライアントの側なら `client-side`。
+//! - `window: popup 1 configure X Y W H`(xdg_popup.configure)、`window: popup 1 drawn WxH`(その大きさの絵を出した)、
+//!   `window: popup 1 done`(popup_done。書いてから、すぐ消す)、`window: popup 1 repositioned TOKEN`。ポインターと
+//!   キーボードの enter がポップアップの面なら、`window: pointer enter popup 1 X Y`、`window: keyboard enter popup 1`。
 //! - `window: wm_capabilities []`: コンポジタができることの並び(xdg_toplevel.wm_capabilities)が届くたびに1行。
 //! - `window: drawn`: 最初の絵をコンポジタが描いたとき(frameコールバックが届いたとき)に1回。
 //! - `window: resized WxH`: `--follow-size` で、新しい大きさの絵を commit したとき。
@@ -73,7 +83,7 @@ use std::{
 
 use crate::wire::{
     commit_buffer_with, connect, open_window_with, protocol_error, Decoration, Event, Polled,
-    WindowSetup, Wire, XDG_SURFACE,
+    PopupSpec, WindowSetup, Wire, XDG_SURFACE,
 };
 
 /// ウィンドウの大きさと色(橙)。
@@ -99,6 +109,48 @@ struct Options {
     text_input: bool,
     cursor: [i32; 4],
     show_text: bool,
+}
+
+/// `popup` の行の残り(`X Y W H [grab] [child] [adjust=N] [anchor=N] [gravity=N] [color=RRGGBB]`)を読む。
+pub(crate) fn parse_popup(text: &str) -> Result<PopupSpec, String> {
+    let mut words = text.split_whitespace();
+    let mut number = || -> Result<i32, String> {
+        words
+            .next()
+            .and_then(|n| n.parse().ok())
+            .ok_or_else(|| format!("popup needs X Y W H: {text}"))
+    };
+    let (anchor_x, anchor_y, width, height) = (number()?, number()?, number()?, number()?);
+    let mut spec = PopupSpec {
+        anchor_x,
+        anchor_y,
+        width,
+        height,
+        anchor: 8,
+        gravity: 8,
+        adjust: 0,
+        grab: false,
+        child: false,
+        pixel: [0xff, 0x00, 0x80, 0xff],
+    };
+    for word in text.split_whitespace().skip(4) {
+        let value = |prefix: &str| {
+            word.strip_prefix(prefix)
+                .and_then(|v| v.parse::<u32>().ok())
+        };
+        match word {
+            "grab" => spec.grab = true,
+            "child" => spec.child = true,
+            _ if word.starts_with("adjust=") => spec.adjust = value("adjust=").ok_or(word)?,
+            _ if word.starts_with("anchor=") => spec.anchor = value("anchor=").ok_or(word)?,
+            _ if word.starts_with("gravity=") => spec.gravity = value("gravity=").ok_or(word)?,
+            _ if word.starts_with("color=") => {
+                spec.pixel = crate::layer::parse_color(&word["color=".len()..])?
+            }
+            other => return Err(format!("unknown popup option {other:?}")),
+        }
+    }
+    Ok(spec)
 }
 
 /// 引数を読む。
@@ -355,6 +407,29 @@ pub fn run(args: &[String]) -> Result<bool, String> {
             if let Some(mode) = mode {
                 wire.ask_decoration(mode)?;
                 commit_decoration = true;
+            }
+            if let Some(rest) = command.strip_prefix("popup ") {
+                match parse_popup(rest) {
+                    Ok(spec) => {
+                        wire.open_popup(spec)?;
+                    }
+                    Err(e) => eprintln!("test-client: {e}"),
+                }
+            }
+            if let Some(rest) = command.strip_prefix("popup-move ") {
+                let numbers: Vec<i64> = rest
+                    .split_whitespace()
+                    .filter_map(|n| n.parse().ok())
+                    .collect();
+                if let [n, x, y, token] = numbers[..] {
+                    wire.reposition_popup(n as usize, x as i32, y as i32, token as u32)?;
+                }
+            }
+            if let Some(n) = command
+                .strip_prefix("popup-close ")
+                .and_then(|n| n.trim().parse().ok())
+            {
+                wire.close_popup(n)?;
             }
             if command == "pong" && wire.pong()? {
                 println!("window: ponged");

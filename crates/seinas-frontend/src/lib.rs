@@ -29,6 +29,7 @@ mod ime_popup;
 mod interaction;
 mod key_binding;
 mod ping;
+mod popup;
 mod resize;
 mod shortcuts;
 mod stack;
@@ -93,7 +94,7 @@ use smithay::{
         Color32F,
         utils::with_renderer_surface_state,
     },
-    desktop::{layer_map_for_output, LayerSurface as MappedLayer, WindowSurfaceType},
+    desktop::{layer_map_for_output, LayerSurface as MappedLayer, PopupManager, WindowSurfaceType},
     input::{
         keyboard::{FilterResult, KeyboardHandle, XkbConfig},
         pointer::{ButtonEvent, MotionEvent, PointerHandle},
@@ -236,6 +237,16 @@ pub struct Frontend<D: SeatHandler> {
     pub xdg_decoration_state: XdgDecorationState,
     /// layer-shell。global は、シェルの部品(シェルのソケットからつないだクライアント)にだけ見せる。
     pub layer_shell_state: WlrLayerShellState,
+    /// ポップアップ(xdg_popup)を追う。置き方と描く順に使う(`popup.rs`)。
+    pub popups: PopupManager,
+    /// grab したポップアップの連なり。grab の間は、いちばん上のポップアップにキーボードのフォーカスを付ける。
+    pub popup_grab: Option<popup::PopupGrabChain>,
+    /// 押したときにキーボードのフォーカスを受けた layer surface(keyboard_interactivity が on_demand のもの)。
+    pub layer_focus: Option<WlSurface>,
+    /// 直前の入力(ポインターの押下と、キーの押下)の serial。ポップアップの grab の serial を確かめる。
+    pub input_serials: Vec<Serial>,
+    /// ポップアップの連なりを閉じるのに使って飲み込んだ押下のボタン。その離す側も飲み込む。
+    pub swallowed_button: Option<u32>,
     /// ウィンドウの一覧と操作(foreign-toplevel)。global は、シェルの部品にだけ見せる。
     pub foreign_toplevels: ForeignToplevelState,
     /// IME の道(text-input-v3、input-method-v2、virtual-keyboard)。input-method と virtual-keyboard の global は、
@@ -502,6 +513,21 @@ impl<D: FrontendHost> Frontend<D> {
     /// いちばん手前のウィンドウにだけ、activatedの状態を付ける。変わったウィンドウには、configureで知らせる。
     /// ウィンドウの一覧(foreign-toplevel)も合わせる。
     fn update_activation(&mut self) {
+        // ポップアップの連なりの根元がウィンドウで、activated でなくなったら(別のウィンドウへフォーカスが移ったら)、
+        // 連なりを閉じる。
+        if let Some(chain) = &self.popup_grab {
+            let root_is_window = self
+                .windows
+                .iter()
+                .any(|w| w.item.wl_surface() == &chain.root);
+            let root_is_active = self
+                .windows
+                .iter_with_activation()
+                .any(|(w, active)| active && w.item.wl_surface() == &chain.root);
+            if root_is_window && !root_is_active {
+                self.dismiss_popup_grab();
+            }
+        }
         for (window, active) in self.windows.iter_with_activation() {
             let toplevel = &window.item;
             toplevel.with_pending_state(|state| {
@@ -712,6 +738,8 @@ impl<D: FrontendHost> Frontend<D> {
     ///
     /// 候補は、始めたときの、絵を出しているウィンドウ(最小化しているものも)。ウィンドウが無ければ、始めない。
     pub fn switch_windows(&mut self, backward: bool) -> bool {
+        // 切り替えを始めたら、ポップアップの連なりを閉じる(フォーカスは、切り替えを決めたときに移る)。
+        self.dismiss_popup_grab();
         match &mut self.switcher {
             Some(switcher) => switcher.step(backward),
             None => {
@@ -764,9 +792,19 @@ impl<D: FrontendHost> Frontend<D> {
         }
     }
 
-    /// キーボードのフォーカスを付けるウィンドウの画面。activated のウィンドウ(最小化していないうちの、いちばん
-    /// 手前)で、絵を出しているもの。無ければNone。
+    /// キーボードのフォーカスを付ける画面。先に見るものから順に:grab したポップアップの連なりのいちばん上、
+    /// キーを独り占めする layer surface(top か overlay の層で exclusive)、押したときにフォーカスを受けた layer surface
+    /// (on_demand)、activated のウィンドウ(最小化していないうちの、いちばん手前)で、絵を出しているもの。無ければNone。
     pub fn keyboard_focus_target(&self) -> Option<WlSurface> {
+        if let Some(popup) = self.popup_grab_focus() {
+            return Some(popup);
+        }
+        if let Some(layer) = self.exclusive_layer() {
+            return Some(layer);
+        }
+        if let Some(layer) = self.layer_focus_alive() {
+            return Some(layer);
+        }
         self.windows
             .iter_with_activation()
             .find(|(_, activated)| *activated)
@@ -1017,16 +1055,48 @@ impl<D: FrontendHost> Frontend<D> {
         Some((popup.wl_surface().clone(), location))
     }
 
-    /// 画面の上の点 `point` にある、いちばん手前のウィンドウのコンテンツ。その画面と、コンテンツの左上の位置を返す。
+    /// 画面の上の点 `point` にある、いちばん手前のウィンドウか、そのポップアップ。ウィンドウは手前から順に見て、
+    /// 各々のウィンドウのポップアップを、そのウィンドウより先に見る(ポップアップは、根元のウィンドウのすぐ手前)。
+    fn window_hit(&self, point: PointF) -> Option<WindowHit> {
+        for (entry, _) in self.windows.iter_shown() {
+            let Some(shape) = shape(&entry.item) else {
+                continue;
+            };
+            let content = content_location(entry.location, shape.bar);
+            if let Some((surface, origin)) =
+                self.popup_under(entry.item.wl_surface(), content, point)
+            {
+                return Some(WindowHit::Popup(surface, origin));
+            }
+            let outer = Rect::new(entry.location, outer_size(shape.content, shape.bar));
+            if frame_contains(outer, shape.bar > 0 && !entry.is_maximized(), point) {
+                return Some(if point.y >= f64::from(content.y) {
+                    let origin = surface_origin(entry.location, shape).to_f64();
+                    WindowHit::Content(entry.item.wl_surface().clone(), origin)
+                } else {
+                    WindowHit::Decoration
+                });
+            }
+        }
+        None
+    }
+
+    /// 点 `point` が、ウィンドウのポップアップの上か(ウィンドウの操作の前に、ポップアップへ渡す)。
+    pub fn window_popup_at(&self, point: PointF) -> bool {
+        matches!(self.window_hit(point), Some(WindowHit::Popup(..)))
+    }
+
+    /// 画面の上の点 `point` にある、いちばん手前のウィンドウのコンテンツか、そのポップアップ。その画面と、画面の左上の
+    /// 位置を返す。
     ///
     /// 点がタイトルバーの上にあるときは、Noneを返す(タイトルバーはSeinasのもので、クライアントには渡さない)。
     pub fn window_under(&self, point: PointF) -> Option<(WlSurface, PointF)> {
-        let index = self.windows.index_at_shaped(point, window_outline)?;
-        let window = self.windows.iter().nth(index)?;
-        let shape = shape(&window.item)?;
-        let content_top = content_location(window.location, shape.bar).y;
-        let origin = surface_origin(window.location, shape).to_f64();
-        (point.y >= f64::from(content_top)).then(|| (window.item.wl_surface().clone(), origin))
+        match self.window_hit(point)? {
+            WindowHit::Popup(surface, origin) | WindowHit::Content(surface, origin) => {
+                Some((surface, origin))
+            }
+            WindowHit::Decoration => None,
+        }
     }
 
     /// 画面の上の点 `point` にある、層が `layers` のどれかの layer surface(手前から探す)。その画面と、
@@ -1036,6 +1106,10 @@ impl<D: FrontendHost> Frontend<D> {
         layers.iter().find_map(|&layer| {
             map.layers_on(layer).rev().find_map(|mapped| {
                 let geometry = rect_from(map.layer_geometry(mapped)?);
+                // layer surface のポップアップは、その layer surface のすぐ手前。
+                if let Some(found) = self.popup_under(mapped.wl_surface(), geometry.loc, point) {
+                    return Some(found);
+                }
                 geometry
                     .contains(point)
                     .then(|| (mapped.wl_surface().clone(), geometry.loc.to_f64()))
@@ -1055,11 +1129,7 @@ impl<D: FrontendHost> Frontend<D> {
         if let Some(found) = self.layer_under(point, &[Layer::Top]) {
             return Some(found);
         }
-        if self
-            .windows
-            .index_at_shaped(point, window_outline)
-            .is_some()
-        {
+        if self.window_hit(point).is_some() {
             // ウィンドウの上なら、タイトルバーの上でも、その下の層には渡さない。
             return self.window_under(point);
         }
@@ -1143,6 +1213,23 @@ impl<D: FrontendHost> Frontend<D> {
             let content = shape.content;
             let outer = Rect::new(window.location, outer_size(content, shape.bar));
             let location = surface_origin(window.location, shape);
+            // ポップアップは、根元のウィンドウのすぐ手前に、飾りもクリップも付けずに描く。
+            for (popup, at) in
+                self.popup_origins(surface, content_location(window.location, shape.bar))
+            {
+                elements.extend(
+                    render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                        renderer,
+                        &popup,
+                        (at.x, at.y),
+                        1.0,
+                        1.0,
+                        Kind::Unspecified,
+                    )
+                    .into_iter()
+                    .map(WindowElement::Surface),
+                );
+            }
             let surfaces = render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
                 renderer,
                 surface,
@@ -1303,6 +1390,22 @@ impl<D: FrontendHost> Frontend<D> {
                 let Some(geometry) = map.layer_geometry(mapped) else {
                     continue;
                 };
+                // layer surface のポップアップ(メニューなど)は、その layer surface のすぐ手前。
+                let origin = Point::new(geometry.loc.x, geometry.loc.y);
+                for (popup, at) in self.popup_origins(mapped.wl_surface(), origin) {
+                    elements.extend(
+                        render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                            renderer,
+                            &popup,
+                            (at.x, at.y),
+                            1.0,
+                            1.0,
+                            Kind::Unspecified,
+                        )
+                        .into_iter()
+                        .map(WindowElement::Surface),
+                    );
+                }
                 elements.extend(
                     render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
                         renderer,
@@ -1407,19 +1510,35 @@ where
     {
         changed(state);
     }
+    // ポップアップを閉じるのに使って飲み込んだ押下は、離す側も飲み込む(押下の無い離す側を、クライアントに渡さない)。
+    if let PointerInput::Button {
+        button,
+        pressed: false,
+        ..
+    } = input
+    {
+        if state.frontend_mut().swallowed_button == Some(button) {
+            state.frontend_mut().swallowed_button = None;
+            return;
+        }
+    }
+    if popup_grab_pointer(state, input, time) {
+        return;
+    }
     let frontend = state.frontend_mut();
     let Some(pointer) = frontend.pointer.clone() else {
         return;
     };
     let area = frontend.usable;
     let measure = frontend.measure();
-    // ボタンを押していない間に、top か overlay の layer surface(タスクバーなど)の上にあるときは、
-    // ウィンドウの操作(raise、ドラッグ、close ボタン)をせず、その layer surface に渡す。
+    // ボタンを押していない間に、top か overlay の layer surface(タスクバーなど)か、ウィンドウのポップアップの上に
+    // あるときは、ウィンドウの操作(raise、ドラッグ、close ボタン)をせず、そのまま渡す。
     let over_layer_above = |frontend: &Frontend<D>, point: PointF| {
         frontend.interaction.is_idle()
-            && frontend
+            && (frontend
                 .layer_under(point, &[Layer::Overlay, Layer::Top])
                 .is_some()
+                || frontend.window_popup_at(point))
     };
     let (location, outcome) = match input {
         PointerInput::Motion(location) if over_layer_above(frontend, location) => {
@@ -1447,17 +1566,7 @@ where
             button,
             pressed: true,
         } => {
-            // ウィンドウを動かす修飾キーが、ちょうど押されているか。
-            let drag_modifier = frontend.keyboard.as_ref().is_some_and(|keyboard| {
-                let now = keyboard.modifier_state();
-                let held = Modifiers {
-                    ctrl: now.ctrl,
-                    alt: now.alt,
-                    shift: now.shift,
-                    logo: now.logo,
-                };
-                held == frontend.window_drag
-            });
+            let drag_modifier = drag_modifier_held(frontend);
             (
                 location,
                 frontend.interaction.press_with(
@@ -1512,6 +1621,10 @@ where
         PointerInput::Button {
             button, pressed, ..
         } => {
+            let pressed_surface = focus.as_ref().map(|(surface, _)| surface.clone());
+            if pressed {
+                press_moves_layer_focus(state, pressed_surface.as_ref());
+            }
             pointer.motion(state, focus, &motion);
             // Seinasが自分で使ったボタンは、クライアントには渡さない。離したイベントだけは、渡す相手を
             // 無しにしたうえで、Smithayに伝える(クライアントから頼まれた移動では、押したイベントを
@@ -1522,6 +1635,9 @@ where
                 } else {
                     ButtonState::Released
                 };
+                if pressed && outcome.deliver == Deliver::ToClient {
+                    state.frontend_mut().remember_input_serial(serial);
+                }
                 pointer.button(
                     state,
                     &ButtonEvent {
@@ -1689,6 +1805,135 @@ pub fn client_pong<D: FrontendHost>(state: &mut D, client: ShellClient) {
     }
 }
 
+/// ウィンドウを動かす修飾キーが、ちょうど押されているか。
+fn drag_modifier_held<D: SeatHandler + 'static>(frontend: &Frontend<D>) -> bool {
+    frontend.keyboard.as_ref().is_some_and(|keyboard| {
+        let now = keyboard.modifier_state();
+        let held = Modifiers {
+            ctrl: now.ctrl,
+            alt: now.alt,
+            shift: now.shift,
+            logo: now.logo,
+        };
+        held == frontend.window_drag
+    })
+}
+
+/// 押下で、layer surface のキーボードのフォーカスを合わせる。押した面 `surface`(クライアントへ渡さない押下では
+/// None)が、押したときにフォーカスを受ける layer surface(on_demand)ならそれに付け、ほかを押したら外す。
+fn press_moves_layer_focus<D: FrontendHost>(state: &mut D, surface: Option<&WlSurface>) {
+    let frontend = state.frontend_mut();
+    let takes = surface
+        .filter(|surface| frontend.takes_focus_on_press(surface))
+        .cloned();
+    if takes != frontend.layer_focus {
+        frontend.layer_focus = takes;
+        sync_keyboard_focus(state);
+    }
+}
+
+/// ポップアップの grab の間のポインターのイベントを扱う(xdg-shell の owner-events)。扱ったらtrue。
+///
+/// grab したクライアントの面にだけ、ポインターを渡す(ほかの面の上では、だれにも渡さない)。ほかの所(ほかの
+/// クライアントの面、Seinas のタイトルバー、何も無い所)を押したら、連なりを閉じ、その押下は飲み込む。ウィンドウを
+/// 動かす修飾キーでの押下は、閉じてから、ふだんどおりに扱う(falseを返す)。
+fn popup_grab_pointer<D>(state: &mut D, input: PointerInput, time: u32) -> bool
+where
+    D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
+{
+    let frontend = state.frontend_mut();
+    if frontend.popup_grab.is_none() {
+        return false;
+    }
+    frontend.forget_dead_popups();
+    if frontend.popup_grab.is_none() {
+        sync_keyboard_focus(state);
+        return false;
+    }
+    let Some(pointer) = frontend.pointer.clone() else {
+        return false;
+    };
+    let location = match input {
+        PointerInput::Motion(location) | PointerInput::Button { location, .. } => location,
+        PointerInput::Leave => return false,
+    };
+    let under = frontend.surface_under(location);
+    let owned = frontend.popup_grab_owns(under.as_ref().map(|(surface, _)| surface)) == Some(true);
+    let serial = SERIAL_COUNTER.next_serial();
+    let motion = MotionEvent {
+        location: to_smithay_point(location),
+        serial,
+        time,
+    };
+    if matches!(input, PointerInput::Button { pressed: true, .. }) && !owned
+        || matches!(input, PointerInput::Button { pressed: true, .. })
+            && drag_modifier_held(frontend)
+    {
+        let drag = drag_modifier_held(frontend);
+        frontend.dismiss_popup_grab();
+        sync_keyboard_focus(state);
+        changed(state);
+        if drag {
+            return false;
+        }
+        if let PointerInput::Button { button, .. } = input {
+            state.frontend_mut().swallowed_button = Some(button);
+        }
+        pointer.motion(state, None, &motion);
+        pointer.frame(state);
+        return true;
+    }
+    let focus = under
+        .filter(|_| owned)
+        .map(|(surface, origin)| (surface, to_smithay_point(origin)));
+    pointer.motion(state, focus, &motion);
+    if let PointerInput::Button {
+        button, pressed, ..
+    } = input
+    {
+        if pressed {
+            state.frontend_mut().remember_input_serial(serial);
+        }
+        pointer.button(
+            state,
+            &ButtonEvent {
+                serial,
+                time,
+                button,
+                state: if pressed {
+                    ButtonState::Pressed
+                } else {
+                    ButtonState::Released
+                },
+            },
+        );
+    }
+    pointer.frame(state);
+    true
+}
+
+/// クライアントが、ポップアップ `surface` の grab を頼んだ(xdg_popup.grab)。seat が Seinas のもので、serial が直前の
+/// 押下かキーのものなら受け、キーボードのフォーカスを、いちばん上のポップアップへ移す。[`delegate_frontend!`] が使う。
+pub fn grab_popup<D>(
+    state: &mut D,
+    surface: smithay::wayland::shell::xdg::PopupSurface,
+    seat: &smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
+    serial: Serial,
+) where
+    D: FrontendHost + 'static,
+{
+    if Seat::<D>::from_resource(seat).is_none() {
+        surface.send_popup_done();
+        return;
+    }
+    match state.frontend_mut().grab_popup(surface, serial) {
+        Ok(()) => info!("a popup took a grab"),
+        Err(refusal) => info!("a popup grab was refused: {refusal:?}"),
+    }
+    sync_keyboard_focus(state);
+    changed(state);
+}
+
 /// キーボードのフォーカスを、activated のウィンドウ(最小化していないうちの、いちばん手前で、絵を出したもの)に
 /// 合わせる。変わったときだけ、leave と enter を送る。キーボードが無ければ、何もしない。
 pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
@@ -1729,13 +1974,18 @@ pub fn keyboard_input<D: FrontendHost>(
     } else {
         KeyState::Released
     };
+    let serial = SERIAL_COUNTER.next_serial();
+    if pressed {
+        // キーで開くメニューの grab のために覚える。
+        state.frontend_mut().remember_input_serial(serial);
+    }
     // Seinas が使ったショートカットのすること。
     let used = keyboard
         .input(
             state,
             (code + 8).into(),
             key_state,
-            SERIAL_COUNTER.next_serial(),
+            serial,
             time,
             |state, modifiers, keysym| {
                 let modifiers = Modifiers {
@@ -1900,6 +2150,16 @@ where
     pointer.frame(state);
 }
 
+/// 点の下にある、ウィンドウの部分。
+enum WindowHit {
+    /// ウィンドウのポップアップ(画面と、その左上)。
+    Popup(WlSurface, PointF),
+    /// ウィンドウのコンテンツ(画面と、その左上)。
+    Content(WlSurface, PointF),
+    /// Seinas が描く飾り(タイトルバー)。クライアントには渡さない。
+    Decoration,
+}
+
 /// ウィンドウの形。Seinas が描くタイトルバーの高さと、クライアントが決めたウィンドウの幾何。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Shape {
@@ -2020,11 +2280,6 @@ fn edges_from(edges: xdg_toplevel::ResizeEdge) -> Edges {
 /// タイトルバーを含めた、ウィンドウの外枠の大きさ。まだ絵を出していなければNone。
 fn window_size(toplevel: &ToplevelSurface) -> Option<Size> {
     shape(toplevel).map(|shape| outer_size(shape.content, shape.bar))
-}
-
-/// ウィンドウの外枠の大きさと、角を欠くか(Seinas が飾りを描くか)。ポインターのヒットの判定に使う。
-fn window_outline(toplevel: &ToplevelSurface) -> Option<(Size, bool)> {
-    shape(toplevel).map(|shape| (outer_size(shape.content, shape.bar), shape.bar > 0))
 }
 
 // 土台(Smithay)の幾何の型と、ウィンドウ管理の決まりの幾何の型(`geometry`)の変換。ADR 0001 の決まりで、
@@ -2183,7 +2438,12 @@ macro_rules! delegate_frontend {
             ) {
                 $crate::smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
                 let frontend = $crate::FrontendHost::frontend_mut(self);
-                if !frontend.commit_layer(surface) {
+                if frontend.commit_popup(surface) {
+                    // ポップアップの commit。
+                } else if frontend.commit_layer(surface) {
+                    // keyboard_interactivity の変更は、commit で効く。
+                    $crate::sync_keyboard_focus(self);
+                } else {
                     frontend.commit_window(surface);
                 }
                 $crate::changed(self);
@@ -2254,23 +2514,32 @@ macro_rules! delegate_frontend {
             }
             fn new_popup(
                 &mut self,
-                _surface: $crate::smithay::wayland::shell::xdg::PopupSurface,
-                _positioner: $crate::smithay::wayland::shell::xdg::PositionerState,
+                surface: $crate::smithay::wayland::shell::xdg::PopupSurface,
+                positioner: $crate::smithay::wayland::shell::xdg::PositionerState,
             ) {
+                $crate::FrontendHost::frontend_mut(self).new_popup(surface, positioner);
             }
             fn grab(
                 &mut self,
-                _surface: $crate::smithay::wayland::shell::xdg::PopupSurface,
-                _seat: $crate::smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
-                _serial: $crate::smithay::utils::Serial,
+                surface: $crate::smithay::wayland::shell::xdg::PopupSurface,
+                seat: $crate::smithay::reexports::wayland_server::protocol::wl_seat::WlSeat,
+                serial: $crate::smithay::utils::Serial,
             ) {
+                $crate::grab_popup(self, surface, &seat, serial);
             }
             fn reposition_request(
                 &mut self,
-                _surface: $crate::smithay::wayland::shell::xdg::PopupSurface,
-                _positioner: $crate::smithay::wayland::shell::xdg::PositionerState,
-                _token: u32,
+                surface: $crate::smithay::wayland::shell::xdg::PopupSurface,
+                positioner: $crate::smithay::wayland::shell::xdg::PositionerState,
+                token: u32,
             ) {
+                $crate::FrontendHost::frontend_mut(self).reposition_popup(surface, positioner, token);
+                $crate::changed(self);
+            }
+            fn popup_destroyed(&mut self, _surface: $crate::smithay::wayland::shell::xdg::PopupSurface) {
+                $crate::FrontendHost::frontend_mut(self).forget_dead_popups();
+                $crate::sync_keyboard_focus(self);
+                $crate::changed(self);
             }
         }
 
@@ -2308,7 +2577,15 @@ macro_rules! delegate_frontend {
             }
             fn layer_destroyed(&mut self, surface: $crate::smithay::wayland::shell::wlr_layer::LayerSurface) {
                 $crate::FrontendHost::frontend_mut(self).unmap_layer(&surface);
+                $crate::sync_keyboard_focus(self);
                 $crate::changed(self);
+            }
+            fn new_popup(
+                &mut self,
+                _parent: $crate::smithay::wayland::shell::wlr_layer::LayerSurface,
+                popup: $crate::smithay::wayland::shell::xdg::PopupSurface,
+            ) {
+                $crate::FrontendHost::frontend_mut(self).new_layer_popup(popup);
             }
         }
 
@@ -2460,6 +2737,11 @@ macro_rules! delegate_frontend {
                         $crate::BorderCorners::new($crate::INACTIVE_BORDER),
                     ),
                     shadows: Default::default(),
+                    popups: Default::default(),
+                    popup_grab: None,
+                    layer_focus: None,
+                    input_serials: Vec::new(),
+                    swallowed_button: None,
                     opened: Default::default(),
                     interaction: Default::default(),
                     pings: $crate::Pings::new(config.ping_timeout),

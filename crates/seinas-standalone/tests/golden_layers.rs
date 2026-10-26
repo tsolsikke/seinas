@@ -11,6 +11,11 @@
 //!
 //! 手前から、overlay、top、ウィンドウ、bottom、background の順に重なる。
 //!
+//! popup-flipped:160x120 の fake screen に、ウィンドウ(120x60、タイトルなし。橙)を 1 つ出し、コンテンツの右下に近い
+//! 所(110, 55)を anchor rect にして、右下へ開く 50x30 のポップアップ(紫)を頼む。画面の右と下の端からはみ出すので、
+//! constraint_adjustment の flip_x と flip_y で、anchor rect の左上へ反転する。ポップアップには枠も影も角丸も付かず、
+//! ウィンドウの手前に描かれる。
+//!
 //! desktop-1920x1080(フォントの要るもの):見本の画像(`docs/ui-spec.md`)と同じ配置の画面。1920x1080 の fake screen に、
 //! タスクバー(時刻は 2026-10-26 20:45 +09:00 に止める)と、テスト用のアイコンの置き場の app_id のウィンドウ 4 つ
 //! (前面の「ファイル」と背面の「端末」。「メモ」と「設定」は最小化)を出す。ウィンドウは、タイトルバーをポインターで
@@ -116,6 +121,13 @@ fn main() {
     // finish は、失敗があると std::process::exit で終わり、Drop が走らない。コンポジタは先に止める。
     drop(seinas);
 
+    let shot = popup_flipped();
+    run.image(
+        "popup-flipped",
+        Tolerance::EXACT,
+        Image::rgb(shot.width, shot.height, shot.pixels),
+    );
+
     run.with_fonts("desktop-1920x1080", |run, fonts: &Path| {
         let shot = desktop(fonts);
         run.image(
@@ -125,6 +137,21 @@ fn main() {
         );
     });
     run.finish();
+}
+
+/// 画面の端で反転したポップアップの画面(popup-flipped)。
+fn popup_flipped() -> Shot {
+    let seinas = Compositor::start_sized("gp", WIDTH, HEIGHT);
+    let mut window = seinas.connect_test_client(&["window", "--size", "120x60"]);
+    window.wait_for_line("window: drawn");
+    // flip_x 4 + flip_y 8。反転して、anchor rect (110, 55) の左上へ:ウィンドウの幾何から (60, 25)。
+    window.send_line("popup 110 55 50 30 adjust=12");
+    window.wait_for_line("window: popup 1 configure 60 25 50 30");
+    window.wait_for_line("window: popup 1 drawn 50x30");
+    let purple = [0x80, 0x00, 0xff];
+    seinas.wait_for_shot("the flipped popup", |shot| {
+        shot.pixel(60, BAR + 25) == purple && shot.pixel(109, BAR + 54) == purple
+    })
 }
 
 /// 見本の画像と同じ配置の画面の大きさ。

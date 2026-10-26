@@ -73,7 +73,13 @@
 
 - ボタンを押していない間は、top と overlay の layer surface が、ウィンドウより先にポインターのイベントを受け取ります。その上でボタンを押しても、下のウィンドウは raise されず、ドラッグや close ボタンも働きません。
 - ウィンドウの上でない所では、bottom と background の layer surface が、ポインターのイベントを受け取ります。
-- キーボードの入力(`keyboard_interactivity`)は、まだ扱っていません(どの値でも、キーボードの入力を渡しません)。メニュー(トーチ)を作るときに扱います。
+- layer surface のポップアップ(`zwlr_layer_surface_v1.get_popup`。タスクバーのメニューなど)は、その layer surface のすぐ手前に描きます(下の「ポップアップ」)。
+
+キーボード(`keyboard_interactivity`。wlr-layer-shell のバージョン 4 の決まりのとおり):
+
+- none:キーボードのフォーカスを渡しません。押しても渡しません。
+- exclusive:top と overlay の層では、出ている間、キーボードのフォーカスを独り占めします(ウィンドウを押しても、移りません)。手前の層のもの、同じ層では後から出たものが先です。消えたら、元のフォーカスに戻ります。bottom と background の層では、決まりの「exclusive は top と overlay の層でだけ働き、ほかの層では on_demand と同じに扱ってよい」に従い、on_demand と同じに扱います。
+- on_demand:押したときに、キーボードのフォーカスを渡します。ほかの所(ウィンドウ、ほかの layer surface、何も無い所)を押したら外し、activated のウィンドウへ戻します。
 
 ## ウィンドウの一覧と操作(foreign-toplevel)
 
@@ -273,12 +279,37 @@ seat にキーボードがあります(入れ子の構成と、テスト用の�
 - キーボードのフォーカスは、`activated` のウィンドウ(最小化していないうちの、いちばん手前のウィンドウ)で、絵を出しているものに付きます。そのようなウィンドウが無ければ、どこにも付きません。
 - フォーカスは、新しいウィンドウが絵を出したとき、raise したとき、foreign-toplevel の activate のとき、最小化したとき・戻したとき、ウィンドウが閉じたときに、移ります。変わったときだけ、前のウィンドウに leave、新しいウィンドウに enter を送ります。
 - 押した・離したキーと、修飾キーの状態は、フォーカスのあるクライアントへ届きます。最小化したウィンドウには、フォーカスが無いので届きません。
-- layer surface(タスクバーなど)には、フォーカスを付けません(`keyboard_interactivity` は、まだ扱いません)。
+- フォーカスの先は、次の順に決めます:grab しているポップアップの連なりのいちばん上(下の「ポップアップ」)、exclusive の top か overlay の layer surface、押してフォーカスを受けた on_demand の layer surface、`activated` のウィンドウ(上の「layer surface と使える範囲」)。
+- text-input(IME)のフォーカスは、キーボードのフォーカスに付いていきます(`docs/ime.md`)。
 - keymap:
   - 入れ子の構成:親の `wl_keyboard` から届いた keymap を、そのままクライアントへ配ります。親の keymap が届くまでは、xkbcommon の既定の keymap です。親のキーボードのフォーカスが外れたら、押されているキーを、全部離したことにします(クライアントで繰り返しが続かないように)。押されている修飾キー(Shift、Alt など)は、親から届くものではなく、キーから Seinas が求めます。固定された修飾キー(Caps Lock、Num Lock)は、親から届く状態(wl_keyboard の modifiers の mods_locked)に合わせます。合わせたときは、フォーカスのあるクライアントへ、leave と enter で伝え直します(Smithay に、修飾キーの状態だけを送り直す手段が無いため)。押されている修飾キーを親から受けないのは、押したことが届いていないキーを押されたことにすると、離したことも届かず、押されたまま残るためです。
   - 親のいない構成(seinas-standalone、fbdev):日本語の配列(xkb の layout `jp`、model `jp106`)。xkb のファイル(既定は `/usr/share/X11/xkb`。`XKB_CONFIG_ROOT` で変えられる)が要ります。keymap を作れなければ(xkb の置き場そのものが無いときも、ファイルが足りないときも)、ログ(`no keyboard: the keymap could not be made: …`)に出して、キーボードの無い構成として動きます。IME の global も作りません(`docs/ime.md`)。
   - 押し続けたときの繰り返しは、600 ミリ秒の後に 1 秒あたり 25 回(入れ子では、親の設定)。繰り返しは、クライアントが行います。
 - Seinas のショートカット:キーは、IME とクライアントへ渡す前に、Seinas のショートカットの判定を通ります(`docs/adr/0004-ime-keyboard-path.md`)。Seinas が使ったキーは、離したことも、どこへも渡しません。一覧は、ウィンドウの切り替え(既定は Alt+Tab と Alt+Shift+Tab。入れ子の構成では Alt+F6 と Alt+Shift+F6 も。`seinas.conf` で変えられる。下の「Alt+Tab」)と、切り替えの最中の Esc(取り消し)と、IME の緊急解除(既定は Alt+Shift+F12。`docs/ime.md` の「IME の復旧」)だけです。
+
+## ポップアップ
+
+ポップアップ(xdg_popup。右クリックのメニュー、コンボボックスの一覧、ツールチップなど)は、xdg-shell の決まりに従って扱います。
+
+置き方:
+
+- 位置と大きさは、クライアントが xdg_positioner で頼んだもの(anchor rect、anchor、gravity、offset、大きさ)です。親は、ウィンドウか、ほかのポップアップか、layer surface(`zwlr_layer_surface_v1.get_popup`)です。
+- 画面からはみ出すときは、positioner の constraint_adjustment(反転、ずらし、縮め)を、決まりの順(反転、ずらし、縮め)で使い、収めます。計算は Smithay(`PositionerState::get_unconstrained_geometry`)に任せます。収める枠は、ウィンドウのポップアップでは使える範囲(タスクバーなどの exclusive zone を除いた所)、layer surface のポップアップでは画面の全体(タスクバー自身は、使える範囲の外にあるため)です。constraint_adjustment が無ければ、はみ出したまま置きます。
+- 置き直しの頼み(xdg_popup.reposition。xdg_wm_base のバージョン 3)は、新しい positioner で置き直し、repositioned と configure を送ります。
+
+描き方:
+
+- ポップアップは、根元(いちばん下の親。ウィンドウか layer surface)のすぐ手前に描きます。入れ子のポップアップは、親のポップアップの手前です。
+- Seinas の飾り(タイトルバー、枠、影、角丸)は付けません。根元のウィンドウの角丸のクリップにも掛けません(ウィンドウの外へはみ出す所も描きます)。
+- ポインターは、手前に描くものから順に当てます。ポップアップの上では、根元のウィンドウより先に、ポップアップが受け取ります(入力の範囲は、面の大きさと input region。サブサーフェスを含む)。ポップアップの上でのボタンは、ウィンドウを raise したり動かしたりしません。
+
+grab(xdg_popup.grab):
+
+- seat が Seinas のもので、serial が直前の入力(クライアントへ渡したポインターの押下か、キーの押下。新しいものから 8 つ)のものなら、受けます。そうでなければ、すぐ popup_done を送ります(決まりの「the compositor may deny the grab」)。最初の commit の後の grab と、いちばん上でないポップアップを親にした grab は、プロトコルのエラーにします。
+- grab の間は、キーボードのフォーカスを、連なりのいちばん上のポップアップに付けます(Esc などのキーも、そのポップアップへ渡ります。閉じるかは、クライアントが決めます)。連なりが閉じたら、元のフォーカスに戻します。
+- grab の間、ポインターは、grab したクライアントの面にだけ渡します(決まりの owner-events。同じクライアントのウィンドウの上でも渡り、閉じません)。ほかの所(ほかのクライアントの面、Seinas のタイトルバー、何も無い所)を押したら、連なりを、上のポップアップから順に閉じます(popup_done)。その押下と、対になる離す側は、どこへも渡しません。
+- 次のときも、連なりを閉じます:Alt+Tab で切り替えを始めたとき、ウィンドウを動かす修飾キー(`window-drag`)を押しながらボタンを押したとき(閉じてから、ふだんどおりに動かす・サイズ変更を始める)、ほかのウィンドウが activated になったとき。
+- grab の無いポップアップ(ツールチップなど)は、Seinas からは閉じません。閉じるのは、クライアントです。
 
 ## Alt+Tab
 
@@ -387,6 +418,8 @@ Alt を押したまま Tab を押すと、ウィンドウを切り替えます�
 - 動かす・閉じるの決まり(動き始めのしきい値、画面の外の限り、番号の扱い、閉じるボタンのヒットと取り消し、奥のウィンドウのボタン、クライアントから頼まれる移動)は、`crates/seinas-frontend` のユニットテスト(`src/interaction.rs`、`src/decoration.rs`、`src/stack.rs`)で確かめています。
 - 実際に画面の上で動くこと、閉じるように頼むイベントがクライアントに届くことは、`crates/seinas-standalone/tests/move_close.rs` が、ピクセルと、テスト用のクライアントの出力で確かめます。ポインターのイベントは、テスト用の入力インターフェースから送ります。
   テスト用のクライアントは、`--pointer` でポインターのイベントを書き出し、`--move-on-press` で移動を頼み、`--ignore-close` で閉じる頼みに応じなくなります。
+- ポップアップは、`crates/seinas-standalone/tests/popups.rs` が、ピクセルとテスト用のクライアントの出力で確かめます(positioner のとおりの位置、根元のウィンドウの手前に描くことと角丸に切られないこと、画面の端での反転・ずらし・縮め、reposition、grab でのキーボードのフォーカス、ポップアップの中の押下、入れ子、Esc、同じクライアントのウィンドウを押しても閉じないこと、外の押下で上から順に閉じてフォーカスが戻ること、タイトルバー・Alt+Tab・Alt+ドラッグ・ほかのウィンドウの activated で閉じること、grab の無いポップアップを閉じないこと、タスクバーのような layer surface のポップアップが上へ反転すること)。テスト用のクライアント(`test-client window` と `test-client layer`)は、標準入力の `popup X Y W H [grab] [child] [adjust=N] …` でポップアップを出します。
+- layer surface の keyboard_interactivity は、`crates/seinas-standalone/tests/layer_keyboard.rs` が、テスト用のクライアントのキーボードのイベントで確かめます(none、top の exclusive、top の on_demand、bottom の exclusive)。テスト用のクライアントは、`test-client layer --keyboard-interactivity N --keyboard` で出します。
 - layer surface と使える範囲は、`crates/seinas-standalone/tests/layers.rs` が確かめます(ふだんのソケットに layer-shell が見えないこと、exclusive zone で使える範囲が狭まり、元に戻ること、configure の大きさ、ドラッグの限り、top の layer surface の上でのボタンがウィンドウを raise しないこと)。layer surface は、テスト用のクライアント(`test-client layer`)で出します。
 - 層の重なりの描画は、正解データ(`crates/seinas-standalone/tests/golden_layers.rs`)と比べます(`docs/golden.md`)。
 - 飾りを描く側の取り決めは、`crates/seinas-standalone/tests/decoration.rs` が、ピクセルとテスト用のクライアントの出力で確かめます(装飾のオブジェクトが無い・server_side を求める・client_side を求める・後から求めて切り替える、の 4 つの場合、ウィンドウの幾何の外の影を数えないこと、飾りの無いクライアントからの移動の頼み、修飾キーとドラッグでの移動とサイズ変更)。テスト用のクライアントは、既定で server_side を求め、`--no-decoration` で装飾のオブジェクトを作らず、`--client-side` で client_side を求め、`--decoration` で答えを書き、`--margin N` で自分の影のまねを描きます。標準入力の `decoration server-side` で、後から求めます。修飾キーの設定の読み方と、近い辺の選び方は、`crates/seinas-frontend` のユニットテスト(`src/key_binding.rs`、`src/resize.rs`)で確かめています。
@@ -404,7 +437,8 @@ Alt を押したまま Tab を押すと、ウィンドウを切り替えます�
 
 ## まだ無いもの
 
-IME の道(text-input-v3、input-method-v2、virtual-keyboard の取り次ぎ)はあります(`docs/ime.md`)が、IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME です。layer surface へのキーボードのフォーカスは、ありません。
+IME の道(text-input-v3、input-method-v2、virtual-keyboard の取り次ぎ)はあります(`docs/ime.md`)が、IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME です。
+IME が virtual-keyboard で送ってきたキーの serial は、Seinas からは分からない(Smithay の中で作られる)ため、その serial でのポップアップの grab は受けません(すぐ popup_done を送ります)。
 全画面は、できません。画面の左右の端へのドラッグで半分の大きさにする(Windows のスナップ)ことも、できません。
 応答なしのクライアントのプロセスを止める(kill する)仕組みは、ありません(上の「応答なし」)。ping は、閉じるように頼んだときにだけ送り、いつも見張ることはしていません。
 クライアントが装飾のオブジェクトを消したこと(`destroy`)は、Seinas には分かりません(上の「飾りを描く側の取り決め」)。
