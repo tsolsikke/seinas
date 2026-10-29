@@ -16,6 +16,8 @@ use std::{
 
 use crate::{message, socket_path, string, WL_DISPLAY};
 
+mod data;
+
 /// wl_shmの形式の番号(xrgb8888)。
 const FORMAT_XRGB8888: u32 = 1;
 
@@ -183,6 +185,8 @@ pub struct Wire {
     last_input_serial: Option<u32>,
     /// layer surface のポップアップのために bind した xdg_wm_base(ウィンドウの xdg_wm_base は `WM_BASE`)。
     layer_wm_base: Option<u32>,
+    /// クリップボードとドラッグ&ドロップ([`Wire::watch_data_device`] で作る)。
+    data: Option<data::DataState>,
 }
 
 impl Wire {
@@ -841,7 +845,7 @@ impl Wire {
                 _ => Ok(()),
             };
         }
-        if self.answer_popup(event)? {
+        if self.answer_popup(event)? || self.answer_data(event)? {
             return Ok(());
         }
         match (event.object, event.opcode) {
@@ -914,11 +918,17 @@ impl Wire {
                 }
                 Ok(())
             }
-            // wl_keyboard のイベント。keymap の fd は読まない(大きさだけを書く)。
+            // wl_keyboard のイベント。keymap の中身は読まない(大きさだけを書く)。
             (object, opcode) if Some(object) == self.keyboard => {
                 let at = |index: usize| event.u32_at(index * 4).unwrap_or(0);
                 match opcode {
-                    0 => self.say(&format!("keymap {}", at(1))),
+                    0 => {
+                        // fd を残す形(data device を使うとき)では、keymap の fd も取り出して閉じる。
+                        if self.keep_fds {
+                            self.fds.pop_front();
+                        }
+                        self.say(&format!("keymap {}", at(1)))
+                    }
                     // 押されているキーがあれば、その番号を添える(`keyboard enter keys 42`)。
                     1 => {
                         let keys: Vec<String> = (0..at(2) as usize / 4)
@@ -1068,6 +1078,7 @@ pub fn connect() -> Result<Wire, String> {
         popups: Vec::new(),
         last_input_serial: None,
         layer_wm_base: None,
+        data: None,
     })
 }
 

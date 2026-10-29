@@ -38,6 +38,11 @@
 //! - `--show-text`: text-input で確定した文字と変換中の文字を、コンテンツに描く(`--text-input` も付けたことになる。
 //!   スクリーンショットのため)。カーソルの矩形は、変換中の文字の終わりに合わせて送る。
 //! - `--cursor X,Y,W,H`: text-input で送るカーソルの矩形(コンテンツの左上が原点。既定は 10,20,2,16)。
+//! - `--data-device`: wl_data_device_manager の data device を使う(`--pointer` と `--keyboard` も付けたことになる)。
+//!   標準入力の `copy TEXT` で TEXT をコピーし(直前の入力の serial で set_selection)、`paste` で今の selection を
+//!   貼り付け、`drag TEXT` で TEXT のドラッグ&ドロップを始める(ボタンを押している間に、直前の押下の serial で
+//!   start_drag)。届いたイベントを `window: data …` の行で書く(書き方は `src/wire/data.rs`)。
+//! - `--accept-drop`: `--data-device` に加えて、落とされそうになったもの(テキスト)を受け入れる。
 //! - `--resize-on-press EDGE`: コンテンツの上でボタンが押されたら、辺 `EDGE`(top・bottom・left・right・
 //!   top-left・top-right・bottom-left・bottom-right)でサイズ変更してほしいと頼む(xdg_toplevel の resize)。
 //!   `--pointer` も付けたことになる。
@@ -109,6 +114,8 @@ struct Options {
     text_input: bool,
     cursor: [i32; 4],
     show_text: bool,
+    data_device: bool,
+    accept_drop: bool,
 }
 
 /// `popup` の行の残り(`X Y W H [grab] [child] [adjust=N] [anchor=N] [gravity=N] [color=RRGGBB]`)を読む。
@@ -184,6 +191,17 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
                     .map_err(|_| format!("--cursor needs X,Y,W,H: {text}"))?;
             }
             "--move-on-press" => (options.pointer, options.move_on_press) = (true, true),
+            "--data-device" => {
+                (options.pointer, options.keyboard, options.data_device) = (true, true, true)
+            }
+            "--accept-drop" => {
+                (
+                    options.pointer,
+                    options.keyboard,
+                    options.data_device,
+                    options.accept_drop,
+                ) = (true, true, true, true)
+            }
             "--ignore-close" => options.ignore_close = true,
             "--ignore-ping" => (options.ignore_close, options.ignore_ping) = (true, true),
             "--size" => options.size = Some(crate::layer::parse_size(&value()?)?),
@@ -249,6 +267,9 @@ pub fn run(args: &[String]) -> Result<bool, String> {
     let mut commit_decoration = false;
     if options.pointer || options.keyboard {
         wire.watch_seat(options.pointer, options.keyboard)?;
+    }
+    if options.data_device {
+        wire.watch_data_device(options.accept_drop)?;
     }
     let mut text_input = None;
     if options.text_input {
@@ -430,6 +451,15 @@ pub fn run(args: &[String]) -> Result<bool, String> {
                 .and_then(|n| n.trim().parse().ok())
             {
                 wire.close_popup(n)?;
+            }
+            if let Some(text) = command.strip_prefix("copy ") {
+                wire.copy(text)?;
+            }
+            if command == "paste" {
+                wire.paste()?;
+            }
+            if let Some(text) = command.strip_prefix("drag ") {
+                wire.drag(text)?;
             }
             if command == "pong" && wire.pong()? {
                 println!("window: ponged");

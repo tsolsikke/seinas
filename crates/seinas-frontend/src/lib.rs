@@ -20,6 +20,7 @@ use std::{
 
 pub use smithay;
 
+mod data_device;
 mod decoration;
 mod foreign_toplevel;
 mod frame;
@@ -36,6 +37,7 @@ mod stack;
 mod switcher;
 mod switcher_view;
 mod title_bar;
+pub use data_device::{drag_ended, drag_started, keyboard_focus_changed, DndIcon};
 pub use decoration::{
     bar_height, clamp_outer_location, content_location, content_size_for, frame_contains,
     in_cut_corner, load_fonts, outer_size, paint_title_bar, title_text, TitleButton, TitleButtons,
@@ -247,6 +249,12 @@ pub struct Frontend<D: SeatHandler> {
     pub input_serials: Vec<Serial>,
     /// ポップアップの連なりを閉じるのに使って飲み込んだ押下のボタン。その離す側も飲み込む。
     pub swallowed_button: Option<u32>,
+    /// クリップボードとドラッグ&ドロップ(wl_data_device_manager。`data_device.rs`)。
+    pub data_device: smithay::wayland::selection::data_device::DataDeviceState,
+    /// クライアントのドラッグ&ドロップの最中か。最中は、ポインターのイベントを Seinas の操作に使わない。
+    pub dnd_active: bool,
+    /// ドラッグ&ドロップのアイコン(ポインターの位置に、いちばん手前に描く)。
+    pub dnd_icon: Option<DndIcon>,
     /// ウィンドウの一覧と操作(foreign-toplevel)。global は、シェルの部品にだけ見せる。
     pub foreign_toplevels: ForeignToplevelState,
     /// IME の道(text-input-v3、input-method-v2、virtual-keyboard)。input-method と virtual-keyboard の global は、
@@ -316,6 +324,7 @@ pub trait FrontendHost:
     SeatHandler<KeyboardFocus = WlSurface, PointerFocus = WlSurface>
     + Dispatch<ZwlrForeignToplevelHandleV1, HandleData>
     + ForeignToplevelListHandler
+    + smithay::wayland::selection::data_device::DataDeviceHandler
     + Sized
     + 'static
 {
@@ -1176,12 +1185,24 @@ impl<D: FrontendHost> Frontend<D> {
     /// 画面に描くものを、描画の要素として並べる(手前から順)。手前から、overlay の layer surface、IME の候補ウィンドウ、
     /// top の layer surface、ウィンドウ(タイトルバーと、その下のコンテンツ)、bottom と background の layer surface。
     pub fn render_elements(&mut self, renderer: &mut PixmanRenderer) -> Vec<WindowElement> {
-        // 切り替えの一覧は、全部より手前に描く。
-        let mut elements: Vec<WindowElement> = self
-            .switcher_element(renderer)
-            .map(WindowElement::TitleBar)
-            .into_iter()
-            .collect();
+        // ドラッグ&ドロップのアイコンは、ポインターの位置に、全部より手前に描く。
+        let mut elements: Vec<WindowElement> = Vec::new();
+        if let Some((icon, at)) = self.dnd_icon_at() {
+            elements.extend(
+                render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<_>>(
+                    renderer,
+                    &icon,
+                    (at.x, at.y),
+                    1.0,
+                    1.0,
+                    Kind::Unspecified,
+                )
+                .into_iter()
+                .map(WindowElement::Surface),
+            );
+        }
+        // 切り替えの一覧は、アイコンのほかの全部より手前に描く。
+        elements.extend(self.switcher_element(renderer).map(WindowElement::TitleBar));
         elements.extend(self.layer_elements(renderer, &[Layer::Overlay]));
         if let Some((surface, location)) = self.ime_popup() {
             elements.extend(
@@ -1452,6 +1473,8 @@ impl<D: FrontendHost> Frontend<D> {
             .collect();
         // IME の候補ウィンドウは、見せているときだけ。
         layers.extend(self.ime_popup().map(|(surface, _)| surface));
+        // ドラッグ&ドロップのアイコンにも返す。
+        layers.extend(self.dnd_icon_at().map(|(surface, _)| surface));
         // 最小化しているウィンドウには返さない(描いていないので)。
         let windows: Vec<WlSurface> = self
             .windows
@@ -1541,12 +1564,14 @@ where
     let area = frontend.usable;
     let measure = frontend.measure();
     // ボタンを押していない間に、top か overlay の layer surface(タスクバーなど)か、ウィンドウのポップアップの上に
-    // あるときは、ウィンドウの操作(raise、ドラッグ、close ボタン)をせず、そのまま渡す。
+    // あるときと、クライアントのドラッグ&ドロップの最中は、ウィンドウの操作(raise、ドラッグ、close ボタン)をせず、
+    // そのまま渡す(ドラッグ&ドロップは、Smithay の grab が受け取る)。
     let over_layer_above = |frontend: &Frontend<D>, point: PointF| {
         frontend.interaction.is_idle()
-            && (frontend
-                .layer_under(point, &[Layer::Overlay, Layer::Top])
-                .is_some()
+            && (frontend.dnd_active
+                || frontend
+                    .layer_under(point, &[Layer::Overlay, Layer::Top])
+                    .is_some()
                 || frontend.window_popup_at(point))
     };
     let (location, outcome) = match input {
@@ -1851,7 +1876,8 @@ where
     D: FrontendHost + SeatHandler<PointerFocus = WlSurface> + 'static,
 {
     let frontend = state.frontend_mut();
-    if frontend.popup_grab.is_none() {
+    // ドラッグ&ドロップの最中は、ほかのクライアントの面へも渡す(Smithay の grab が受け取る)。
+    if frontend.popup_grab.is_none() || frontend.dnd_active {
         return false;
     }
     frontend.forget_dead_popups();
@@ -1953,6 +1979,10 @@ pub fn sync_keyboard_focus<D: FrontendHost>(state: &mut D) {
     let target = frontend.keyboard_focus_target();
     if keyboard.current_focus() != target {
         state.frontend_mut().ime.keyboard_focus_moved();
+        // フォーカスが無くなるときは、Smithay は focus_changed を呼ばないので、selection を見せる相手もここで外す。
+        if target.is_none() {
+            keyboard_focus_changed(state, None);
+        }
         keyboard.set_focus(state, target, SERIAL_COUNTER.next_serial());
     }
 }
@@ -2447,7 +2477,9 @@ macro_rules! delegate_frontend {
             ) {
                 $crate::smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
                 let frontend = $crate::FrontendHost::frontend_mut(self);
-                if frontend.commit_popup(surface) {
+                if frontend.commit_dnd_icon(surface) {
+                    // ドラッグ&ドロップのアイコンの commit。
+                } else if frontend.commit_popup(surface) {
                     // ポップアップの commit。
                 } else if frontend.commit_layer(surface) {
                     // keyboard_interactivity の変更は、commit で効く。
@@ -2608,8 +2640,10 @@ macro_rules! delegate_frontend {
             fn focus_changed(
                 &mut self,
                 _seat: &$crate::smithay::input::Seat<Self>,
-                _focused: Option<&$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+                focused: Option<&$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
             ) {
+                // キーボードのフォーカスのあるクライアントに、selection を見せる。
+                $crate::keyboard_focus_changed(self, focused);
             }
             fn cursor_image(
                 &mut self,
@@ -2751,6 +2785,11 @@ macro_rules! delegate_frontend {
                     layer_focus: None,
                     input_serials: Vec::new(),
                     swallowed_button: None,
+                    data_device: $crate::smithay::wayland::selection::data_device::DataDeviceState::new::<Self>(
+                        display_handle,
+                    ),
+                    dnd_active: false,
+                    dnd_icon: None,
                     opened: Default::default(),
                     interaction: Default::default(),
                     pings: $crate::Pings::new(config.ping_timeout),
@@ -2777,6 +2816,35 @@ macro_rules! delegate_frontend {
             $crate::smithay::reexports::wayland_protocols_wlr::foreign_toplevel::v1::server::zwlr_foreign_toplevel_handle_v1::ZwlrForeignToplevelHandleV1: $crate::HandleData
         ] => $crate::ForeignToplevelState);
         $crate::smithay::delegate_seat!($ty);
+        impl $crate::smithay::wayland::selection::SelectionHandler for $ty {
+            type SelectionUserData = ();
+        }
+        impl $crate::smithay::wayland::selection::data_device::DataDeviceHandler for $ty {
+            fn data_device_state(&self) -> &$crate::smithay::wayland::selection::data_device::DataDeviceState {
+                &$crate::FrontendHost::frontend(self).data_device
+            }
+        }
+        impl $crate::smithay::wayland::selection::data_device::ClientDndGrabHandler for $ty {
+            fn started(
+                &mut self,
+                _source: Option<$crate::smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>,
+                icon: Option<$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+                _seat: $crate::smithay::input::Seat<Self>,
+            ) {
+                $crate::drag_started(self, icon);
+            }
+            fn dropped(
+                &mut self,
+                _target: Option<$crate::smithay::reexports::wayland_server::protocol::wl_surface::WlSurface>,
+                validated: bool,
+                _seat: $crate::smithay::input::Seat<Self>,
+            ) {
+                $crate::drag_ended(self, validated);
+            }
+        }
+        // コンポジタから始めるドラッグ&ドロップは使わない(既定のまま)。
+        impl $crate::smithay::wayland::selection::data_device::ServerDndGrabHandler for $ty {}
+        $crate::smithay::delegate_data_device!($ty);
         $crate::smithay::delegate_output!($ty);
         $crate::smithay::delegate_text_input_manager!($ty);
         // input-method と virtual-keyboard は、IME を 1 つに限り、IME の要求を見るために、Smithay の手前で

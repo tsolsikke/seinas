@@ -312,6 +312,25 @@ grab(xdg_popup.grab):
 - 次のときも、連なりを閉じます:Alt+Tab で切り替えを始めたとき、ウィンドウを動かす修飾キー(`window-drag`)を押しながらボタンを押したとき(閉じてから、ふだんどおりに動かす・サイズ変更を始める)、ほかのウィンドウが activated になったとき。
 - grab の無いポップアップ(ツールチップなど)は、Seinas からは閉じません。閉じるのは、クライアントです。
 
+## クリップボードとドラッグ&ドロップ
+
+wl_data_device_manager(バージョン 3)を出します。仕組みは Smithay(`DataDeviceState`)に任せます。GTK 3 は、これが無いと wl_seat を使わず、キーもポインターも受け取りません。
+
+クリップボード(selection):
+
+- selection を見せる相手は、キーボードのフォーカスのあるクライアントです。フォーカスが移るたびに、移った先のクライアントに、今の selection を見せます。フォーカスが無くなったら、だれにも見せません。
+- フォーカスの無いクライアントは、selection を受け取れず、置くこと(set_selection)もできません(Smithay が断ります)。
+- 中身は、クライアントどうしがパイプで運びます(貼り付ける側が作ったパイプの書き口を、コンポジタがコピーした側へ送り直します)。Seinas は中身を読みません。
+- primary selection(中ボタンの貼り付け)は、まだありません。
+
+ドラッグ&ドロップ(クライアントどうし):
+
+- start_drag は、そのクライアントへ渡した押下のボタンを押している間だけ、その押下の serial で受けます(Smithay が、押しているボタンの暗黙の grab の serial かを確かめます)。
+- 最中のポインターのイベントは、Seinas の操作(タイトルバー、サイズ変更の境界、修飾キーとドラッグ)にも、ポップアップの grab(ほかのクライアントの面に渡さない決まり)にも使わず、そのまま渡します。ポップアップの連なりは閉じません(ポップアップから始めたドラッグも、ほかのクライアントへ落とせます)。Seinas のタイトルバーや何も無い所の上は、どのクライアントの上でもない扱いです。
+- 全部のボタンを離したら、上にいるクライアントが受け入れていれば落とし、受け入れていなければ取り消します。
+- アイコン(クライアントが渡した面)は、ポインターの位置に、いちばん手前に描きます。
+- Smithay 0.7.0 は、受け入れた型を、ドラッグした側に知らせません(wl_data_source.target を送りません。動作(action)は知らせます)。
+
 ## Alt+Tab
 
 Alt を押したまま Tab を押すと、ウィンドウを切り替えます。
@@ -420,6 +439,7 @@ Alt を押したまま Tab を押すと、ウィンドウを切り替えます�
 - 実際に画面の上で動くこと、閉じるように頼むイベントがクライアントに届くことは、`crates/seinas-standalone/tests/move_close.rs` が、ピクセルと、テスト用のクライアントの出力で確かめます。ポインターのイベントは、テスト用の入力インターフェースから送ります。
   テスト用のクライアントは、`--pointer` でポインターのイベントを書き出し、`--move-on-press` で移動を頼み、`--ignore-close` で閉じる頼みに応じなくなります。
 - ポップアップは、`crates/seinas-standalone/tests/popups.rs` が、ピクセルとテスト用のクライアントの出力で確かめます(positioner のとおりの位置、根元のウィンドウの手前に描くことと角丸に切られないこと、画面の端での反転・ずらし・縮め、reposition、grab でのキーボードのフォーカス、ポップアップの中の押下、入れ子、Esc、同じクライアントのウィンドウを押しても閉じないこと、外の押下で上から順に閉じてフォーカスが戻ること、タイトルバー・Alt+Tab・Alt+ドラッグ・ほかのウィンドウの activated で閉じること、grab の無いポップアップを閉じないこと、タスクバーのような layer surface のポップアップが上へ反転すること)。テスト用のクライアント(`test-client window` と `test-client layer`)は、標準入力の `popup X Y W H [grab] [child] [adjust=N] …` でポップアップを出します。
+- クリップボードとドラッグ&ドロップは、`crates/seinas-standalone/tests/data_device.rs` が、テスト用のクライアントの出力で確かめます(フォーカスのあるクライアントにだけ selection が届くこと、フォーカスの無いクライアントのコピーを断ること、貼り付けで中身が届くこと、キーの serial でのコピー、ドラッグ&ドロップの enter・drop・leave・取り消し、タイトルバーの上で離したときの取り消し、ポップアップの grab の最中に始めたドラッグ、最中の修飾キーと右のボタンでサイズ変更が始まらないこと、IME が keyboard を grab している間)。テスト用のクライアントは、`test-client window --data-device` と標準入力の `copy TEXT`・`paste`・`drag TEXT` で使い、`--accept-drop` で落とされたものを受け入れます。
 - layer surface の keyboard_interactivity は、`crates/seinas-standalone/tests/layer_keyboard.rs` が、テスト用のクライアントのキーボードのイベントで確かめます(none、top の exclusive、top の on_demand、bottom の exclusive)。テスト用のクライアントは、`test-client layer --keyboard-interactivity N --keyboard` で出します。
 - layer surface と使える範囲は、`crates/seinas-standalone/tests/layers.rs` が確かめます(ふだんのソケットに layer-shell が見えないこと、exclusive zone で使える範囲が狭まり、元に戻ること、configure の大きさ、ドラッグの限り、top の layer surface の上でのボタンがウィンドウを raise しないこと)。layer surface は、テスト用のクライアント(`test-client layer`)で出します。
 - 層の重なりの描画は、正解データ(`crates/seinas-standalone/tests/golden_layers.rs`)と比べます(`docs/golden.md`)。
@@ -440,6 +460,7 @@ Alt を押したまま Tab を押すと、ウィンドウを切り替えます�
 
 IME の道(text-input-v3、input-method-v2、virtual-keyboard の取り次ぎ)はあります(`docs/ime.md`)が、IME そのもの(Kieli)は、まだありません。今つなげるのは、テスト用の IME です。
 IME が virtual-keyboard で送ってきたキーの serial は、Seinas からは分からない(Smithay の中で作られる)ため、その serial でのポップアップの grab は受けません(すぐ popup_done を送ります)。
+クリップボードの primary selection(中ボタンの貼り付け)と、コンポジタから始めるドラッグ&ドロップは、ありません。ドラッグ&ドロップのアイコンを描くことは、自動のテストでは確かめていません。
 全画面は、できません。画面の左右の端へのドラッグで半分の大きさにする(Windows のスナップ)ことも、できません。
 応答なしのクライアントのプロセスを止める(kill する)仕組みは、ありません(上の「応答なし」)。ping は、閉じるように頼んだときにだけ送り、いつも見張ることはしていません。
 クライアントが装飾のオブジェクトを消したこと(`destroy`)は、Seinas には分かりません(上の「飾りを描く側の取り決め」)。
