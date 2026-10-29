@@ -89,6 +89,8 @@ struct Popup {
     /// 絵を置いた pool(捨てると閉じる)。
     pools: Vec<File>,
     done: bool,
+    /// 絵を出したときに頼んだ frame コールバックと、その絵の大きさ。届いたら `popup N drawn WxH` を書く。
+    frame: Option<(u32, i32, i32)>,
 }
 
 /// xdg-decoration での、装飾の取り決め方。
@@ -500,6 +502,7 @@ impl Wire {
             size: None,
             pools: Vec::new(),
             done: false,
+            frame: None,
         });
         Ok(self.popups.len())
     }
@@ -588,15 +591,25 @@ impl Wire {
 
     /// ポップアップのイベントを扱う。扱ったらtrue。
     fn answer_popup(&mut self, event: &Event) -> Result<bool, String> {
-        let Some(index) = self
-            .popups
-            .iter()
-            .position(|popup| event.object == popup.popup || event.object == popup.xdg_surface)
-        else {
+        let Some(index) = self.popups.iter().position(|popup| {
+            event.object == popup.popup
+                || event.object == popup.xdg_surface
+                || popup
+                    .frame
+                    .is_some_and(|(callback, ..)| callback == event.object)
+        }) else {
             return Ok(false);
         };
         let n = index + 1;
         let int = |at: usize| event.u32_at(at).unwrap_or(0) as i32;
+        // wl_callback.done:コンポジタが、その絵を描いた。
+        if let Some((callback, w, h)) = self.popups[index].frame {
+            if event.object == callback {
+                self.popups[index].frame = None;
+                self.say(&format!("popup {n} drawn {w}x{h}"));
+                return Ok(true);
+            }
+        }
         if event.object == self.popups[index].popup {
             match event.opcode {
                 // xdg_popup.configure(x、y、幅、高さ)
@@ -637,8 +650,11 @@ impl Wire {
                         [0, 0, w, h].iter().flat_map(|v| v.to_le_bytes()).collect();
                     self.send(&message(surface, 1, &attach))?;
                     self.send(&message(surface, 2, &damage))?;
+                    // wl_surface.frame(新しい番号)
+                    let callback = self.new_id();
+                    self.send(&message(surface, 3, &callback.to_le_bytes()))?;
+                    self.popups[index].frame = Some((callback, w, h));
                     self.send(&message(surface, 6, &[]))?;
-                    self.say(&format!("popup {n} drawn {w}x{h}"));
                 }
             }
         }

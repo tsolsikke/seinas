@@ -64,7 +64,7 @@
 //!   状態が無ければ `[]`。
 //! - `window: decoration server-side`: 飾りを描く側のイベント(zxdg_toplevel_decoration_v1.configure)が
 //!   届くたびに1行(`--decoration` を付けたとき)。クライアントの側なら `client-side`。
-//! - `window: popup 1 configure X Y W H`(xdg_popup.configure)、`window: popup 1 drawn WxH`(その大きさの絵を出した)、
+//! - `window: popup 1 configure X Y W H`(xdg_popup.configure)、`window: popup 1 drawn WxH`(その大きさの絵を出し、コンポジタが描いた(frame コールバックが届いた))、
 //!   `window: popup 1 done`(popup_done。書いてから、すぐ消す)、`window: popup 1 repositioned TOKEN`。ポインターと
 //!   キーボードの enter がポップアップの面なら、`window: pointer enter popup 1 X Y`、`window: keyboard enter popup 1`。
 //! - `window: wm_capabilities []`: コンポジタができることの並び(xdg_toplevel.wm_capabilities)が届くたびに1行。

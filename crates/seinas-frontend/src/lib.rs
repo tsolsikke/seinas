@@ -1453,12 +1453,21 @@ impl<D: FrontendHost> Frontend<D> {
         // IME の候補ウィンドウは、見せているときだけ。
         layers.extend(self.ime_popup().map(|(surface, _)| surface));
         // 最小化しているウィンドウには返さない(描いていないので)。
-        let windows = self
+        let windows: Vec<WlSurface> = self
             .windows
             .iter()
             .filter(|window| !window.minimized)
-            .map(|window| window.item.wl_surface());
-        for surface in windows.chain(layers.iter()) {
+            .map(|window| window.item.wl_surface().clone())
+            .collect();
+        // ウィンドウと layer surface のポップアップ(描いているもの)にも返す。
+        let popups: Vec<WlSurface> = windows
+            .iter()
+            .chain(layers.iter())
+            .flat_map(|root| {
+                PopupManager::popups_for_surface(root).map(|(popup, _)| popup.wl_surface().clone())
+            })
+            .collect();
+        for surface in windows.iter().chain(layers.iter()).chain(popups.iter()) {
             with_surface_tree_downward(
                 surface,
                 (),
