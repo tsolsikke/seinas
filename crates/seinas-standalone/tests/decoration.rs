@@ -137,12 +137,16 @@ fn the_shadow_of_a_client_is_not_counted_in_the_window() {
 #[test]
 fn a_client_without_decoration_can_ask_to_be_moved() {
     let mut seinas = Compositor::start_with_input("dm");
-    let client = connect(&seinas, &["--no-decoration", "--move-on-press"]);
+    let mut client = connect(&seinas, &["--no-decoration", "--move-on-press"]);
     seinas.wait_for_screen("the bare window", |shot| shows_bare_window(shot, 0, 0));
     // 自分で描いたタイトルバーのつもりの所(上の端)を押すと、クライアントが move を頼み、Seinas が動かす。
     seinas.pointer("motion 100 10");
     seinas.pointer("press");
     client.wait_for_line("window: pointer button 0x110 pressed");
+    // 頼み(xdg_toplevel.move)は、押したことを書いた後に送る。sync の返事で、コンポジタが受け終えたと分かる(待たないと、
+    // 離したことを先に処理して、動かないことがある)。
+    client.send_line("sync");
+    client.wait_for_line("window: synced");
     seinas.pointer("motion 150 60");
     seinas.pointer("release");
     seinas.wait_for_screen("the moved window", |shot| shows_bare_window(shot, 50, 50));
