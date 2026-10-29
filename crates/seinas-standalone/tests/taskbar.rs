@@ -453,3 +453,130 @@ fn the_taskbar_shows_app_icons_a_fixed_clock_and_logs_the_torch() {
         shot.pixel(center(2, 0) - 16, TOP + 4) == seinas_theme::taskbar::HOT
     });
 }
+
+/// 400x300 の画面に、ウィンドウを `count` 個出す(隠れたタスクの確かめ)。並べられる幅は 400 - 8 - 122 = 270 で、
+/// 間隔 36 の場所が 7 つ。7 つ以上なら、トーチ、タスク 5 つ、末尾の「…」が並び、6 つ目から後ろのタスクが隠れる。
+fn many_windows(name: &str, count: usize) -> (Compositor, common::Running, Vec<TestClient>) {
+    let seinas = Compositor::start_sized_with_input(name, &common::font_dir(), 400, 300);
+    let taskbar = seinas.connect_taskbar();
+    let windows = (1..=count)
+        .map(|i| open_window(&seinas, &format!("window {i}")))
+        .collect();
+    (seinas, taskbar, windows)
+}
+
+/// 400x300 の画面の、タスクバーの上の端の y と、「…」の中心の x(まとまりは時計の場所に合わせて左へ寄り、
+/// 左の端は 278 - 7 × 36 = 26)。
+const SMALL_TOP: usize = 300 - TASKBAR;
+const MORE_X: usize = 26 + 6 * 36 + 18;
+
+/// `line` を含む行が、タスクバーのログに `count` 回出るまで待つ。
+fn wait_for_taskbar_log_times(seinas: &Compositor, line: &str, count: usize) {
+    wait_for(line, || {
+        (seinas.taskbar_log().matches(line).count() >= count).then_some(())
+    });
+}
+
+/// 「…」を押して離す。
+fn press_more(seinas: &mut Compositor) {
+    seinas.pointer(&format!("motion {MORE_X} {}", SMALL_TOP + TASKBAR / 2));
+    seinas.pointer("press");
+    seinas.pointer("release");
+}
+
+#[test]
+fn hidden_tasks_are_listed_from_the_more_button() {
+    use seinas_theme::taskbar::{HIDDEN_ACTIVE_MARK, LIST_BORDER, LIST_GAP, PRESSED};
+    let (mut seinas, _taskbar, windows) = many_windows("tm", 7);
+    // 前面の 7 つ目のタスクは隠れているので、見えるタスクと入れ替えず、「…」に控えめなオレンジの点を付ける。
+    let mark_y = SMALL_TOP + (TASKBAR_HEIGHT - MARK_GAP - MARK_HEIGHT + 1) as usize;
+    seinas.wait_for_screen("the mark on the more button", |shot| {
+        shot.pixel(MORE_X, mark_y) == HIDDEN_ACTIVE_MARK
+    });
+    // 「…」を押すと、隠れた 2 つのタスクの一覧が、タスクバーの上に開く(空き 4 の上の行が、一覧の下の枠)。
+    press_more(&mut seinas);
+    wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 1);
+    let border_y = SMALL_TOP - LIST_GAP as usize - 1;
+    // 開いている間の「…」は、押しているときの地(光る範囲の左の端の近く。点の無い所)。
+    seinas.wait_for_screen("the list above the taskbar", |shot| {
+        shot.pixel(MORE_X, border_y) == LIST_BORDER
+            && shot.pixel(MORE_X - 14, SMALL_TOP + TASKBAR / 2) == PRESSED
+    });
+    // 選んでいるのは、前面の 7 つ目の行。上の矢印キーで 6 つ目の行を選び、Enter で前に出す。一覧は閉じる。
+    seinas.pointer("key 103 press");
+    seinas.pointer("key 103 release");
+    seinas.pointer("key 28 press");
+    seinas.pointer("key 28 release");
+    wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 1);
+    wait_for_states(&windows[5], "[activated]");
+    wait_for_states(&windows[6], "[]");
+    // 開き直して、Esc で閉じる。
+    press_more(&mut seinas);
+    wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 2);
+    seinas.pointer("key 1 press");
+    seinas.pointer("key 1 release");
+    wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 2);
+    // 開き直して、外(ウィンドウの上)を押すと、閉じる(ポップアップの grab。コンポジタが閉じる)。
+    press_more(&mut seinas);
+    wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 3);
+    seinas.pointer("motion 20 20");
+    seinas.pointer("press");
+    seinas.pointer("release");
+    wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 3);
+    // 開き直して、行を押すと、そのウィンドウを前に出す(2 行目は 7 つ目のウィンドウ。一覧は高さ 2 × 40 + 2 × 4 で、
+    // 行は上の空き 4 の下から)。
+    press_more(&mut seinas);
+    wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 4);
+    let second_row_y = SMALL_TOP - LIST_GAP as usize - (2 * 40 + 2 * 4) + 4 + 40 + 20;
+    seinas.pointer(&format!("motion {MORE_X} {second_row_y}"));
+    seinas.pointer("press");
+    seinas.pointer("release");
+    wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 4);
+    wait_for_states(&windows[6], "[activated]");
+    // 見えるタスク(1 つ目)を押して前に出すと、「…」の印は消える。
+    press_task_small(&mut seinas, 0);
+    seinas.wait_for_screen("no mark on the more button", |shot| {
+        shot.pixel(MORE_X, mark_y) != HIDDEN_ACTIVE_MARK
+    });
+}
+
+#[test]
+fn the_list_keeps_the_selected_window_when_another_closes() {
+    let (mut seinas, _taskbar, mut windows) = many_windows("tn", 8);
+    // 見える 1 つ目を前に出す(隠れたタスクに前面のものは無いので、一覧は先頭の行を選んで開く)。
+    press_task_small(&mut seinas, 0);
+    wait_for_states(&windows[0], "[activated]");
+    press_more(&mut seinas);
+    wait_for_taskbar_log_times(&seinas, "opened the list of 3 hidden tasks", 1);
+    // 下の矢印キーで、2 行目(7 つ目)を選ぶ。開いている間に 6 つ目(1 行目)が閉じても、選んでいるのは 7 つ目の
+    // まま(一覧の中の位置で持つと、8 つ目を選んだことになる)。
+    seinas.pointer("key 108 press");
+    seinas.pointer("key 108 release");
+    drop(windows.remove(5));
+    wait_for_taskbar_log_times(&seinas, "the list of hidden tasks now has 2 rows", 1);
+    seinas.pointer("key 28 press");
+    seinas.pointer("key 28 release");
+    wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 1);
+    wait_for_states(&windows[5], "[activated]");
+    // 隠れたタスクが無くなったら、一覧は閉じる(6 つなら全部並ぶ)。
+    press_more(&mut seinas);
+    wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 1);
+    drop(windows.remove(6));
+    wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 2);
+}
+
+/// `window` に、状態の並びが `states` の configure が届くまで読む。
+fn wait_for_states(window: &TestClient, states: &str) {
+    while window.next_configure_states(states) != states {}
+}
+
+/// 400x300 の画面で、見えるタスク `index` を押して離す。
+fn press_task_small(seinas: &mut Compositor, index: usize) {
+    seinas.pointer(&format!(
+        "motion {} {}",
+        26 + (index + 1) * 36 + 18,
+        SMALL_TOP + TASKBAR / 2
+    ));
+    seinas.pointer("press");
+    seinas.pointer("release");
+}

@@ -7,7 +7,9 @@ use std::path::Path;
 
 use seinas_golden::{Image, Runner, Tolerance};
 use seinas_icons::IconCache;
-use seinas_taskbar::{paint, Clock, Entry, Pointer, Target, HEIGHT, ICON_SIZE};
+use seinas_taskbar::{
+    list_height, paint, paint_list, Clock, Entry, Pointer, Target, HEIGHT, ICON_SIZE, LIST_WIDTH,
+};
 use seinas_text::{FontFiles, TextPainter};
 
 fn entry(app_id: &str, activated: bool, minimized: bool) -> Entry {
@@ -72,7 +74,7 @@ fn main() {
     ];
     let hot_second = Pointer {
         hot: Some(Target::Task(1)),
-        pressed: None,
+        ..Pointer::default()
     };
     // 最小化しているもの(背面の点)と、時刻が取れないとき(1 段の --:--)。
     let minimized = [
@@ -83,14 +85,23 @@ fn main() {
     let torch_pressed = Pointer {
         hot: Some(Target::Torch),
         pressed: Some(Target::Torch),
+        ..Pointer::default()
     };
-    // 入りきらないほどのタスク(間隔を詰め、入らないものは出さない)。
+    // 入りきらないほどのタスク(間隔を詰め、末尾に「…」を置き、入らないものは隠す)。前面は見えるタスク。
     let many: Vec<Entry> = (0..12)
         .map(|i| entry("seinas.test.notes", i == 0, false))
         .collect();
+    // 前面のタスクが隠れている(「…」に控えめなオレンジの点)。ポインターは「…」の上。
+    let front_hidden: Vec<Entry> = (0..12)
+        .map(|i| entry("seinas.test.notes", i == 10, false))
+        .collect();
+    let hot_more = Pointer {
+        hot: Some(Target::More),
+        ..Pointer::default()
+    };
 
-    // F1〜F3、F5: フォントの要るもの。
-    let cases: [Case; 4] = [
+    // F1〜F3、F5、F6: フォントの要るもの。
+    let cases: [Case; 5] = [
         (
             "f1-four-tasks",
             640,
@@ -119,6 +130,13 @@ fn main() {
             Pointer::default(),
             clock("23:59", Some("2026/12/31")),
         ),
+        (
+            "f6-hidden-front-task",
+            480,
+            &front_hidden,
+            hot_more,
+            clock("23:59", Some("2026/12/31")),
+        ),
     ];
     let mut painter: Option<TextPainter> = None;
     for (name, width, entries, pointer, clock) in cases {
@@ -135,6 +153,35 @@ fn main() {
                 name,
                 Tolerance::EXACT,
                 bar(painter, width, entries, pointer, &clock),
+            );
+        });
+    }
+
+    // F7・F8: 隠れたタスクの一覧。前面のウィンドウの行(オレンジの線)、最小化しているもの(補助の文字の色)、
+    // アイコンの無いもの、選んでいる行。F7 は全部の行が見える高さ、F8 は 3 行ぶんの高さで、1 行半ほどスクロールした所。
+    let hidden = [
+        entry("seinas.test.files", false, false),
+        entry("seinas.test.terminal", true, false),
+        entry("seinas.test.notes", false, true),
+        Entry {
+            title: "とても長いタイトルのウィンドウ(一覧の幅に収まらないので、切れる)".to_owned(),
+            ..entry("seinas.test.missing", false, false)
+        },
+        entry("seinas.test.settings", false, false),
+    ];
+    let lists = [
+        ("f7-hidden-list", list_height(hidden.len()), Some(3), 0),
+        ("f8-hidden-list-scrolled", list_height(3), Some(1), 60),
+    ];
+    for (name, height, selected, scroll) in lists {
+        run.with_fonts(name, |run, fonts: &Path| {
+            let painter =
+                painter.get_or_insert_with(|| TextPainter::load(&FontFiles::in_dir(fonts)).0);
+            let pixels = paint_list(painter, height, &hidden, &icons(&hidden), selected, scroll);
+            run.image(
+                name,
+                Tolerance::EXACT,
+                Image::from_bgrx(LIST_WIDTH as usize, height as usize, &pixels),
             );
         });
     }

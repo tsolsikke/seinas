@@ -99,6 +99,38 @@ pub mod taskbar {
     pub const CLOCK_TIME_TOP: i32 = 2;
     pub const CLOCK_DATE_TOP: i32 = 20;
     pub const CLOCK_LINE_HEIGHT: i32 = 18;
+
+    /// 入りきらないタスク(隠れたタスク)をまとめる「…」のボタン。まとまりの末尾に、タスクと同じ間隔の 1 つの場所を
+    /// 取る。押したときの反応を受ける範囲は、光る範囲と同じ [`HIGHLIGHT_SIZE`] の正方形。記号は、径
+    /// [`MORE_DOT_DIAMETER`] の 3 つの点を、中心の間を [`MORE_DOT_GAP`] にして横に並べる。
+    pub const MORE_DOT_DIAMETER: f32 = 4.0;
+    pub const MORE_DOT_GAP: i32 = 7;
+    pub const MORE_DOT: Rgb = color::TEXT;
+    /// 前面のタスクが隠れたときの、「…」の控えめな印(前面の線と同じ高さの、点。背面の点と同じ径)。
+    pub const HIDDEN_ACTIVE_MARK: Rgb = color::ACCENT;
+
+    /// 隠れたタスクの一覧(「…」を押すと、その上に出すポップアップ)。幅と、行の高さ、上下の空き。
+    pub const LIST_WIDTH: i32 = 320;
+    pub const LIST_ROW_HEIGHT: i32 = 40;
+    pub const LIST_PADDING: i32 = 4;
+    /// 一覧と、タスクバーの上の端との間の空き。
+    pub const LIST_GAP: i32 = 4;
+    /// 行の中の、アイコン(大きさは [`ICON_SIZE`])の左の空きと、アイコンからタイトルまでの空き、タイトルの右の空き。
+    pub const LIST_ICON_LEFT: i32 = 12;
+    pub const LIST_TEXT_GAP: i32 = 10;
+    pub const LIST_TEXT_RIGHT: i32 = 12;
+    /// タイトルの文字の大きさと色(最小化しているものは、補助の文字の色)。
+    pub const LIST_TEXT_SIZE: f32 = 15.0;
+    pub const LIST_TEXT: Rgb = color::TEXT;
+    pub const LIST_MINIMIZED_TEXT: Rgb = color::SUBTLE_TEXT;
+    /// 一覧の地と、外の枠(1 ピクセル)。
+    pub const LIST_BACKGROUND: Rgb = BACKGROUND;
+    pub const LIST_BORDER: Rgb = color::SEPARATOR;
+    /// 選んでいる行(ポインターが乗っている行か、矢印キーで選んだ行)の地。
+    pub const LIST_SELECTED: Rgb = HOT;
+    /// 前面のウィンドウの行の印(行の左の端の、縦の線。幅 [`LIST_ACTIVE_MARK_WIDTH`]、高さはアイコンと同じ)。
+    pub const LIST_ACTIVE_MARK: Rgb = color::ACCENT;
+    pub const LIST_ACTIVE_MARK_WIDTH: i32 = 3;
 }
 
 /// ウィンドウのタイトルバー(コンポジタの飾り)。

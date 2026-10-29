@@ -16,9 +16,12 @@ use seinas_text::{Canvas, Line, TextPainter};
 // 大きさと色は、テーマのトークン(`seinas-theme`)から読む。説明もそこにある。
 pub use seinas_theme::taskbar::{
     ACTIVE_MARK, ACTIVE_MARK_WIDTH, BACKGROUND, CLOCK_DATE_TOP, CLOCK_GAP, CLOCK_LINE_HEIGHT,
-    CLOCK_TIME_TOP, CLOCK_WIDTH, DOT, DOT_DIAMETER, HEIGHT, HIGHLIGHT_RADIUS, HIGHLIGHT_SIZE, HOT,
-    ICON_SIZE, LEFT_MARGIN, MARK_GAP, MARK_HEIGHT, MIN_PITCH, PITCH, PRESSED, RIGHT_MARGIN, TEXT,
-    TEXT_SIZE, TOP_LINE,
+    CLOCK_TIME_TOP, CLOCK_WIDTH, DOT, DOT_DIAMETER, HEIGHT, HIDDEN_ACTIVE_MARK, HIGHLIGHT_RADIUS,
+    HIGHLIGHT_SIZE, HOT, ICON_SIZE, LEFT_MARGIN, LIST_ACTIVE_MARK, LIST_ACTIVE_MARK_WIDTH,
+    LIST_BACKGROUND, LIST_BORDER, LIST_GAP, LIST_ICON_LEFT, LIST_MINIMIZED_TEXT, LIST_PADDING,
+    LIST_ROW_HEIGHT, LIST_SELECTED, LIST_TEXT, LIST_TEXT_GAP, LIST_TEXT_RIGHT, LIST_TEXT_SIZE,
+    LIST_WIDTH, MARK_GAP, MARK_HEIGHT, MIN_PITCH, MORE_DOT, MORE_DOT_DIAMETER, MORE_DOT_GAP, PITCH,
+    PRESSED, RIGHT_MARGIN, TEXT, TEXT_SIZE, TOP_LINE,
 };
 
 /// 時刻が取れないときの、時計の表示。
@@ -45,16 +48,20 @@ pub enum Target {
     Torch,
     /// 並べたタスクの番号(並べた順)。
     Task(usize),
+    /// 隠れたタスクをまとめる「…」のボタン。
+    More,
 }
 
-/// トーチとタスクの並べ方。
+/// トーチとタスクと「…」の並べ方。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Layout {
     /// まとまりの左の端と、アイコンの間隔(中心から中心)。
     pub left: i32,
     pub pitch: i32,
-    /// 並べられたタスクの数(入りきらないタスクは出さない)。
+    /// 並べられたタスクの数。入りきらないタスク(番号が `tasks` から後ろ)は隠れ、「…」の一覧に出す。
     pub tasks: usize,
+    /// 「…」のボタンを、まとまりの末尾に置くか(隠れたタスクがあるとき)。
+    pub more: bool,
 }
 
 impl Layout {
@@ -81,21 +88,31 @@ impl Layout {
         (center - ICON_SIZE / 2, (HEIGHT - ICON_SIZE) / 2)
     }
 
-    /// 場所 `target` の番号。
-    fn index(target: Target) -> usize {
+    /// 「…」の場所の番号(タスクの後ろ)。
+    pub fn more_index(&self) -> usize {
+        self.tasks + 1
+    }
+
+    /// 場所 `target` の番号。並べていないもの(隠れたタスク、無い「…」)はNone。
+    pub fn index(&self, target: Target) -> Option<usize> {
         match target {
-            Target::Torch => 0,
-            Target::Task(i) => i + 1,
+            Target::Torch => Some(0),
+            Target::Task(i) => (i < self.tasks).then_some(i + 1),
+            Target::More => self.more.then(|| self.more_index()),
         }
     }
 
-    /// 点 (`x`, `y`) にある、トーチかタスク。
+    /// 点 (`x`, `y`) にある、トーチかタスクか「…」。トーチとタスクは間隔の枠の全体、「…」は光る範囲
+    /// ([`HIGHLIGHT_SIZE`] の正方形)で受ける。
     pub fn target_at(&self, x: f64, y: f64) -> Option<Target> {
+        let inside = |(left, top, w, h): (i32, i32, i32, i32)| {
+            x >= left as f64 && x < (left + w) as f64 && y >= top as f64 && y < (top + h) as f64
+        };
+        if self.more && inside(self.highlight_rect(self.more_index())) {
+            return Some(Target::More);
+        }
         (0..=self.tasks)
-            .find(|&index| {
-                let (left, top, w, h) = self.slot_rect(index);
-                x >= left as f64 && x < (left + w) as f64 && y >= top as f64 && y < (top + h) as f64
-            })
+            .find(|&index| inside(self.slot_rect(index)))
             .map(|index| match index {
                 0 => Target::Torch,
                 i => Target::Task(i - 1),
@@ -105,25 +122,35 @@ impl Layout {
 
 /// 幅が `width` のタスクバーに、トーチと `tasks` 個のタスクを並べる。
 ///
-/// まとまり(トーチ → タスク)は中央に置く。右の端の時計の場所([`CLOCK_WIDTH`] と空き)にかかるときは左へずらし、
-/// それでも入らなければ、間隔を [`MIN_PITCH`] まで詰める。それでも入らないタスクは出さない(あふれた分を別の一覧に
-/// まとめる形は、まだ無い)。
+/// まとまり(トーチ → タスク → 「…」)は中央に置く。右の端の時計の場所([`CLOCK_WIDTH`] と空き)にかかるときは左へ
+/// ずらし、それでも入らなければ、間隔を [`MIN_PITCH`] まで詰める。それでも全部は入らないときは、まず末尾に「…」の
+/// 場所を取ってから、並べるタスクの数を数え直す。入らないタスク(後ろのもの)は隠れ、「…」の一覧に出す。前面の
+/// ウィンドウのタスクが隠れても、見えるタスクと入れ替えない。
 pub fn layout(width: i32, tasks: usize) -> Layout {
     let right = width - RIGHT_MARGIN - CLOCK_WIDTH - CLOCK_GAP;
     let available = (right - LEFT_MARGIN).max(0);
     let slots = tasks as i32 + 1;
-    let pitch = if slots * PITCH <= available {
-        PITCH
+    let (pitch, shown, more) = if slots * MIN_PITCH <= available {
+        let pitch = if slots * PITCH <= available {
+            PITCH
+        } else {
+            (available / slots).clamp(MIN_PITCH, PITCH)
+        };
+        (pitch, tasks, false)
     } else {
-        (available / slots).clamp(MIN_PITCH, PITCH)
+        // トーチと「…」の 2 つの場所を除いた残りに、タスクを並べる。「…」の場所も無いほど狭ければ、トーチだけ。
+        let places = available / MIN_PITCH;
+        let more = places >= 2;
+        let shown = if more { places - 2 } else { 0 };
+        (MIN_PITCH, shown as usize, more)
     };
-    let shown = ((available / pitch).max(1) - 1).min(tasks as i32).max(0) as usize;
-    let group = (shown as i32 + 1) * pitch;
+    let group = (shown as i32 + 1 + i32::from(more)) * pitch;
     let left = ((width - group) / 2).min(right - group).max(LEFT_MARGIN);
     Layout {
         left,
         pitch,
         tasks: shown,
+        more,
     }
 }
 
@@ -166,11 +193,13 @@ impl Clock {
     }
 }
 
-/// ポインターの状態(乗っているものと、押しているもの)。
+/// ポインターの状態(乗っているものと、押しているもの)と、隠れたタスクの一覧を開いているか(開いている間は、
+/// 「…」を押しているときと同じ地にする)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Pointer {
     pub hot: Option<Target>,
     pub pressed: Option<Target>,
+    pub list_open: bool,
 }
 
 /// タスクバーの絵を作る。幅は `width`、高さは [`HEIGHT`]。ピクセルの並びは B, G, R, X。
@@ -189,13 +218,18 @@ pub fn paint(
     let mut pixels = bgrx(BACKGROUND).repeat((width * HEIGHT) as usize);
     fill_rect(&mut pixels, width, (0, 0, width, 1), TOP_LINE);
     let layout = layout(width, entries.len());
-    // 乗っている・押しているものの地。
-    for (target, color) in [(pointer.hot, HOT), (pointer.pressed, PRESSED)] {
-        if let Some(target) = target.filter(|&t| Layout::index(t) <= layout.tasks) {
+    // 乗っている・押しているものの地。一覧を開いている間の「…」は、押しているときと同じ地。
+    let open = pointer.list_open.then_some(Target::More);
+    for (target, color) in [
+        (pointer.hot, HOT),
+        (pointer.pressed, PRESSED),
+        (open, PRESSED),
+    ] {
+        if let Some(index) = target.and_then(|t| layout.index(t)) {
             fill_rounded_rect(
                 &mut pixels,
                 width,
-                layout.highlight_rect(Layout::index(target)),
+                layout.highlight_rect(index),
                 HIGHLIGHT_RADIUS,
                 color,
             );
@@ -232,7 +266,176 @@ pub fn paint(
             );
         }
     }
+    if layout.more {
+        paint_more(&mut pixels, width, &layout, &entries[layout.tasks..]);
+    }
     paint_clock(painter, &mut pixels, width, clock);
+    pixels
+}
+
+/// 「…」のボタン(3 つの点)を描く。隠れたタスクに前面のウィンドウのものがあれば、前面の線と同じ高さに、控えめな
+/// オレンジの点を付ける。
+fn paint_more(pixels: &mut [u8], width: i32, layout: &Layout, hidden: &[Entry]) {
+    let (x, y) = layout.icon_origin(layout.more_index());
+    let (cx, cy) = (x + ICON_SIZE / 2, y + ICON_SIZE / 2);
+    for step in -1..=1 {
+        fill_circle(
+            pixels,
+            width,
+            ((cx + step * MORE_DOT_GAP) as f32, cy as f32),
+            MORE_DOT_DIAMETER,
+            MORE_DOT,
+        );
+    }
+    if hidden.iter().any(|e| e.activated && !e.minimized) {
+        let mark_top = HEIGHT - MARK_GAP - MARK_HEIGHT;
+        fill_circle(
+            pixels,
+            width,
+            (cx as f32, mark_top as f32 + MARK_HEIGHT as f32 / 2.0),
+            DOT_DIAMETER,
+            HIDDEN_ACTIVE_MARK,
+        );
+    }
+}
+
+/// 隠れたタスクの一覧の、全部の行を出せる高さ(行が `rows` のとき)。
+pub fn list_height(rows: usize) -> i32 {
+    rows as i32 * LIST_ROW_HEIGHT + 2 * LIST_PADDING
+}
+
+/// 高さが `height` の一覧で、行が `rows` のときの、スクロールの最大(ピクセル)。全部が見えるなら 0。
+pub fn list_max_scroll(rows: usize, height: i32) -> i32 {
+    (rows as i32 * LIST_ROW_HEIGHT - (height - 2 * LIST_PADDING)).max(0)
+}
+
+/// 一覧の中の高さ `y` にある行(スクロールが `scroll` のとき)。上下の空きの上と、行の無い所はNone。
+pub fn list_row_at(y: f64, rows: usize, height: i32, scroll: i32) -> Option<usize> {
+    if y < LIST_PADDING as f64 || y >= (height - LIST_PADDING) as f64 {
+        return None;
+    }
+    let row = ((y - LIST_PADDING as f64 + scroll as f64) / LIST_ROW_HEIGHT as f64) as usize;
+    (row < rows).then_some(row)
+}
+
+/// 行 `row` が見えるスクロール(今のスクロール `scroll` から、いちばん少なく動かす)。
+pub fn list_scroll_to(row: usize, rows: usize, height: i32, scroll: i32) -> i32 {
+    let visible = height - 2 * LIST_PADDING;
+    let top = row as i32 * LIST_ROW_HEIGHT;
+    let scroll = if top < scroll {
+        top
+    } else if top + LIST_ROW_HEIGHT > scroll + visible {
+        top + LIST_ROW_HEIGHT - visible
+    } else {
+        scroll
+    };
+    scroll.clamp(0, list_max_scroll(rows, height))
+}
+
+/// 一覧の中で、選ぶ行を動かすキー。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListKey {
+    Up,
+    Down,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+}
+
+/// キー `key` で、選んでいる行 `selected` を動かした後の行(行が `rows`、高さが `height` のとき)。選んでいる行が
+/// 無ければ、下へは先頭、上へは末尾から。行が無ければNone。
+pub fn list_move(selected: Option<usize>, rows: usize, height: i32, key: ListKey) -> Option<usize> {
+    let last = rows.checked_sub(1)?;
+    let page = (((height - 2 * LIST_PADDING) / LIST_ROW_HEIGHT).max(1)) as usize;
+    Some(match (key, selected) {
+        (ListKey::Home, _) => 0,
+        (ListKey::End, _) => last,
+        (ListKey::Down, None) | (ListKey::PageDown, None) => 0,
+        (ListKey::Up, None) | (ListKey::PageUp, None) => last,
+        (ListKey::Down, Some(row)) => (row + 1).min(last),
+        (ListKey::Up, Some(row)) => row.saturating_sub(1),
+        (ListKey::PageDown, Some(row)) => (row + page).min(last),
+        (ListKey::PageUp, Some(row)) => row.saturating_sub(page),
+    })
+}
+
+/// 隠れたタスクの一覧の絵を作る。幅は [`LIST_WIDTH`]、高さは `height`。ピクセルの並びは B, G, R, X。
+///
+/// 行は `entries` の順。各々の行に、アイコンとタイトル(最小化しているものは補助の文字の色)を出し、前面の
+/// ウィンドウの行には、左の端にオレンジの縦の線を付ける。`selected` の行の地は、選んでいる色。`scroll` だけ、
+/// 行を上へずらして出す(上下の空きには、行を描かない)。
+pub fn paint_list(
+    painter: &mut TextPainter,
+    height: i32,
+    entries: &[Entry],
+    icons: &IconCache,
+    selected: Option<usize>,
+    scroll: i32,
+) -> Vec<u8> {
+    let width = LIST_WIDTH;
+    let height = height.max(2 * LIST_PADDING + 1);
+    let mut pixels = bgrx(LIST_BACKGROUND).repeat((width * height) as usize);
+    // 行は、全部の行の高さの別の絵に描いてから、見える所だけをコピーする。
+    let rows_height = (entries.len() as i32 * LIST_ROW_HEIGHT).max(1);
+    let mut rows = bgrx(LIST_BACKGROUND).repeat((width * rows_height) as usize);
+    let text_left = LIST_ICON_LEFT + ICON_SIZE + LIST_TEXT_GAP;
+    for (row, entry) in entries.iter().enumerate() {
+        let top = row as i32 * LIST_ROW_HEIGHT;
+        if selected == Some(row) {
+            fill_rect(
+                &mut rows,
+                width,
+                (1, top, width - 2, LIST_ROW_HEIGHT),
+                LIST_SELECTED,
+            );
+        }
+        let icon_top = top + (LIST_ROW_HEIGHT - ICON_SIZE) / 2;
+        if entry.activated && !entry.minimized {
+            fill_rect(
+                &mut rows,
+                width,
+                (2, icon_top, LIST_ACTIVE_MARK_WIDTH, ICON_SIZE),
+                LIST_ACTIVE_MARK,
+            );
+        }
+        icons
+            .get(&entry.app_id)
+            .draw_onto(&mut rows, width, LIST_ICON_LEFT, icon_top);
+        painter.draw_line(
+            &mut Canvas::new(&mut rows, width as usize, rows_height as usize),
+            &entry.title,
+            Line {
+                size: LIST_TEXT_SIZE,
+                color: if entry.minimized {
+                    LIST_MINIMIZED_TEXT
+                } else {
+                    LIST_TEXT
+                },
+                x: text_left,
+                top,
+                height: LIST_ROW_HEIGHT,
+                max_width: width - text_left - LIST_TEXT_RIGHT,
+            },
+        );
+    }
+    let visible = height - 2 * LIST_PADDING;
+    let scroll = scroll.clamp(0, list_max_scroll(entries.len(), height));
+    let stride = (width * 4) as usize;
+    for y in 0..visible.min(rows_height - scroll) {
+        let from = ((scroll + y) as usize) * stride;
+        let to = ((LIST_PADDING + y) as usize) * stride;
+        pixels[to..to + stride].copy_from_slice(&rows[from..from + stride]);
+    }
+    // 外の枠(1 ピクセル)。
+    for rect in [
+        (0, 0, width, 1),
+        (0, height - 1, width, 1),
+        (0, 0, 1, height),
+        (width - 1, 0, 1, height),
+    ] {
+        fill_rect(&mut pixels, width, rect, LIST_BORDER);
+    }
     pixels
 }
 
@@ -567,7 +770,8 @@ mod tests {
             Layout {
                 left: 328,
                 pitch: 48,
-                tasks: 2
+                tasks: 2,
+                more: false
             }
         );
         // 光る範囲は 36 × 36 で、縦は中央。押す範囲は間隔の枠の全体。アイコンは 24 × 24。
@@ -591,16 +795,23 @@ mod tests {
         assert_eq!(narrower.pitch, (400 - reserved - LEFT_MARGIN) / 7);
         assert_eq!(narrower.left + 7 * narrower.pitch, 400 - reserved);
         assert_eq!(narrower.tasks, 6);
-        // 36 でも入らないタスクは出さない。
+        // 36 でも入らないときは、まず末尾に「…」の場所を取り、残りに並べる(後ろのタスクは隠れる)。
         let narrow = layout(320, 10);
         assert_eq!(narrow.pitch, 36);
+        assert!(narrow.more);
         assert_eq!(
             narrow.tasks,
-            (320 - reserved - LEFT_MARGIN) as usize / 36 - 1
+            (320 - reserved - LEFT_MARGIN) as usize / 36 - 2
         );
-        assert_eq!(narrow.left + (narrow.tasks as i32 + 1) * 36, 320 - reserved);
-        // とても狭くても、落ちない(タスクは出さない)。
+        assert_eq!(narrow.left + (narrow.tasks as i32 + 2) * 36, 320 - reserved);
+        // ちょうど入るときは、「…」を出さない。
+        let fits = (320 - reserved - LEFT_MARGIN) as usize / 36 - 1;
+        assert!(!layout(320, fits).more);
+        assert!(layout(320, fits + 1).more);
+        assert_eq!(layout(320, fits + 1).tasks, fits - 1);
+        // とても狭くても、落ちない(タスクも「…」も出さない)。
         assert_eq!(layout(80, 3).tasks, 0);
+        assert!(!layout(80, 3).more);
     }
 
     #[test]
@@ -611,13 +822,17 @@ mod tests {
         assert_eq!(layout(1280, 22).pitch, 48);
         assert_eq!(layout(1280, 23).pitch, 47);
         assert_eq!(layout(1280, 30).tasks, 30);
-        assert_eq!(layout(1280, 31).tasks, 30);
+        assert!(!layout(1280, 30).more);
+        // 31 からは、「…」の場所を取って 29 を並べ、残りは隠れる。
+        assert_eq!(layout(1280, 31).tasks, 29);
+        assert!(layout(1280, 31).more);
         // 1920:間隔 48 のままなら 1790 / 48 = 37 の場所(36 のタスク)。詰めると 1790 / 36 = 49 の場所(48 の
         // タスク)まで。
         assert_eq!(layout(1920, 36).pitch, 48);
         assert!(layout(1920, 37).pitch < 48);
         assert_eq!(layout(1920, 48).tasks, 48);
-        assert_eq!(layout(1920, 49).tasks, 48);
+        assert_eq!(layout(1920, 49).tasks, 47);
+        assert!(layout(1920, 49).more);
     }
 
     #[test]
@@ -633,6 +848,55 @@ mod tests {
         assert_eq!(three.target_at(472.0, 20.0), None);
         assert_eq!(three.target_at(400.0, 40.0), None);
         assert_eq!(three.target_at(760.0, 20.0), None);
+    }
+
+    #[test]
+    fn the_more_button_is_hit_only_inside_its_highlight() {
+        // 400 の幅に 10 のタスク:並べられる幅は 270(7 つの場所)。トーチ、タスク 5 つ、「…」。
+        let many = layout(400, 10);
+        assert_eq!((many.pitch, many.tasks, many.more), (36, 5, true));
+        assert_eq!(many.more_index(), 6);
+        let (x, y, w, h) = many.highlight_rect(6);
+        assert_eq!((w, h), (HIGHLIGHT_SIZE, HIGHLIGHT_SIZE));
+        let (x, y) = (x as f64, y as f64);
+        assert_eq!(many.target_at(x, y), Some(Target::More));
+        assert_eq!(many.target_at(x + 35.9, y + 35.9), Some(Target::More));
+        // 光る範囲の外(上下の端)は、どれでもない。
+        assert_eq!(many.target_at(x + 10.0, y - 0.1), None);
+        assert_eq!(many.target_at(x + 10.0, y + 36.0), None);
+        // 隠れたタスクと、無い「…」には、場所が無い。
+        assert_eq!(many.index(Target::Task(4)), Some(5));
+        assert_eq!(many.index(Target::Task(5)), None);
+        assert_eq!(layout(800, 2).index(Target::More), None);
+    }
+
+    #[test]
+    fn the_list_scrolls_to_show_a_row_and_moves_with_keys() {
+        // 行が 10、全部の高さは 408。高さ 168(見える行は 4)なら、スクロールは 0〜240。
+        assert_eq!(list_height(10), 408);
+        assert_eq!(list_max_scroll(10, 408), 0);
+        assert_eq!(list_max_scroll(10, 168), 240);
+        // 行のヒット:上下の空き(4)の上は無し。
+        assert_eq!(list_row_at(3.9, 10, 168, 0), None);
+        assert_eq!(list_row_at(4.0, 10, 168, 0), Some(0));
+        assert_eq!(list_row_at(44.0, 10, 168, 0), Some(1));
+        assert_eq!(list_row_at(4.0, 10, 168, 80), Some(2));
+        assert_eq!(list_row_at(164.0, 10, 168, 0), None);
+        // 見えない行を選ぶと、いちばん少なく動かして見せる。
+        assert_eq!(list_scroll_to(5, 10, 168, 0), 80);
+        assert_eq!(list_scroll_to(1, 10, 168, 80), 40);
+        assert_eq!(list_scroll_to(3, 10, 168, 80), 80);
+        assert_eq!(list_scroll_to(9, 10, 168, 0), 240);
+        // キー:先頭・末尾で止まる。選んでいなければ、下は先頭、上は末尾から。ページは見える行の数。
+        assert_eq!(list_move(None, 10, 168, ListKey::Down), Some(0));
+        assert_eq!(list_move(None, 10, 168, ListKey::Up), Some(9));
+        assert_eq!(list_move(Some(9), 10, 168, ListKey::Down), Some(9));
+        assert_eq!(list_move(Some(0), 10, 168, ListKey::Up), Some(0));
+        assert_eq!(list_move(Some(2), 10, 168, ListKey::PageDown), Some(6));
+        assert_eq!(list_move(Some(2), 10, 168, ListKey::PageUp), Some(0));
+        assert_eq!(list_move(Some(2), 10, 168, ListKey::End), Some(9));
+        assert_eq!(list_move(Some(2), 10, 168, ListKey::Home), Some(0));
+        assert_eq!(list_move(None, 0, 168, ListKey::Down), None);
     }
 
     #[test]

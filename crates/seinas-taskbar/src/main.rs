@@ -37,9 +37,11 @@ use std::{
 
 use seinas_icons::{Found, Icon, IconCache};
 use seinas_taskbar::{
-    action_for, choose_offset, clock_for, format_utc_offset, layout, not_ready_yet, paint,
-    read_config, socket_path, until_next_minute, wall_clock, Action, Clock, Entry, Pointer, Target,
-    CONFIG_FILE, CONNECT_INTERVAL, CONNECT_TIMEOUT, HEIGHT, ICON_SIZE, ROUND_TRIP_TIMEOUT,
+    action_for, choose_offset, clock_for, format_utc_offset, layout, list_height, list_max_scroll,
+    list_move, list_row_at, list_scroll_to, not_ready_yet, paint, paint_list, read_config,
+    socket_path, until_next_minute, wall_clock, Action, Clock, Entry, ListKey, Pointer, Target,
+    CONFIG_FILE, CONNECT_INTERVAL, CONNECT_TIMEOUT, HEIGHT, ICON_SIZE, LIST_GAP, LIST_ROW_HEIGHT,
+    LIST_WIDTH, ROUND_TRIP_TIMEOUT,
 };
 use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
@@ -53,6 +55,7 @@ use smithay_client_toolkit::{
             EventLoop,
         },
         calloop_wayland_source::WaylandSource,
+        protocols::xdg::shell::client::xdg_positioner,
     },
     registry::{ProvidesRegistryState, RegistryState},
     registry_handlers,
@@ -65,6 +68,11 @@ use smithay_client_toolkit::{
             Anchor, KeyboardInteractivity, Layer, LayerShell, LayerShellHandler, LayerSurface,
             LayerSurfaceConfigure,
         },
+        xdg::{
+            popup::{Popup, PopupConfigure, PopupHandler},
+            window::{Window, WindowConfigure, WindowHandler},
+            XdgPositioner, XdgShell,
+        },
         WaylandSurface,
     },
     shm::{
@@ -75,8 +83,8 @@ use smithay_client_toolkit::{
 use wayland_client::{
     backend::{ObjectData, WaylandError},
     globals::registry_queue_init,
-    protocol::{wl_callback, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
-    Connection, Dispatch, QueueHandle,
+    protocol::{wl_callback, wl_keyboard, wl_output, wl_pointer, wl_seat, wl_shm, wl_surface},
+    Connection, Dispatch, QueueHandle, WEnum,
 };
 use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
@@ -85,6 +93,16 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
 
 /// 左のボタンの番号(Linux の入力の決まり)。
 const LEFT_BUTTON: u32 = 0x110;
+/// 一覧で使うキーの番号(Linux の入力の決まり。xkbcommon を使わずに、キーの番号で見る)。
+const KEY_ESC: u32 = 1;
+const KEY_ENTER: u32 = 28;
+const KEY_KP_ENTER: u32 = 96;
+const KEY_HOME: u32 = 102;
+const KEY_UP: u32 = 103;
+const KEY_PAGE_UP: u32 = 104;
+const KEY_END: u32 = 107;
+const KEY_DOWN: u32 = 108;
+const KEY_PAGE_DOWN: u32 = 109;
 /// フォントの置き場を指定する環境変数と、指定が無いときの場所(コンポジタと同じ)。
 const FONTS_ENV: &str = "SEINAS_FONTS";
 const DEFAULT_FONT_DIR: &str = "target/fonts";
@@ -100,6 +118,21 @@ struct Toplevel {
     states: Option<(bool, bool)>,
     /// 一度でも done が届いたか。届くまでは並べない。
     shown: bool,
+}
+
+/// 隠れたタスクの一覧(「…」を押すと、layer surface のポップアップとして出す)。
+struct HiddenList {
+    popup: Popup,
+    /// コンポジタが決めた高さ(画面に収まらなければ、頼んだ高さより低い)。最初の configure までは 0。
+    height: i32,
+    /// 頼んだ行の数(変わったら、置き直しを頼む)。
+    rows: usize,
+    scroll: i32,
+    /// 選んでいる行のウィンドウ(一覧の中の位置ではなく、ウィンドウで持つ)。
+    selected: Option<ZwlrForeignToplevelHandleV1>,
+    buffer: Option<Buffer>,
+    frame_pending: bool,
+    dirty: bool,
 }
 
 struct Taskbar {
@@ -129,6 +162,11 @@ struct Taskbar {
     offset: i32,
     clock: Clock,
     fixed_time: Option<Duration>,
+    /// 一覧の面を作るのに使う。
+    compositor: CompositorState,
+    xdg_shell: XdgShell,
+    keyboard: Option<wl_keyboard::WlKeyboard>,
+    list: Option<HiddenList>,
 }
 
 impl Taskbar {
@@ -145,6 +183,265 @@ impl Taskbar {
         self.toplevels.iter().filter(|t| t.shown).collect()
     }
 
+    /// 隠れたタスク(並べきれないもの)。一覧の行になる。
+    fn hidden(&self) -> Vec<(ZwlrForeignToplevelHandleV1, Entry)> {
+        let shown = self.shown();
+        let first = layout(self.width, shown.len()).tasks;
+        shown
+            .iter()
+            .skip(first)
+            .map(|t| (t.handle.clone(), t.entry.clone()))
+            .collect()
+    }
+
+    /// 一覧を置く positioner。「…」の上に、空き [`LIST_GAP`] を置いて出す。横は画面に収まるようずらし、縦は画面に
+    /// 収まらなければ低くする(スクロールする)。
+    fn list_positioner(&self, rows: usize) -> Option<XdgPositioner> {
+        let positioner = match XdgPositioner::new(&self.xdg_shell) {
+            Ok(positioner) => positioner,
+            Err(e) => {
+                eprintln!("seinas-taskbar: cannot place the list of hidden tasks: {e}");
+                return None;
+            }
+        };
+        let layout = layout(self.width, self.shown().len());
+        let (x, _, w, _) = layout.highlight_rect(layout.more_index());
+        positioner.set_size(LIST_WIDTH, list_height(rows));
+        positioner.set_anchor_rect(x, 0, w, HEIGHT);
+        positioner.set_anchor(xdg_positioner::Anchor::Top);
+        positioner.set_gravity(xdg_positioner::Gravity::Top);
+        positioner.set_offset(0, -LIST_GAP);
+        positioner.set_constraint_adjustment(
+            xdg_positioner::ConstraintAdjustment::SlideX
+                | xdg_positioner::ConstraintAdjustment::ResizeY,
+        );
+        Some(positioner)
+    }
+
+    /// 隠れたタスクの一覧を開く。`serial` は「…」を押したときのもの(ポップアップの grab に使う)。選ぶ行は、前面の
+    /// ウィンドウが隠れていればその行、無ければ先頭。
+    fn open_list(&mut self, serial: u32) {
+        let hidden = self.hidden();
+        if hidden.is_empty() {
+            return;
+        }
+        let Some(positioner) = self.list_positioner(hidden.len()) else {
+            return;
+        };
+        let surface = self.compositor.create_surface(&self.qh);
+        let popup = match Popup::from_surface(None, &positioner, &self.qh, surface, &self.xdg_shell)
+        {
+            Ok(popup) => popup,
+            Err(e) => {
+                eprintln!("seinas-taskbar: cannot open the list of hidden tasks: {e}");
+                return;
+            }
+        };
+        self.layer.get_popup(popup.xdg_popup());
+        // 矢印キー・Enter・Esc を受けるため、開いている間は、押したときにキーボードのフォーカスを受ける形にする。
+        self.layer
+            .set_keyboard_interactivity(KeyboardInteractivity::OnDemand);
+        match self.seat_state.seats().next() {
+            Some(seat) => popup.xdg_popup().grab(&seat, serial),
+            None => eprintln!("seinas-taskbar: no seat to open the list with"),
+        }
+        popup.wl_surface().commit();
+        let selected = hidden
+            .iter()
+            .find(|(_, e)| e.activated && !e.minimized)
+            .or_else(|| hidden.first())
+            .map(|(handle, _)| handle.clone());
+        self.list = Some(HiddenList {
+            popup,
+            height: 0,
+            rows: hidden.len(),
+            scroll: 0,
+            selected,
+            buffer: None,
+            frame_pending: false,
+            dirty: true,
+        });
+        eprintln!(
+            "seinas-taskbar: opened the list of {} hidden tasks",
+            hidden.len()
+        );
+        self.redraw();
+    }
+
+    /// 一覧を閉じる(ポップアップを消す)。
+    fn close_list(&mut self) {
+        if self.list.take().is_some() {
+            self.layer
+                .set_keyboard_interactivity(KeyboardInteractivity::None);
+            eprintln!("seinas-taskbar: closed the list of hidden tasks");
+            self.redraw();
+        }
+    }
+
+    /// タスクの一覧が変わった(ウィンドウが増えた・去った・状態が変わった)。一覧を開いていれば、行を合わせる。隠れたタスクが
+    /// 無くなったら閉じる。行の数が変わったら、置き直しを頼む。選んでいたウィンドウが去ったら、選び直す。
+    fn update_list(&mut self) {
+        let Some(rows) = self.list.as_ref().map(|list| list.rows) else {
+            return;
+        };
+        let hidden = self.hidden();
+        if hidden.is_empty() {
+            self.close_list();
+            return;
+        }
+        if hidden.len() != rows {
+            if let Some(positioner) = self.list_positioner(hidden.len()) {
+                if let Some(list) = self.list.as_mut() {
+                    list.popup.reposition(&positioner, hidden.len() as u32);
+                    list.rows = hidden.len();
+                }
+                eprintln!(
+                    "seinas-taskbar: the list of hidden tasks now has {} rows",
+                    hidden.len()
+                );
+            }
+        }
+        if let Some(list) = self.list.as_mut() {
+            if !hidden
+                .iter()
+                .any(|(handle, _)| Some(handle) == list.selected.as_ref())
+            {
+                list.selected = hidden.first().map(|(handle, _)| handle.clone());
+            }
+            list.dirty = true;
+        }
+        self.draw_list();
+    }
+
+    /// 一覧の絵を描いて出す。最初の configure の前と、frame callback を待っている間は描かない。
+    fn draw_list(&mut self) {
+        let hidden = self.hidden();
+        let entries: Vec<Entry> = hidden.iter().map(|(_, e)| e.clone()).collect();
+        let Some(list) = self.list.as_mut() else {
+            return;
+        };
+        if list.height <= 0 || list.frame_pending {
+            return;
+        }
+        let selected = hidden
+            .iter()
+            .position(|(handle, _)| Some(handle) == list.selected.as_ref());
+        list.scroll = list
+            .scroll
+            .clamp(0, list_max_scroll(entries.len(), list.height));
+        let pixels = paint_list(
+            &mut self.text,
+            list.height,
+            &entries,
+            &self.icons,
+            selected,
+            list.scroll,
+        );
+        let (width, stride) = (LIST_WIDTH, LIST_WIDTH * 4);
+        let buffer = match list.buffer.take() {
+            Some(buffer)
+                if buffer.height() == list.height
+                    && buffer.stride() == stride
+                    && self.pool.canvas(&buffer).is_some() =>
+            {
+                buffer
+            }
+            _ => match self
+                .pool
+                .create_buffer(width, list.height, stride, wl_shm::Format::Xrgb8888)
+            {
+                Ok((buffer, _)) => buffer,
+                Err(e) => {
+                    eprintln!("seinas-taskbar: cannot create a buffer for the list: {e}");
+                    return;
+                }
+            },
+        };
+        let Some(canvas) = self.pool.canvas(&buffer) else {
+            return;
+        };
+        canvas.copy_from_slice(&pixels);
+        let surface = list.popup.wl_surface().clone();
+        surface.damage_buffer(0, 0, width, list.height);
+        surface.frame(&self.qh, FrameCallbackData(surface.clone()));
+        if let Err(e) = buffer.attach_to(&surface) {
+            eprintln!("seinas-taskbar: cannot attach the buffer of the list: {e}");
+            return;
+        }
+        surface.commit();
+        list.buffer = Some(buffer);
+        list.frame_pending = true;
+        list.dirty = false;
+    }
+
+    /// 一覧の行 `row` を選び、見えるようにスクロールする。
+    fn select_row(&mut self, row: Option<usize>) {
+        let hidden = self.hidden();
+        let Some(list) = self.list.as_mut() else {
+            return;
+        };
+        let handle = row.and_then(|row| hidden.get(row)).map(|(h, _)| h.clone());
+        if handle == list.selected {
+            return;
+        }
+        list.selected = handle;
+        if let Some(row) = row {
+            list.scroll = list_scroll_to(row, hidden.len(), list.height, list.scroll);
+        }
+        list.dirty = true;
+        self.draw_list();
+    }
+
+    /// 一覧の行のウィンドウ `handle` を前に出し(最小化していれば戻し)、一覧を閉じる。
+    fn choose(&mut self, handle: ZwlrForeignToplevelHandleV1) {
+        let entry = self
+            .toplevels
+            .iter()
+            .find(|t| t.handle == handle)
+            .map(|t| t.entry.clone());
+        self.close_list();
+        if let Some(entry) = entry {
+            if entry.minimized {
+                handle.unset_minimized();
+            }
+            self.activate(&handle);
+        }
+    }
+
+    /// 一覧を開いている間のキー(Linux のキーの番号)。
+    fn list_key(&mut self, key: u32) {
+        let Some(list) = self.list.as_ref() else {
+            return;
+        };
+        let hidden = self.hidden();
+        let selected = hidden
+            .iter()
+            .position(|(handle, _)| Some(handle) == list.selected.as_ref());
+        let movement = match key {
+            KEY_UP => Some(ListKey::Up),
+            KEY_DOWN => Some(ListKey::Down),
+            KEY_HOME => Some(ListKey::Home),
+            KEY_END => Some(ListKey::End),
+            KEY_PAGE_UP => Some(ListKey::PageUp),
+            KEY_PAGE_DOWN => Some(ListKey::PageDown),
+            _ => None,
+        };
+        if let Some(movement) = movement {
+            let row = list_move(selected, hidden.len(), list.height, movement);
+            self.select_row(row);
+            return;
+        }
+        match key {
+            KEY_ENTER | KEY_KP_ENTER => {
+                if let Some(handle) = list.selected.clone() {
+                    self.choose(handle);
+                }
+            }
+            KEY_ESC => self.close_list(),
+            _ => {}
+        }
+    }
+
     /// 再描画が要ることを覚え、描けるなら描く。
     fn redraw(&mut self) {
         self.dirty = true;
@@ -158,13 +455,18 @@ impl Taskbar {
         }
         let (width, stride) = (self.width, self.width * 4);
         let entries = self.entries();
+        // 一覧を開いている間は、「…」を押しているときの地にする。
+        let pointer = Pointer {
+            list_open: self.list.is_some(),
+            ..self.hot
+        };
         let pixels = paint(
             &mut self.text,
             width,
             &entries,
             &self.icons,
             &self.torch,
-            self.hot,
+            pointer,
             &self.clock,
         );
         let buffer = match self.buffer.take() {
@@ -275,7 +577,24 @@ impl CompositorHandler for Taskbar {
         _: wl_output::Transform,
     ) {
     }
-    fn frame(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &wl_surface::WlSurface, _: u32) {
+    fn frame(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        surface: &wl_surface::WlSurface,
+        _: u32,
+    ) {
+        if let Some(list) = self
+            .list
+            .as_mut()
+            .filter(|list| list.popup.wl_surface() == surface)
+        {
+            list.frame_pending = false;
+            if list.dirty {
+                self.draw_list();
+            }
+            return;
+        }
         self.frame_pending = false;
         if self.dirty {
             self.draw();
@@ -325,6 +644,8 @@ impl LayerShellHandler for Taskbar {
         if width != self.width {
             self.width = width;
             self.dirty = true;
+            // 並べ方が変わるので、一覧は閉じる。
+            self.close_list();
         }
         if !self.configured {
             self.configured = true;
@@ -354,6 +675,10 @@ impl SeatHandler for Taskbar {
                 Err(e) => eprintln!("seinas-taskbar: cannot use the pointer: {e}"),
             }
         }
+        // キーボードは、一覧の矢印キー・Enter・Esc のためだけに使う(キーの番号で見るので、keymap は読まない)。
+        if capability == Capability::Keyboard && self.keyboard.is_none() {
+            self.keyboard = Some(seat.get_keyboard(qh, KeyboardData));
+        }
     }
     fn remove_capability(
         &mut self,
@@ -365,6 +690,11 @@ impl SeatHandler for Taskbar {
         if capability == Capability::Pointer {
             if let Some(pointer) = self.pointer.take() {
                 pointer.release();
+            }
+        }
+        if capability == Capability::Keyboard {
+            if let Some(keyboard) = self.keyboard.take() {
+                keyboard.release();
             }
         }
     }
@@ -381,6 +711,42 @@ impl PointerHandler for Taskbar {
     ) {
         use PointerEventKind::*;
         for event in events {
+            if let Some(list) = self
+                .list
+                .as_ref()
+                .filter(|list| list.popup.wl_surface() == &event.surface)
+            {
+                let rows = self.hidden().len();
+                let row = list_row_at(event.position.1, rows, list.height, list.scroll);
+                match event.kind {
+                    Enter { .. } | Motion { .. } => self.select_row(row),
+                    Press {
+                        button: LEFT_BUTTON,
+                        ..
+                    } => {
+                        if let Some((handle, _)) =
+                            row.and_then(|row| self.hidden().get(row).cloned())
+                        {
+                            self.choose(handle);
+                        }
+                    }
+                    Axis { vertical, .. } if vertical.absolute != 0.0 || vertical.discrete != 0 => {
+                        let step = if vertical.discrete != 0 {
+                            vertical.discrete * LIST_ROW_HEIGHT
+                        } else {
+                            vertical.absolute.round() as i32
+                        };
+                        if let Some(list) = self.list.as_mut() {
+                            list.scroll =
+                                (list.scroll + step).clamp(0, list_max_scroll(rows, list.height));
+                            list.dirty = true;
+                        }
+                        self.draw_list();
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if &event.surface != self.layer.wl_surface() {
                 continue;
             }
@@ -410,6 +776,7 @@ impl PointerHandler for Taskbar {
             if let (
                 Press {
                     button: LEFT_BUTTON,
+                    serial,
                     ..
                 },
                 Some(target),
@@ -421,6 +788,9 @@ impl PointerHandler for Taskbar {
                         eprintln!("seinas-taskbar: the torch was pressed (no menu yet)")
                     }
                     Target::Task(index) => self.press(index),
+                    // 開いていれば閉じる(開いている間の押下は、ポップアップの grab で、ふつうはコンポジタが閉じる)。
+                    Target::More if self.list.is_some() => self.close_list(),
+                    Target::More => self.open_list(*serial),
                 }
             }
         }
@@ -534,6 +904,7 @@ impl Dispatch2<ZwlrForeignToplevelHandleV1, Taskbar> for HandleData {
                     None => {}
                 }
                 state.redraw();
+                state.update_list();
             }
             Event::Closed => {
                 handle.destroy();
@@ -541,6 +912,7 @@ impl Dispatch2<ZwlrForeignToplevelHandleV1, Taskbar> for HandleData {
                 // 順が変わったので、ポインターの下のものは、次に動いたときに決め直す。
                 state.hot = Pointer::default();
                 state.redraw();
+                state.update_list();
             }
             _ => {}
         }
@@ -838,6 +1210,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             format!("the compositor does not offer zwlr_foreign_toplevel_manager_v1: {e}")
         })?;
     let shm = Shm::bind(&globals, &qh)?;
+    // 隠れたタスクの一覧(ポップアップ)に使う。
+    let xdg_shell = XdgShell::bind(&globals, &qh)
+        .map_err(|e| format!("the compositor does not offer xdg_wm_base: {e}"))?;
 
     let surface = compositor.create_surface(&qh);
     let layer =
@@ -873,6 +1248,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         offset,
         clock: clock_for(options.fixed_time.or_else(wall_clock), offset),
         fixed_time: options.fixed_time,
+        compositor,
+        xdg_shell,
+        keyboard: None,
+        list: None,
     };
     // 時計は、分が変わった少し後に起きて再描画する。時刻が取れないときは、60 秒ごとに読み直す。時刻を止めて
     // いるときは、起きない。
@@ -919,6 +1298,80 @@ impl ProvidesRegistryState for Taskbar {
     registry_handlers![OutputState, SeatState,];
 }
 smithay_client_toolkit::delegate_dispatch2!(Taskbar);
+
+impl PopupHandler for Taskbar {
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        popup: &Popup,
+        config: PopupConfigure,
+    ) {
+        let Some(list) = self.list.as_mut().filter(|list| &list.popup == popup) else {
+            return;
+        };
+        if config.height != list.height {
+            list.height = config.height;
+            list.buffer = None;
+        }
+        list.dirty = true;
+        // 選んでいる行(開いたときは、前面のウィンドウの行)が見えるように。
+        let hidden = self.hidden();
+        if let Some(list) = self.list.as_mut() {
+            if let Some(row) = hidden
+                .iter()
+                .position(|(handle, _)| Some(handle) == list.selected.as_ref())
+            {
+                list.scroll = list_scroll_to(row, hidden.len(), list.height, list.scroll);
+            }
+        }
+        self.draw_list();
+    }
+
+    fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
+        if self.list.as_ref().is_some_and(|list| &list.popup == popup) {
+            self.close_list();
+        }
+    }
+}
+
+// タスクバーは xdg_toplevel のウィンドウを作らない(xdg_wm_base は一覧のポップアップにだけ使う)。
+impl WindowHandler for Taskbar {
+    fn request_close(&mut self, _: &Connection, _: &QueueHandle<Self>, _: &Window) {}
+    fn configure(
+        &mut self,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+        _: &Window,
+        _: WindowConfigure,
+        _: u32,
+    ) {
+    }
+}
+
+/// キーボード(wl_keyboard)のデータ。一覧を開いている間のキーだけを見る。
+struct KeyboardData;
+
+impl Dispatch2<wl_keyboard::WlKeyboard, Taskbar> for KeyboardData {
+    fn event(
+        &self,
+        state: &mut Taskbar,
+        _: &wl_keyboard::WlKeyboard,
+        event: wl_keyboard::Event,
+        _: &Connection,
+        _: &QueueHandle<Taskbar>,
+    ) {
+        // keymap の fd は、読まずに閉じる(Event を捨てると閉じる)。
+        if let wl_keyboard::Event::Key {
+            key,
+            state: WEnum::Value(wl_keyboard::KeyState::Pressed),
+            ..
+        } = event
+        {
+            state.list_key(key);
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
