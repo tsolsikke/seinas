@@ -300,6 +300,11 @@ impl Interaction {
         self.grab == Grab::None
     }
 
+    /// クライアントへ渡した押下のボタンを、押したままか(コンテンツか何も無い所を押している)。
+    pub fn holds_client_press(&self) -> bool {
+        matches!(self.grab, Grab::Client { .. })
+    }
+
     /// ウィンドウを動かしている最中か。
     pub fn is_moving(&self) -> bool {
         matches!(self.grab, Grab::Bar { moving: true, .. })

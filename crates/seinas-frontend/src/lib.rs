@@ -1926,8 +1926,16 @@ where
         button, pressed, ..
     } = input
     {
+        let frontend = state.frontend_mut();
         if pressed {
-            state.frontend_mut().remember_input_serial(serial);
+            frontend.remember_input_serial(serial);
+        } else if frontend.interaction.holds_client_press() {
+            // grab の前にクライアントへ渡した押下(右クリックでメニューを出すときなど)の離す側は、Seinas の操作にも
+            // 伝える(伝えないと、押したままのつもりで残り、その後の押下で raise しなくなる)。
+            let measure = frontend.measure();
+            frontend
+                .interaction
+                .release(&mut frontend.windows, location, button, &measure);
         }
         pointer.button(
             state,

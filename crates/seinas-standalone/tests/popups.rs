@@ -285,3 +285,27 @@ fn a_layer_surface_popup_flips_above_a_bottom_panel() {
         "the press reached the window: {lines:?}"
     );
 }
+
+#[test]
+fn a_menu_opened_by_a_held_press_does_not_leave_the_press_held() {
+    let mut seinas = Compositor::start_with_input("pg");
+    let mut client = window(&seinas, "200x150");
+    let other = window(&seinas, "200x150");
+    // 1 つ目(コンテンツは (0, BAR)〜(200, BAR + 150))を、2 つ目((32, 32 + BAR) から)に覆われない所で押して、
+    // raise する。2 つ目は、右下の (220, 200) のあたりだけが見える。
+    click_client(&mut seinas, &client, 10, 100);
+    other.wait_for_line("window: keyboard leave");
+    // 右のボタンで押したまま、その押下の serial でメニューを出し、離す(右クリックのメニューと同じ。離す側は、
+    // ポップアップの grab の間に届く)。
+    seinas.pointer("press right");
+    client.wait_for_line("window: pointer button 0x111 pressed");
+    open_grabbing_popup(&mut client, "popup 5 60 60 40 grab", 1);
+    seinas.pointer("release right");
+    client.wait_for_line("window: pointer button 0x111 released");
+    // 何も無い所を押して閉じる。
+    click(&mut seinas, 600, 450);
+    client.wait_for_line("window: popup 1 done");
+    // その後も、2 つ目を押すと、ふだんどおり raise され、キーボードのフォーカスが移る。
+    click(&mut seinas, 220, 200);
+    other.wait_for_line("window: keyboard enter");
+}
