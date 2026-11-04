@@ -78,7 +78,7 @@ ZeikOS の上では、release の `seinas-standalone`(コンポジタ)・`seinas
 
 ### 置くファイル(v0.4.0)
 
-release `v0.4.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じになるはずのものです(2026-11-04 に、`8314851` で、push の確かめを外した `tools/release-standalone.sh v0.4.0` を手元で動かして作った。実行ファイルは、ソースと Rust と Cargo.lock が同じなら同じバイトになる(`docs/release.md` の「再現可能なビルド」)。その後のコミットは文書だけ)。release を作ったら、`SHA256SUMS` と見比べてください。
+release `v0.4.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じになるはずのものです(2026-11-04 に、`8314851` で、push の確かめを外した `tools/release-standalone.sh v0.4.0` を手元で動かして作った。実行ファイルは、ソースと Rust と Cargo.lock が同じなら同じバイトになる(`docs/release.md` の「再現可能なビルド」)。その後のコミットは文書とテストだけ)。release を作ったら、`SHA256SUMS` と見比べてください。
 
 | release の上の名前 | 置き場(ZeikOS のイメージ。例) | 大きさ(バイト) | SHA-256 |
 | --- | --- | --- | --- |

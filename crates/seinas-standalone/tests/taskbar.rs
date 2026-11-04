@@ -486,7 +486,9 @@ fn press_more(seinas: &mut Compositor) {
 
 #[test]
 fn hidden_tasks_are_listed_from_the_more_button() {
-    use seinas_theme::taskbar::{HIDDEN_ACTIVE_MARK, LIST_BORDER, LIST_GAP, PRESSED};
+    use seinas_theme::taskbar::{
+        HIDDEN_ACTIVE_MARK, LIST_BORDER, LIST_GAP, LIST_SELECTED, PRESSED,
+    };
     let (mut seinas, _taskbar, windows) = many_windows("tm", 7);
     // 前面の 7 つ目のタスクは隠れているので、見えるタスクと入れ替えず、「…」に控えめなオレンジの点を付ける。
     let mark_y = SMALL_TOP + (TASKBAR_HEIGHT - MARK_GAP - MARK_HEIGHT + 1) as usize;
@@ -496,6 +498,7 @@ fn hidden_tasks_are_listed_from_the_more_button() {
     // 「…」を押すと、隠れた 2 つのタスクの一覧が、タスクバーの上に開く(空き 4 の上の行が、一覧の下の枠)。
     press_more(&mut seinas);
     wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 1);
+    wait_for_grabs(&seinas, 1);
     let border_y = SMALL_TOP - LIST_GAP as usize - 1;
     // 開いている間の「…」は、押しているときの地(光る範囲の左の端の近く。点の無い所)。
     seinas.wait_for_screen("the list above the taskbar", |shot| {
@@ -513,22 +516,36 @@ fn hidden_tasks_are_listed_from_the_more_button() {
     // 開き直して、Esc で閉じる。
     press_more(&mut seinas);
     wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 2);
+    wait_for_grabs(&seinas, 2);
     seinas.pointer("key 1 press");
     seinas.pointer("key 1 release");
     wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 2);
     // 開き直して、外(ウィンドウの上)を押すと、閉じる(ポップアップの grab。コンポジタが閉じる)。
     press_more(&mut seinas);
     wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 3);
+    wait_for_grabs(&seinas, 3);
     seinas.pointer("motion 20 20");
     seinas.pointer("press");
     seinas.pointer("release");
     wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 3);
+    seinas.wait_for_screen("the list gone", |shot| {
+        shot.pixel(MORE_X, border_y) != LIST_BORDER
+    });
     // 開き直して、行を押すと、そのウィンドウを前に出す(2 行目は 7 つ目のウィンドウ。一覧は高さ 2 × 40 + 2 × 4 で、
     // 行は上の空き 4 の下から)。
     press_more(&mut seinas);
     wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 4);
+    wait_for_grabs(&seinas, 4);
+    // grab は最初の commit より前に届くので、絵が出るのを待ってから動かす(出る前の押下は、外の押下の扱いになる)。
+    // 2 行目が選ばれた絵を待ってから押す。右の端の近くには文字が無い。
+    seinas.wait_for_screen("the list again", |shot| {
+        shot.pixel(MORE_X, border_y) == LIST_BORDER
+    });
     let second_row_y = SMALL_TOP - LIST_GAP as usize - (2 * 40 + 2 * 4) + 4 + 40 + 20;
     seinas.pointer(&format!("motion {MORE_X} {second_row_y}"));
+    seinas.wait_for_screen("the second row selected", |shot| {
+        shot.pixel(390, second_row_y) == LIST_SELECTED
+    });
     seinas.pointer("press");
     seinas.pointer("release");
     wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 4);
@@ -548,10 +565,17 @@ fn the_list_keeps_the_selected_window_when_another_closes() {
     wait_for_states(&windows[0], "[activated]");
     press_more(&mut seinas);
     wait_for_taskbar_log_times(&seinas, "opened the list of 3 hidden tasks", 1);
+    wait_for_grabs(&seinas, 1);
     // 下の矢印キーで、2 行目(7 つ目)を選ぶ。開いている間に 6 つ目(1 行目)が閉じても、選んでいるのは 7 つ目の
     // まま(一覧の中の位置で持つと、8 つ目を選んだことになる)。
     seinas.pointer("key 108 press");
     seinas.pointer("key 108 release");
+    // 2 行目が選ばれた絵を待ってから閉じる。待たないと、キーはコンポジタの入力のスレッドを通るので、閉じたことが先に
+    // 処理されることがあり、先頭の行に移ってから下へ動いて 8 つ目を選ぶ。一覧は x 80〜399、y 128〜255(3 行)で、
+    // 2 行目は y 172〜211。右の端の近くには文字が無い。
+    seinas.wait_for_screen("the second row selected", |shot| {
+        shot.pixel(390, 190) == seinas_theme::taskbar::LIST_SELECTED
+    });
     drop(windows.remove(5));
     wait_for_taskbar_log_times(&seinas, "the list of hidden tasks now has 2 rows", 1);
     seinas.pointer("key 28 press");
@@ -561,8 +585,16 @@ fn the_list_keeps_the_selected_window_when_another_closes() {
     // 隠れたタスクが無くなったら、一覧は閉じる(6 つなら全部並ぶ)。
     press_more(&mut seinas);
     wait_for_taskbar_log_times(&seinas, "opened the list of 2 hidden tasks", 1);
+    wait_for_grabs(&seinas, 2);
     drop(windows.remove(6));
     wait_for_taskbar_log_times(&seinas, "closed the list of hidden tasks", 2);
+}
+
+/// コンポジタが、ポップアップの grab を `count` 回受けるまで待つ(開いた後のキーと押下を、grab の後に届ける)。
+fn wait_for_grabs(seinas: &Compositor, count: usize) {
+    wait_for("the grab of the popup", || {
+        (seinas.log().matches("a popup took a grab").count() >= count).then_some(())
+    });
 }
 
 /// `window` に、状態の並びが `states` の configure が届くまで読む。
