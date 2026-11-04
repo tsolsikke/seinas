@@ -12,7 +12,7 @@
 //!   `TZ` の簡単な形、それも無ければ +09:00)。
 //! - `--config PATH`:タスクバーの設定のファイル(無ければ `$XDG_CONFIG_HOME/seinas/taskbar.conf`)。
 //! - `--connect-timeout MS`:コンポジタのソケットがまだ無いときに、最初の接続を試し直す期限(ミリ秒。無ければ
-//!   [`CONNECT_TIMEOUT`])。間隔は [`CONNECT_INTERVAL`]。
+//!   [`CONNECT_TIMEOUT`])。間隔は [`seinas_connect::CONNECT_INTERVAL`]。
 //! - `--round-trip-timeout MS`:つないだ後の最初の往復の答えを待つ期限(ミリ秒。無ければ [`ROUND_TRIP_TIMEOUT`])。
 //!   どちらもテストで短くするためのもの。
 //! - `--fixed-time SECONDS`:時計を、この UNIX 時刻に止める(正解の画像を取るためのもの。時計は進まない)。
@@ -25,23 +25,20 @@ use std::{
     error::Error,
     fmt::Display,
     io,
-    os::{
-        fd::{AsRawFd, RawFd},
-        unix::net::UnixStream,
-    },
+    os::fd::{AsRawFd, RawFd},
     path::PathBuf,
     process::ExitCode,
     sync::Arc,
     time::{Duration, Instant},
 };
 
+use seinas_connect::{connect, CONNECT_TIMEOUT};
 use seinas_icons::{Found, Icon, IconCache};
 use seinas_taskbar::{
     action_for, choose_offset, clock_for, format_utc_offset, layout, list_height, list_max_scroll,
-    list_move, list_row_at, list_scroll_to, not_ready_yet, paint, paint_list, read_config,
-    socket_path, until_next_minute, wall_clock, Action, Clock, Entry, ListKey, Pointer, Target,
-    CONFIG_FILE, CONNECT_INTERVAL, CONNECT_TIMEOUT, HEIGHT, ICON_SIZE, LIST_GAP, LIST_ROW_HEIGHT,
-    LIST_WIDTH, ROUND_TRIP_TIMEOUT,
+    list_move, list_row_at, list_scroll_to, paint, paint_list, read_config, until_next_minute,
+    wall_clock, Action, Clock, Entry, ListKey, Pointer, Target, CONFIG_FILE, HEIGHT, ICON_SIZE,
+    LIST_GAP, LIST_ROW_HEIGHT, LIST_WIDTH, ROUND_TRIP_TIMEOUT,
 };
 use seinas_text::{FontSetup, TextPainter};
 use smithay_client_toolkit::{
@@ -985,66 +982,6 @@ fn millis(arg: &str, text: &str) -> Result<Duration, String> {
         .ok_or(format!("invalid {arg} value: {text}"))
 }
 
-/// コンポジタへつなぐ。コンポジタがまだ受けられないとき([`not_ready_yet`])は、[`CONNECT_INTERVAL`] ずつ眠って
-/// (`std::thread::sleep`。musl では clock_nanosleep)、最初の試しから `timeout` の間、試し直す(単調増加の時計で
-/// 判定する)。起動の順序で、コンポジタより先に起こされることがあるため(`docs/taskbar.md` の「起動の順序」)。
-/// 試し直すのは、この最初の接続だけ(つないだ後に切れたら、終わる)。
-fn connect(timeout: Duration) -> Result<Connection, Box<dyn Error>> {
-    // 親が接続を渡してきたときは、試し直す相手がいない。
-    if std::env::var_os("WAYLAND_SOCKET").is_some() {
-        return Ok(Connection::connect_to_env()
-            .map_err(|e| format!("cannot connect to the compositor (WAYLAND_SOCKET): {e}"))?);
-    }
-    let path = socket_path(
-        std::env::var_os("WAYLAND_DISPLAY").as_deref(),
-        std::env::var_os("XDG_RUNTIME_DIR").as_deref(),
-    )
-    .map_err(|e| format!("cannot connect to the compositor: {e}"))?;
-    let deadline = Instant::now() + timeout;
-    let mut tried = 0;
-    let stream = loop {
-        tried += 1;
-        let e = match UnixStream::connect(&path) {
-            Ok(stream) => break stream,
-            Err(e) => e,
-        };
-        let Some(reason) = not_ready_yet(&e) else {
-            return Err(format!(
-                "cannot connect to the compositor at {}: {e}",
-                path.display()
-            )
-            .into());
-        };
-        let now = Instant::now();
-        if now >= deadline {
-            return Err(format!(
-                "the compositor did not appear at {} within {} ms ({reason}: {e}; tried {tried} times)",
-                path.display(),
-                timeout.as_millis()
-            )
-            .into());
-        }
-        if tried == 1 {
-            eprintln!(
-                "seinas-taskbar: the compositor is not ready at {} ({reason}: {e}); trying again every {} ms for up to {} ms",
-                path.display(),
-                CONNECT_INTERVAL.as_millis(),
-                timeout.as_millis()
-            );
-        }
-        std::thread::sleep(CONNECT_INTERVAL.min(deadline - now));
-    };
-    if tried > 1 {
-        eprintln!("seinas-taskbar: connected to the compositor after {tried} tries");
-    }
-    Ok(Connection::from_socket(stream).map_err(|e| {
-        format!(
-            "cannot connect to the compositor at {}: {e}",
-            path.display()
-        )
-    })?)
-}
-
 /// 最初の往復(`wl_display.sync`)の答えが届いたか。
 struct FirstRoundTrip {
     done: bool,
@@ -1188,7 +1125,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         eprintln!("seinas-taskbar: {message}");
     }
 
-    let conn = connect(options.connect_timeout)?;
+    let conn = connect("seinas-taskbar", options.connect_timeout)?;
     first_round_trip(&conn, options.round_trip_timeout)?;
     let (globals, event_queue) = registry_queue_init::<Taskbar>(&conn)
         .map_err(|e| failed_during(&conn, "the registry round trip", e))?;

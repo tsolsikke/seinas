@@ -17,6 +17,7 @@ Seinasは、ZeikOS向けのWaylandコンポジタです。
 | `crates/seinas-test-clients` | テスト用のクライアント。わざと不正な要求を送ったり、共有メモリーを縮めたり、届いたイベントを書き出したりする。テスト用の IME と、text-input-v3 を使うアプリもある |
 | `crates/seinas-taskbar` | タスクバー。コンポジタとは別のプログラム(layer-shell と foreign-toplevel のクライアント)で、ウィンドウの一覧と時計を出す |
 | `crates/seinas-wallpaper` | 壁紙。コンポジタとは別のプログラム(layer-shell のクライアント)で、background の層に色か画像(PNG)を出す |
+| `crates/seinas-connect` | シェルの部品とクライアント(タスクバー、壁紙、zeyes-min)が、コンポジタへつなぐ手順。コンポジタより先に起こされても、ソケットができるまで試し直す |
 | `crates/seinas-config` | 設定のファイル(1 行に「キー = 値」)の読み方。フォントと壁紙の設定が使う |
 | `crates/seinas-theme` | 見た目の値(色・大きさ・余白。テーマのトークン)の置き場。コンポジタの飾りとタスクバーが読む(`docs/ui-spec.md`) |
 | `crates/seinas-icons` | アイコン。アプリのアイコンを探して読む所(app_id、.desktop、アイコンのテーマ。PNG だけ)と、自作のアイコン(既定のアイコン、トーチ)、小さな図形の描き方。タスクバーとコンポジタのタイトルバーが使う |

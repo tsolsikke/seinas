@@ -396,8 +396,8 @@ fn run() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let Options { skin, title } = parse_options(&args, std::env::var("ZEYES_SKIN").ok())?;
 
-    let conn = Connection::connect_to_env()
-        .map_err(|e| format!("cannot connect to the compositor (WAYLAND_DISPLAY): {e}"))?;
+    // コンポジタより先に起こされても、ソケットができるまで試し直してつなぐ(ZeikOS の上では、パイプで同時に起こす)。
+    let conn = seinas_connect::connect("zeyes", seinas_connect::CONNECT_TIMEOUT)?;
     let (globals, event_queue) = registry_queue_init::<Zeyes>(&conn)?;
     let qh = event_queue.handle();
     let mut event_loop: EventLoop<Zeyes> = EventLoop::try_new()?;

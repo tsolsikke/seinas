@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 smithay-client-toolkit = { workspace = true }
 wayland-client = { workspace = true }
+# コンポジタへの最初の接続(ソケットができるまで試し直す)。
+seinas-connect = { path = "../seinas-connect" }
 # foreign-toplevel(zwlr_foreign_toplevel_manager_v1)のクライアントの型。smithay-client-toolkit がすでに使っているバージョン。
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 seinas-text = { path = "../seinas-text" }

@@ -682,6 +682,14 @@ name = "seinas-config"
 version = "0.4.0"
 
 [[package]]
+name = "seinas-connect"
+version = "0.4.0"
+dependencies = [
+ "libc",
+ "wayland-client",
+]
+
+[[package]]
 name = "seinas-fbdev"
 version = "0.4.0"
 dependencies = [
@@ -748,6 +756,7 @@ version = "0.4.0"
 dependencies = [
  "libc",
  "seinas-config",
+ "seinas-connect",
  "seinas-golden",
  "seinas-icons",
  "seinas-text",
@@ -785,6 +794,7 @@ version = "0.4.0"
 dependencies = [
  "png",
  "seinas-config",
+ "seinas-connect",
  "seinas-golden",
  "smithay-client-toolkit",
  "wayland-client",
@@ -1353,6 +1363,7 @@ dependencies = [
 name = "zeyes-min"
 version = "0.4.0"
 dependencies = [
+ "seinas-connect",
  "smithay-client-toolkit",
  "wayland-client",
 ]

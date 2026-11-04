@@ -10,3 +10,5 @@ publish.workspace = true
 [dependencies]
 smithay-client-toolkit = { workspace = true }
 wayland-client = { workspace = true }
+# コンポジタへの最初の接続(ソケットができるまで試し直す)。
+seinas-connect = { path = "../seinas-connect" }

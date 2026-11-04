@@ -1,0 +1,13 @@
+[package]
+name = "seinas-connect"
+description = "Seinasのシェルの部品とクライアントが、コンポジタへつなぐ手順(ソケットができるまで試し直す)。"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+wayland-client = { workspace = true }
+# 接続の失敗の errno(ENOENT・ECONNREFUSED・EAGAIN)を見分ける。
+libc = { workspace = true }

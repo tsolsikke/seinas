@@ -46,6 +46,7 @@ WAYLAND_DISPLAY=seinas-0-shell cargo run --locked -p seinas-taskbar
 - 切断・プロトコルエラー:2 と 3 の途中で接続が切れるか、プロトコルエラーが届いたときは、段階と元の原因を書いて、すぐに終わります。試し直しません。
   - 例:`the connection to the compositor failed during the first round trip: Io error: Broken pipe (os error 32)`、`the connection to the compositor failed during the first round trip: protocol error 3 on wl_display@1: <メッセージ>`。3 の段階では `during the registry round trip` になります。
   - この行の前に、wayland-backend が同じ原因を 1 行(`Io error: …` など)出します(log の機能を使わないビルドで、エラーを標準エラーへ書くため)。
+- 1 の接続の手順は、`crates/seinas-connect` にあり、壁紙(`seinas-wallpaper`)と `zeyes-min` も同じものを使います(v0.4.0 から。ZeikOS の上で、3 つをコンポジタと一緒にパイプで起こすため)。ログの行の頭は、それぞれ `seinas-wallpaper:`・`zeyes:` です。2 の最初の往復の期限は、タスクバーだけです。
 - 試し直すのは、1 の接続だけです。一度つないだ後に接続が切れたときは、つなぎ直しません(コンポジタの起動し直しへの対応は、別に決める)。動いている間に切れたときは、これまでどおり `the connection to the compositor was lost` のエラーで終わります。
 - 間隔を 100 ms にした理由:コンポジタのソケットができてから、タスクバーが出るまでの遅れを 0.1 秒までにするためです。1 回の試しは `socket` と `connect` の 2 つの syscall で、1 秒に 10 回なら、ほかのプロセスの邪魔になりません。
 - 期限を、どちらも 30 秒にした理由:コンポジタは、起きてからソケットを作るまでに、実行ファイル(約 9 MB)の読み込みと画面の準備をし、その後に最初の 1 枚を描いてから、クライアントの要求を処理します。QEMU の上の ZeikOS ではこれに何秒かかるか測っていないので、仮に十分に長くしました。ZeikOS の上で、タスクバーをつなぐときに測って見直します。一方、`WAYLAND_DISPLAY` の間違いや、コンポジタの起動の失敗・止まったときに、いつまでも待たずにエラーで終わるため、期限を置きます。

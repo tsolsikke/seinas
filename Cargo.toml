@@ -17,6 +17,7 @@ members = [
     "crates/zeyes-min",
     "crates/seinas-taskbar",
     "crates/seinas-wallpaper",
+    "crates/seinas-connect",
 ]
 
 [workspace.package]

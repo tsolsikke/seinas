@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 smithay-client-toolkit = { workspace = true }
 wayland-client = { workspace = true }
+# コンポジタへの最初の接続(ソケットができるまで試し直す)。
+seinas-connect = { path = "../seinas-connect" }
 # 設定のファイル(wallpaper.conf)の読み方。フォントの設定と同じもの。
 seinas-config = { path = "../seinas-config" }
 # PNG を読む。純 Rust(zlib などの C のライブラリを使わない)。
