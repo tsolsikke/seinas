@@ -42,8 +42,8 @@ Seinas の構成(seinas・seinas-standalone・seinas-taskbar・zeyes-min)が Zei
 | 要るもの | 使う構成 | ZeikOS | 根拠 | 備考 | まとまり |
 | --- | --- | --- | --- | --- | --- |
 | memfd_create(MFD_CLOEXEC\|MFD_ALLOW_SEALING) | S N T Z | 有る | `memfd_create_from_ring3` 2893 行 | 名前とフラグは読まない | — |
-| ftruncate(memfd。pool の大きさ。SCTK は伸ばす) | N T Z | 一部 | `ftruncate_from_ring3` 2910 行、`kernel/src/shm.rs` の `set_size` | 1 回だけ(2 回目は EINVAL)、32 KiB まで。zeyes-min の pool は 614,400 バイト、タスクバーは 256,000 バイト、800x600 のウィンドウは 1.9 MB で、どれも越える | 新しい課題の候補 |
-| 2 つのプロセスの間の MAP_SHARED(PROT_READ\|PROT_WRITE、memfd) | S N T Z | 一部 | 2993〜3067 行、`kernel/src/shm.rs`(ADR-0065) | 共有は動く。memfd はシステム全体で 2 つまで(`MAX_SHM`、`shm.rs` 41 行)、1 つ 8 ページ(`MAX_SHM_PAGES`、45 行)。クライアントごとに 1 つ以上と、コンポジタの keymap の分が要る | 新しい課題の候補 |
+| ftruncate(memfd。pool の大きさ。SCTK は伸ばす) | N T Z | 有る | `ftruncate_from_ring3`、`kernel/src/shm.rs` の `set_size`(zeikos の 5d3b9f39) | 伸ばすのも縮めるのも受ける(マップしたまま縮めるのは断る)。1 つ 16 MiB(4096 ページ)まで、越えると EFBIG。全部で 64 MiB(16,384 ページ)まで、越えると ENOMEM。ページは ftruncate の時点で取って 0 で埋める。zeyes-min の pool は 614,400 バイト、タスクバーは 256,000 → 512,000 バイト、壁紙は 1280x800 で 4,096,000 バイトで、どれも収まる(2026-11-04 に合わせ直した。前は 1 回だけ・32 KiB まで) | — |
+| 2 つのプロセスの間の MAP_SHARED(PROT_READ\|PROT_WRITE、memfd) | S N T Z | 有る | `kernel/src/shm.rs`(ADR-0065。zeikos の 5d3b9f39) | 共有は動く。memfd はシステム全体で 16 個まで(`MAX_SHM`)、1 つ 16 MiB(`MAX_SHM_PAGES`)、合わせて 64 MiB(`MAX_SHM_TOTAL_PAGES`)。クライアントごとに 1 つ以上と、コンポジタの keymap の分が要る(2026-11-04 に合わせ直した。前は 2 つまで・1 つ 8 ページ) | — |
 | munmap・mprotect(shm のマップ) | S N T Z | 一部 | `munmap_from_ring3` 2464 行(shm・画面は EINVAL) | コンポジタは、クライアントが pool を手放すと munmap する | 新しい課題の候補 |
 | fcntl(F_ADD_SEALS。F_SEAL_SEAL\|F_SEAL_SHRINK と、keymap の F_SEAL_SEAL\|F_SEAL_SHRINK\|F_SEAL_GROW\|F_SEAL_WRITE) | S N T Z | 有る | zeikos の ADR-0065 の Addendum(memfd のフラグと封と FD_CLOEXEC) | memfd_create のフラグと名前を確かめ、封を持って効かせる | — |
 | write と lseek(SEEK_SET。memfd。コンポジタが keymap を書く) | S N | 無い | `sys_write` 6520〜6601 行(memfd は EBADF)、`sys_lseek` 4677 行(何もしない) | keymap を書けないと、キーボードの keymap をクライアントへ渡せない | 新しい課題の候補 |
@@ -212,7 +212,7 @@ ZeikOS の側に、epoll・eventfd・timerfd、待たない形のソケット、
 
 ### 新しい課題の候補(上のまとまりに入らないもの)
 
-1. 共有メモリーの量:memfd の数(システムで 2 つ)と大きさ(32 KiB)、ftruncate を 2 回以上(伸ばす)、shm のマップの munmap・mprotect。
+1. 共有メモリーの量:memfd の数と大きさ、ftruncate を 2 回以上(伸ばす)、shm のマップの munmap・mprotect。数と大きさと伸ばすことは、ZeikOS の側で済んだ(16 個まで、1 つ 16 MiB、合わせて 64 MiB。2026-11-04 に、zeikos の 5d3b9f39 の `kernel/src/shm.rs` で確かめた)。
 2. memfd への write と lseek(コンポジタが keymap を書く)。
 3. ファイルの mmap(PROT_READ、MAP_SHARED。フォントと xkb。無くてもヒープへ読んで動くが、メモリーが増える)。
 4. AF_UNIX の数(listen 1・接続 2 を、listen 2・接続 4 以上に)。2026-10-21 の時点で、listen 4・接続 8 になった。
