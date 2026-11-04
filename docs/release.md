@@ -106,7 +106,7 @@ sha256sum --check SHA256SUMS
 
 ## seinas-standalone の release
 
-ZeikOS の上で Seinas のコンポジタとタスクバーを動かすために、`seinas-standalone` と `seinas-taskbar`(どちらも musl 向けの静的 PIE)も、同じ形の release として配ります(タスクバーは v0.3.0 から。v0.2.0 はコンポジタだけ)。手順は、上の seinas-fbdev と同じで、スクリプトが `tools/release-standalone.sh` に替わります。
+ZeikOS の上で Seinas のコンポジタ・タスクバー・壁紙を動かし、zeyes-min のウィンドウを出すために、`seinas-standalone`・`seinas-taskbar`・`seinas-wallpaper`・`zeyes-min`(どれも musl 向けの静的 PIE)と同梱の壁紙も、同じ形の release として配ります(タスクバーは v0.3.0 から、壁紙と zeyes-min と同梱の壁紙は v0.4.0 から。v0.2.0 はコンポジタだけ)。手順は、上の seinas-fbdev と同じで、スクリプトが `tools/release-standalone.sh` に替わります。
 
 | ファイル | 中身 |
 | --- | --- |
@@ -114,10 +114,15 @@ ZeikOS の上で Seinas のコンポジタとタスクバーを動かすため�
 | `seinas-standalone-<タグ>-third-party.tar.gz` | コンポジタに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
 | `seinas-taskbar` | タスクバーの実行ファイル(同じく、strip はしない) |
 | `seinas-taskbar-<タグ>-third-party.tar.gz` | タスクバーに入っている第三者のソフトウェアのライセンス文と著作権表示。中の `NOTICES.md` が一覧 |
-| `SHA256SUMS` | 上の4つの SHA-256 |
+| `seinas-wallpaper` | 壁紙のクライアントの実行ファイル(同じく、strip はしない) |
+| `seinas-wallpaper-<タグ>-third-party.tar.gz` | 壁紙のクライアントに入っている第三者のソフトウェアのライセンス文と著作権表示 |
+| `zeyes-min` | zeyes-min の実行ファイル(同じく、strip はしない) |
+| `zeyes-min-<タグ>-third-party.tar.gz` | zeyes-min に入っている第三者のソフトウェアのライセンス文と著作権表示 |
+| `seinas-wallpapers-<タグ>.tar.gz` | 同梱の壁紙(`assets/wallpapers` の PNG 2 枚と、`LICENSE`、`README.md`。中は `seinas-wallpapers-<タグ>/` の下) |
+| `SHA256SUMS` | 上の9つの SHA-256 |
 
 ```bash
-tools/release-standalone.sh v0.3.0
+tools/release-standalone.sh v0.4.0
 ```
 
 - 第三者のライセンス文は、実行ファイルごとに集めます(`tools/release-notices.py`)。タスクバーには、pixman と libxkbcommon は入りません(Rust のクレートと musl、Rust の標準ライブラリと libunwind)。

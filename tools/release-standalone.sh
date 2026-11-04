@@ -1,9 +1,9 @@
 #!/bin/sh
-# ZeikOS の上で動かす Seinas のコンポジタ(seinas-standalone)とタスクバー(seinas-taskbar)を、GitHubのreleaseに
-# 置くためのアセットを作る。どちらも musl向けの静的PIE。
+# ZeikOS の上で動かす Seinas のコンポジタ(seinas-standalone)・タスクバー(seinas-taskbar)・壁紙(seinas-wallpaper)・
+# zeyes-min を、GitHubのreleaseに置くためのアセットを作る。どれも musl向けの静的PIE。同梱の壁紙の画像も置く。
 #
 # 使い方:
-#     tools/release-standalone.sh <タグ>   例: tools/release-standalone.sh v0.3.0
+#     tools/release-standalone.sh <タグ>   例: tools/release-standalone.sh v0.4.0
 #
 # できるもの(target/release-assets/<タグ>/ の下):
 #     seinas-standalone                            コンポジタの実行ファイル(tools/build-musl.sh の出力と同じもの。
@@ -11,7 +11,10 @@
 #     seinas-standalone-<タグ>-third-party.tar.gz  コンポジタに入っている第三者のライセンス文と著作権表示
 #     seinas-taskbar                               タスクバーの実行ファイル(同じく、strip はしない)
 #     seinas-taskbar-<タグ>-third-party.tar.gz     タスクバーに入っている第三者のライセンス文と著作権表示
-#     SHA256SUMS                                   上の4つのSHA-256
+#     seinas-wallpaper、zeyes-min と、それぞれの <名前>-<タグ>-third-party.tar.gz
+#                                                  壁紙のクライアントと zeyes-min(同じく、strip はしない)
+#     seinas-wallpapers-<タグ>.tar.gz              同梱の壁紙(assets/wallpapers の PNG 2 枚、LICENSE、README.md)
+#     SHA256SUMS                                   上の9つのSHA-256
 #     NOTES.md                                     releaseの説明文(作り方、バージョン、ライセンス)
 #
 # 作った後、releaseを作るgh のコマンドを表示する(実行はしない)。手順は docs/release.md にある。
@@ -26,7 +29,7 @@ cd "$root"
 . tools/release-lib.sh
 
 # 置く実行ファイル(パッケージの名前と、実行ファイルの名前が同じもの)。名前に空白は無い。
-programs="seinas-standalone seinas-taskbar"
+programs="seinas-standalone seinas-taskbar seinas-wallpaper zeyes-min"
 
 # 作業ツリーに変更が無く、HEAD が push 済み(origin の main と同じ)であること。
 release_require_pushed
@@ -53,17 +56,28 @@ for program in $programs; do
     assets="$assets $program $notices.tar.gz"
 done
 
+# 同梱の壁紙。置く先は、ZeikOS では /usr/share/seinas/wallpapers(docs/standalone.md の「ZeikOS の上で起動する」)。
+wallpapers=seinas-wallpapers-$tag
+mkdir "$out/$wallpapers"
+cp assets/wallpapers/torch-16x9.png assets/wallpapers/torch-4x3.png assets/wallpapers/LICENSE \
+    assets/wallpapers/README.md "$out/$wallpapers/"
+release_pack "$out" "$wallpapers"
+rm -r "$out/$wallpapers"
+assets="$assets $wallpapers.tar.gz"
+
 # assets は、空白で区切った名前の並び(わざと引用しない)。
 (cd "$out" && sha256sum $assets > SHA256SUMS)
 
 rust=$(rustc -V)
 cat > "$out/NOTES.md" <<NOTES
-# Seinas $tag(seinas-standalone、seinas-taskbar)
+# Seinas $tag(seinas-standalone、seinas-taskbar、seinas-wallpaper、zeyes-min)
 
-ZeikOS の上で Seinas のコンポジタとタスクバーを動かすための実行ファイルです。
+ZeikOS の上で Seinas のコンポジタ・タスクバー・壁紙を動かし、zeyes-min のウィンドウを出すための実行ファイルです。
 
 - \`seinas-standalone\`:親の Wayland を使わない構成の Seinas のコンポジタです。Wayland のクライアントを受け、Linux の fbdev(\`/dev/fb0\`)へ絵を出します。最初の 1 枚を出し終えたときに、ログ(標準エラー)へ \`presented the first frame (<幅>x<高さ>)\` を 1 回だけ出します。
 - \`seinas-taskbar\`:Seinas のタスクバー(シェルの部品)です。コンポジタのシェルの部品のためのソケットへつなぎ、画面の下に出ます。コンポジタより先に起こされても、ソケットができるまで待ってつなぎます。
+- \`seinas-wallpaper\`:Seinas の壁紙(シェルの部品)です。シェルの部品のためのソケットへつなぎ、画面の全体の背景を描きます。同梱の壁紙(\`seinas-wallpapers-$tag.tar.gz\`)を \`/usr/share/seinas/wallpapers\` に置くと、それを出します。無ければ色だけです。
+- \`zeyes-min\`:目玉のウィンドウを 1 つ出す、最小の Wayland のクライアントです(ふだんのソケットへつなぐ)。
 
 どちらも x86-64 の Linux 向けに、musl で静的にリンクした PIE で、共有ライブラリに依存しません。
 ZeikOS 側の仕組みに合わせた変更は入れていません(Linux のプログラムをそのまま動かします)。
@@ -77,7 +91,12 @@ ZeikOS 側の仕組みに合わせた変更は入れていません(Linux のプ
 | \`seinas-standalone-$tag-third-party.tar.gz\` | コンポジタに入っている第三者のソフトウェアのライセンス文と著作権表示(\`NOTICES.md\` が一覧) |
 | \`seinas-taskbar\` | タスクバーの実行ファイル(x86-64、musl、静的 PIE。strip していない) |
 | \`seinas-taskbar-$tag-third-party.tar.gz\` | タスクバーに入っている第三者のソフトウェアのライセンス文と著作権表示(\`NOTICES.md\` が一覧) |
-| \`SHA256SUMS\` | 上の4つの SHA-256 |
+| \`seinas-wallpaper\` | 壁紙のクライアントの実行ファイル(x86-64、musl、静的 PIE。strip していない) |
+| \`seinas-wallpaper-$tag-third-party.tar.gz\` | 壁紙のクライアントに入っている第三者のソフトウェアのライセンス文と著作権表示 |
+| \`zeyes-min\` | zeyes-min の実行ファイル(x86-64、musl、静的 PIE。strip していない) |
+| \`zeyes-min-$tag-third-party.tar.gz\` | zeyes-min に入っている第三者のソフトウェアのライセンス文と著作権表示 |
+| \`seinas-wallpapers-$tag.tar.gz\` | 同梱の壁紙(PNG 2 枚。CC0 1.0。\`LICENSE\` と \`README.md\` つき) |
+| \`SHA256SUMS\` | 上の9つの SHA-256 |
 
 ## 作り方
 
@@ -89,7 +108,7 @@ ZeikOS 側の仕組みに合わせた変更は入れていません(Linux のプ
 
 ## ライセンス
 
-- Seinas 自身のコードは MIT ライセンスです(アーカイブの中の \`LICENSE\`)。
+- Seinas 自身のコードは MIT ライセンスです(アーカイブの中の \`LICENSE\`)。同梱の壁紙は CC0 1.0 です。
 - 第三者のソフトウェア(pixman、libxkbcommon、musl、Rust のクレート、Rust の標準ライブラリ、libunwind)は、それぞれのライセンスに従います。本文と著作権表示は、実行ファイルごとのアーカイブにあります。
 NOTES
 
