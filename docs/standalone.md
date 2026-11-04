@@ -64,45 +64,80 @@ WAYLAND_DISPLAY=/tmp/seinas.sock cargo run --locked -p zeyes-min
 
 ## ZeikOS の上で起動する
 
-ZeikOS の上では、release の `seinas-standalone`(コンポジタ)と `seinas-taskbar`(タスクバー)を、変更を入れずに、そのまま動かします(`docs/release.md` の「seinas-standalone の release」。v0.3.0 から、タスクバーも入る)。
+ZeikOS の上では、release の `seinas-standalone`(コンポジタ)・`seinas-taskbar`(タスクバー)・`seinas-wallpaper`(壁紙)・`zeyes-min`(目玉のウィンドウ)を、変更を入れずに、そのまま動かします(`docs/release.md` の「seinas-standalone の release」。タスクバーは v0.3.0 から、壁紙と zeyes-min と同梱の壁紙は v0.4.0 から)。
 
-### 置くファイル(v0.3.0)
+### v0.3.0 からの変更(v0.4.0)
 
-release `v0.3.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じです(2026-10-25 に、`31f907d` で `tools/release-standalone.sh v0.3.0` を動かして作った。CI の musl のビルドと同じバイト)。
+- 見た目:ウィンドウに枠・角の丸み・影が付き、タイトルバーは高さ 36、ボタンは幅 44 になり、タイトルの左にアプリのアイコンを出します。Alt+Tab の一覧の強調と、最大化の予告は、オレンジの枠と控えめな地です(`docs/ui-spec.md`)。
+- タスクバー:薄いタスクバー(中央のトーチとタスクのアイコン、前面の線と背面の点、2 段の時計)。アイコンの間隔は 48 で、入りきらないタスクは末尾の「…」にまとめ、押すと隠れたタスクの一覧を出します(`docs/taskbar.md`)。
+- 壁紙:設定のファイルが無いとき、同梱の壁紙(16:9 と 4:3 の 2 枚。CC0 1.0)から、出力の比にいちばん近いものを出します(`docs/wallpaper.md`)。
+- 装飾:ウィンドウごとに xdg-decoration で決め、取り決めないウィンドウ(GTK など)には飾りを付けません。最初の configure の大きさは 0x0 で、アプリが自分の大きさで開きます(`docs/window-placement.md`)。
+- ポップアップ(xdg_popup)、layer surface のキーボード(keyboard_interactivity)、クリップボードとドラッグ&ドロップ(wl_data_device_manager)を扱います(`docs/window-placement.md`)。ZeikOS の上では、まだ入力が無いので、これらは使われません(下の「ZeikOS の制限に当たる所」)。
+- 起動の順序:壁紙と zeyes-min も、タスクバーと同じく、コンポジタより先に起こされたら、ソケットができるまで 100 ms ごとに 30 秒まで試し直してつなぎます(`crates/seinas-connect`)。
+- 直したもの:修飾キーと右のボタンで始めたサイズ変更が、右のボタンを離しても終わらなかった。入れ子の Seinas が、応答なしの印を付けた後に再描画しなかった。IME の古い応答を新しい入力先へ適用していた。ポップアップに frame コールバックを返していなかった。ポップアップの grab の間に離したボタンを、Seinas の操作に伝えていなかった。
 
-| release の上の名前 | 置き場(ZeikOS のイメージ) | 大きさ(バイト) | SHA-256 |
+### 置くファイル(v0.4.0)
+
+release `v0.4.0` の成果物です。大きさと SHA-256 は、release の `SHA256SUMS` と同じになるはずのものです(2026-11-04 に、`8314851` で、push の確かめを外した `tools/release-standalone.sh v0.4.0` を手元で動かして作った。実行ファイルは、ソースと Rust と Cargo.lock が同じなら同じバイトになる(`docs/release.md` の「再現可能なビルド」)。その後のコミットは文書だけ)。release を作ったら、`SHA256SUMS` と見比べてください。
+
+| release の上の名前 | 置き場(ZeikOS のイメージ。例) | 大きさ(バイト) | SHA-256 |
 | --- | --- | --- | --- |
-| `seinas-standalone` | `/bin/linux/seinas-standalone` | 9,095,904 | `a4df394e1fcbd5fb2c2a490666e8de7434149582dda9e38b92e30beaccd55044` |
-| `seinas-standalone-v0.3.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 67,997 | `1fff0478bc19d285839eff17f61b08981bc0e40e88ae530aeff7fba49b44ea2a` |
-| `seinas-taskbar` | `/bin/linux/seinas-taskbar` | 4,966,232 | `4328035d9d04a9e1acbdda0471d54771b522f77c3cf67ee131bb8073b13c37a2` |
-| `seinas-taskbar-v0.3.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 57,048 | `2db60ce438fd4b7dffca5846f8f36e798ae73979e64b47166086553fa042704b` |
+| `seinas-standalone` | `/bin/linux/seinas-standalone` | 9,809,392 | `07f0d53735a5774d1b4c870bd76b43d936b02f742d2b654a0fbc9c825757226d` |
+| `seinas-standalone-v0.4.0-third-party.tar.gz` | 実行ファイルと一緒に(第三者のライセンス文と著作権表示) | 71,568 | `6f77a26519db9dee8acf920efdfeffcd632fe16d45106fb93fae1c34d504b897` |
+| `seinas-taskbar` | `/bin/linux/seinas-taskbar` | 5,370,440 | `836a8facf2ebe9ca69e8d4a734d38581a771065973bf127a5c857c6a9ce89b94` |
+| `seinas-taskbar-v0.4.0-third-party.tar.gz` | 実行ファイルと一緒に(同上) | 63,118 | `93ef559bc2075e840fc09d01b3786371d6637ef5293ba9d5fc30f09a4c467cde` |
+| `seinas-wallpaper` | `/bin/linux/seinas-wallpaper` | 1,724,680 | `2a56bd91aa924d5055b7afaca388f44e48bd0a585708e8fcad73c8b0c61e6223` |
+| `seinas-wallpaper-v0.4.0-third-party.tar.gz` | 実行ファイルと一緒に(同上) | 36,138 | `d6062c2d08691647c89fd97550a6a42cefed725c936743d66bcbfcfd6b8b522e` |
+| `zeyes-min` | `/bin/linux/zeyes-min` | 1,753,736 | `e80821a2c0409a07f21d8258844a6a9692e622a2374f80fb97b7995db17194d4` |
+| `zeyes-min-v0.4.0-third-party.tar.gz` | 実行ファイルと一緒に(同上) | 32,044 | `72824cb8644d8d683a1d15644ff6a0f475a0116732cc86a444780c6c8c98e61c` |
+| `seinas-wallpapers-v0.4.0.tar.gz` | 開いて、中の 4 つを `/usr/share/seinas/wallpapers/` に(下の「同梱の壁紙」) | 2,208,866 | `eeb0911d2b4cab582ece17a1aa34b2f3ea5d68dc2fb8338819f036a4c61e4596` |
 
-- 置き場の名前は、v0.2.0 と同じく、ZeikOS の側が決めます(上の表の置き場は、v0.2.0 の `/bin/linux/seinas-standalone` に合わせた例)。取り込みは ZeikOS の側が行います。
-- ほかに置くものはありません。フォントと xkb のファイルは置きません(下の「フォントと xkb」)。
-- ZeikOS は、ソケットとロックファイルの置き場の `/tmp/seinas` を、イメージに作ってあります。
+- 置き場の名前は、v0.2.0・v0.3.0 と同じく、ZeikOS の側が決めます(上の表の置き場は、v0.3.0 の `/bin/linux/` に合わせた例)。取り込みは ZeikOS の側が行います。
+- 実行ファイルのうち、コンポジタとタスクバーは 4 MiB(4,194,304 バイト)を越えます。v0.3.0 のときも越えていて(9,095,904 と 4,966,232 バイト)、ZeikOS の上で動いたので、実行ファイルは 4 MiB の制限の外にある置き方と見ています(ZeikOS の側の確かめを待つ)。
+- 第三者のライセンス文と著作権表示のアーカイブ(`*-third-party.tar.gz`)は、実行ファイルと一緒に置くか、配り方に合わせて置きます(実行には要らない)。
+
+#### 同梱の壁紙
+
+- `seinas-wallpapers-v0.4.0.tar.gz` を開くと、`seinas-wallpapers-v0.4.0/` の下に `torch-16x9.png`(1,729,376 バイト)、`torch-4x3.png`(474,583 バイト)、`LICENSE`、`README.md` があります。この 4 つを `/usr/share/seinas/wallpapers/` に置きます。
+- 壁紙は、既定で `XDG_DATA_DIRS` の各々の下の `seinas/wallpapers` を探し、`XDG_DATA_DIRS` が無ければ `/usr/local/share` と `/usr/share` の下を探します(どれも絶対パス)。なので、`/usr/share/seinas/wallpapers/` に置けば、環境変数は要りません。`XDG_DATA_DIRS` を別の値にしているときは、その下に置くか、`SEINAS_WALLPAPERS=/usr/share/seinas/wallpapers` を渡します(`SEINAS_WALLPAPERS` が、いちばん先に探す置き場)。
+- 2 枚とも 4 MiB より小さいので、ZeikOS 向けに縮めた画像は要りません。1280x800 の画面では、比のいちばん近い `torch-16x9.png`(1920x1080)を読み、塗りつぶし(左右が約 10% 切れる)で出します。読んでから縮めるまでの間、約 8.3 MB(1920x1080 × 4 バイト)をメモリーに置きます。
+- 壁紙の共有メモリーは、出力の大きさ(1280x800 で 4,096,000 バイト)です。今の ZeikOS の memfd(1 つ 4096 ページ = 16 MiB、全体で 16,384 ページ、16 個まで。zeikos の `kernel/src/shm.rs`)に収まります。
+- 置かなければ、壁紙は色(`191e28`)だけを出し、`no config file and no bundled wallpaper` を 1 行出します。
+
+#### アイコンと .desktop
+
+- 置きません。タスクバーとタイトルバーは、アイコンが見つからないアプリに既定のアイコンを出し、`no icon for zeyes-min; the default icon is used` を 1 回出します。トーチのアイコンは、プログラムが描くので、ファイルは要りません。
+- 置くときは、`/usr/share/applications/<app_id>.desktop`(`Icon=` の名前)と、`/usr/share/icons/hicolor/24x24/apps/<名前>.png` です(`docs/taskbar.md` の「アイコン」。PNG だけ。1 MiB まで、幅と高さは 512 まで)。zeyes-min の app_id は `zeyes-min` です。
+
+#### フォント
+
+- 置きません。同梱のフォントは 3 本とも 4 MiB を越え(`BIZUDPGothic-Regular.ttf` 4,669,688、`BIZUDGothic-Regular.ttf` 4,667,380、`unifont_jp-18.0.01.otf` 5,250,304 バイト)、今の ZeikOS では 1 つのファイルが 4 MiB 未満でなければならないためです。
+- フォントが無くても、4 つとも動きます。文字を描かないだけです。
+  - コンポジタ:ウィンドウのタイトルの文字を描きません。起動のときに、フォントを読めない WARN の行を 3 行出します(既定の置き場が `target/fonts` の相対のパスのため)。
+  - タスクバー:時計の文字と、隠れたタスクの一覧のタイトルを描きません(アイコンと印と地は描く)。起動のときに、`cannot read the font target/fonts/BIZUDPGothic-Regular.ttf: …` と `cannot read the font target/fonts/unifont_jp-18.0.01.otf: …` の 2 行を出します。
+  - 壁紙と zeyes-min:文字を使いません。
+- 文字を出すには、4 MiB 未満のフォント(たとえば、使う文字だけに減らしたもの)を作るか、ZeikOS が 4 MiB 以上のファイルを読めるようになるのを待ちます。どちらにするかは未決です。
+
+#### xkb
+
+- xkb のファイルは置きません。コンポジタは、ふだんの起動(`--test-input` なし)ではキーボードを作らず、タスクバーはキーボードが無ければ使わないので、どれも xkb のファイルを読みません。
 
 ### 起動のしかた
 
-zash で、タスクバーを `a | b` の左に、コンポジタを右に置いて起動します。ZeikOS では `/dev/fb0` を前景のプロセスしか開けないので、コンポジタを前景(右側)にします。左側のタスクバーが先に起き、コンポジタのソケットができるまで待ってつなぎます(`docs/taskbar.md` の「起動の順序」)。
+zash で、zeyes-min・壁紙・タスクバーを `|` の左に、コンポジタをいちばん右に置いて起動します。ZeikOS では `/dev/fb0` を前景のプロセスしか開けないので、コンポジタを前景(いちばん右)にします。左の 3 つは先に起き、コンポジタのソケットができるまで待ってつなぎます(`docs/taskbar.md` の「起動の順序」。v0.4.0 から、壁紙と zeyes-min も待つ)。
 
 ```text
 export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock
-/bin/linux/seinas-taskbar | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket
+WAYLAND_DISPLAY=/tmp/seinas/s.sock /bin/linux/zeyes-min | /bin/linux/seinas-wallpaper | /bin/linux/seinas-taskbar | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket
 ```
 
-- `WAYLAND_DISPLAY` は、タスクバーがつなぐ、シェルの部品のためのソケットです。絶対パスにしているので、`XDG_RUNTIME_DIR` は使いません。相対の名前(`s-shell.sock`)でも、ZeikOS の `/etc/environment` の `XDG_RUNTIME_DIR=/tmp/seinas` の下になるので同じです。
+- zeyes-min だけは、ふだんのソケット(`/tmp/seinas/s.sock`)へつなぐので、コマンドの前の `WAYLAND_DISPLAY=…` で変えます。壁紙とタスクバーは、`export` したシェルの部品のためのソケット(`/tmp/seinas/s-shell.sock`)へつなぎます。
+- zash が 4 段のパイプと、コマンドの前の `名前=値` を受けるかは、ZeikOS の側で確かめてください。受けないときは、まず zeyes-min を外した `/bin/linux/seinas-wallpaper | /bin/linux/seinas-taskbar | /bin/linux/seinas-standalone …`(`export` は同じ)で、壁紙とタスクバーまでを確かめられます。zeyes-min を同じ 1 行に入れる別の手段(zeyes-min に、つなぐソケットを選ぶ引数を足すなど)は、要るときに決めます。
+- `WAYLAND_DISPLAY` は、壁紙とタスクバーがつなぐシェルの部品のためのソケット(`/tmp/seinas/s-shell.sock`)と、zeyes-min がつなぐふだんのソケット(`/tmp/seinas/s.sock`)です。絶対パスなら `XDG_RUNTIME_DIR` は使いません。
 - コンポジタは、`--socket` で場所を決めるので、`WAYLAND_DISPLAY` と `XDG_RUNTIME_DIR` を読みません。シェルの部品のためのソケットは、`--socket` のパスから `/tmp/seinas/s-shell.sock` になります。
-- `--no-ime-socket` で、IME のためのソケットを開きません(IME を使わない構成。fd が 2 本減る)。コンポジタの fd は、タスクバーがつながって 15 本です(`docs/zeikos-requirements.md` の「fd の種類」)。
-- パイプは、起動の順序を決めるためだけに使います。タスクバーは標準出力に何も書かず、コンポジタは標準入力を読みません(`--test-input` を付けないため)。ログはどちらも標準エラーです。
-- どちらも `--fonts` と `--config` を付けません。タスクバーの時計は、既定の +09:00 です(`TZ` も設定のファイルも無いため)。
-
-### フォントと xkb
-
-- フォントは置きません。同梱のフォントは 3 本とも 4 MiB を越え、今の ZeikOS の ext2 では読めないためです(`docs/zeikos-requirements.md` の「4 MiB を越えるファイル」)。
-- フォントが無くても、どちらも動きます(2026-10-24 に、Linux で、フォントの置き場が無く、作業中のディレクトリが `/` の形で確かめた)。
-  - コンポジタ:ウィンドウのタイトルの文字を描きません。起動のときに、フォントを読めないという WARN の行を出します(タスクバーと同じく、既定の置き場が相対のパスのため)。
-  - タスクバー:地の色とボタンの地は描き、ボタンの文字と時計の文字を描きません。起動のときに、`cannot read the font target/fonts/BIZUDPGothic-Regular.ttf: …` と `cannot read the font target/fonts/unifont_jp-18.0.01.otf: …` の 2 行を出します(既定の置き場は、作業中のディレクトリから見た `target/fonts` で、ZeikOS は相対のパスの open を断る)。
-- xkb のファイルは置きません。コンポジタは、ふだんの起動(`--test-input` なし)ではキーボードを作らず、タスクバーはキーボードを使わないので、どちらも xkb のファイルを読みません。
+- `--no-ime-socket` で、IME のためのソケットを開きません(IME を使わない構成)。
+- パイプは、起動の順序を決めるためだけに使います。左の 3 つは標準出力に何も書かず、コンポジタは標準入力を読みません(`--test-input` を付けないため)。ログはどれも標準エラーです。
+- どれも `--fonts` と `--config` を付けません。タスクバーの時計は、既定の +09:00 です(`TZ` も設定のファイルも無いため)。
 
 ### 起動が済んだことの見分け方
 
@@ -110,27 +145,42 @@ export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock
   - `listening on /tmp/seinas/s.sock`、`listening on /tmp/seinas/s-shell.sock`、`the socket for the input method is not opened (--no-ime-socket)`
   - `screen: 1280x800 (…)`(大きさは、ZeikOS の画面のもの)
   - `presented the first frame (1280x800)`(最初の 1 枚を画面へ present し終えたときに、1 回だけ。target は `seinas_standalone`)
-- タスクバー(標準エラー。`seinas-taskbar:` で始まる):
-  - `the clock is UTC+09:00 (from the default)` と、上のフォントの 2 行
-  - コンポジタより先に起きたとき:`the compositor is not ready at /tmp/seinas/s-shell.sock (ECONNREFUSED: …); trying again every 100 ms for up to 30000 ms`、つないだら `connected to the compositor after <回数> tries`
-  - 最初の往復の答えを待ったとき:`connected; waiting up to 30000 ms …` と `the compositor answered the first round trip`
-- 画面:背景の色(`191e28`)の下の端に、高さ 40 ピクセルのタスクバー(地の色 `20242c`)が出ます。
-- タスクバーがつなげないときは、30 秒(接続)か 30 秒(最初の往復)で、名前つきのエラー(`the compositor did not appear …`、`the compositor did not answer the first round trip …`)で終わります。
+  - `a client connected`(3 回)、`usable area: 1280x760 at (0, 0)`(タスクバーの exclusive zone)、`new toplevel`(zeyes-min)
+- タスクバー(`seinas-taskbar:` で始まる):`the clock is UTC+09:00 (from the default)` と、上のフォントの 2 行。先に起きたときは `the compositor is not ready at /tmp/seinas/s-shell.sock (…); trying again every 100 ms for up to 30000 ms` と `connected to the compositor after <回数> tries`。
+- 壁紙(`seinas-wallpaper:` で始まる):`no config file; the bundled wallpapers in /usr/share/seinas/wallpapers: torch-16x9.png (1920x1080), torch-4x3.png (800x600)`、`the bundled wallpaper torch-16x9.png (1920x1080) for 1280x800`、`drew 1280x800`。先に起きたときは、タスクバーと同じ 2 行。
+- zeyes-min(`zeyes:` で始まる):先に起きたときは、タスクバーと同じ 2 行。`configured to (None, None)`。
+- 画面:壁紙の上に、左上に zeyes-min のウィンドウ(タイトルバーつき。フォントが無いのでタイトルの文字は無い)、下の端に高さ 40 のタスクバー(中央にトーチと zeyes-min のタスク。前面の印のオレンジの線)が出ます。
+- つなげないときは、30 秒で `the compositor did not appear …` で終わります(タスクバーは、最初の往復の期限 30 秒も持つ)。
 
-### ZeikOS の側に要るもの(タスクバー)
+### ZeikOS の制限に当たる所(v0.4.0。2026-11-04 に確かめた)
 
-コンポジタだけ(v0.2.0)のときに無かったもので、タスクバーをつなぐと要るものです。詳しくは `docs/zeikos-requirements.md` と `docs/taskbar.md` の「ZeikOS の上で動かすときの前提」にあります。
+ZeikOS のバグ探しで分かった制限に、4 つのプログラムが当たるかを、コードを読み、Linux で上の起動のしかたと同じ形(`--test-input` なし、`--no-ime-socket`、フォントなし、作業中のディレクトリは `/`、1280x800)で strace を取って確かめました。今の起動のしかたでは、どれにも当たりません。当たりうる所は、どれも ZeikOS の上ではまだ通らない道(キーボードやポインターが要るもの)です。
 
-- `ppoll`(271 番。timeout の timespec と sigmask は NULL):wayland-client の registry の往復で 1 回使います。
-- `poll`(7 番):最初の往復を、期限つきで待つのに使います(timeout は 0 と、期限の残りのミリ秒)。
-- 共有メモリー:タスクバーの pool は、`ftruncate(fd, 256000)` で始まり、2 枚目のバッファを取ると `ftruncate(fd, 512000)` に伸びます(1280 の幅で、1 枚 204,800 バイト)。コンポジタは、伸ばしたときに、前のマッピングを `munmap` してから `mmap` し直します(Smithay 0.7.0 は mremap を使わない)。
-- `clock_gettime(CLOCK_REALTIME)`(時計)と `clock_nanosleep(CLOCK_MONOTONIC)`(つなぐのを待つ間)。
+| 制限 | 起動のしかたのとおりに動かしたとき | 当たりうる所(今は通らない) |
+| --- | --- | --- |
+| memfd へ `write()` すると EBADF | 当たらない。3 つのクライアントは、共有メモリーを `memfd_create`・`ftruncate`・`mmap` で作り、mmap で書く(SCTK の `SlotPool`)。コンポジタは memfd を作らない | コンポジタが keymap を送るとき:Smithay の `SealedFile::with_content`(`src/utils/sealed_file.rs` の 37 行目)が `memfd_create` の後に `write_all` する。キーボードがあるときだけ(`--test-input`、入れ子)。ZeikOS の上でキーボードを作るようになると、最初に `wl_keyboard` を取るクライアント(タスクバー)のときに EBADF になり、Smithay は keymap を作れない(コンポジタが止まるかは、その形で確かめる)。IME の virtual-keyboard の keymap の書き直しも同じ(`--no-ime-socket` で通らない)。wayland-cursor(SCTK の依存として、3 つのクライアントに入る)は、カーソルのテーマの絵を memfd へ `write_all` する(`wayland-cursor` 0.31.14 の `src/lib.rs` の 164・374 行目)が、Seinas のクライアントはカーソルのテーマを使わない(`ThemedPointer` などを呼ばない) |
+| 1 回の `sendmsg` で fd を 2 つ以上送ると、1 つ目しか運ばない | 当たらない。3 つのクライアントは、`SCM_RIGHTS` で fd を 1 つ(pool の memfd)だけ送る。コンポジタは fd を送らない | wayland-backend は、送る前に溜まったメッセージの fd を、1 回の `sendmsg` にまとめる(28 個まで。`src/rs/socket.rs` の 164 行目)。fd を持つメッセージが、1 回の送りの前に 2 つ溜まると当たる。コンポジタからは keymap(キーボードがあるとき)と、クリップボードの `wl_data_source.send`(キーボードのフォーカスがあるとき)。今は通らない |
+| ソケットを POLLOUT で待つと EINVAL | 当たらない。どれも POLLOUT で待たない | 送りが詰まったとき:コンポジタ(wayland-backend のサーバー)は溜めて次に送り直し、epoll は IN だけ(`src/rs/server_impl/handle.rs` の 371 行目)。クライアント(calloop-wayland-source)も、次に送り直すだけ(`src/lib.rs` の 224 行目)。wayland-client の `roundtrip` の中で詰まると、エラーで終わる(`src/conn.rs` の 161 行目。待たない) |
+| poll・ppoll に 5 本以上の fd、POLLIN と POLLOUT を一緒に | 当たらない。poll は、Rust の標準ライブラリの起動の 3 本(fd 0〜2、events 0)、タスクバーの最初の往復の 1 本(POLLIN)、wayland-client の読み待ちの 1 本(POLLIN\|POLLERR)だけ。イベントループは epoll(calloop) | — |
+| `pread64`・`pwrite64`・`fsync`、memfd 以外の `ftruncate` | 当たらない。`ftruncate` は memfd だけ(タスクバー 256,000 → 512,000、壁紙 1,920,000 → 4,096,000、zeyes-min 614,400 バイト)。ファイルは `read` で読む | — |
+
+- strace の記録と道具は、リポジトリには入れていません(運用者の手元の `docs/notes/zeikos-v040/`)。
+- 前提:ZeikOS の上で入力(キーボード・ポインター)をコンポジタへ渡すようになったら、上の「当たりうる所」を、その形で確かめ直します。
+
+### ZeikOS の側に要るもの(v0.4.0)
+
+v0.3.0(コンポジタとタスクバー)で要ったもの(`ppoll`・`poll`・`clock_gettime(CLOCK_REALTIME)`・`clock_nanosleep(CLOCK_MONOTONIC)`。`docs/zeikos-requirements.md`、`docs/taskbar.md` の「ZeikOS の上で動かすときの前提」)に加えて、壁紙と zeyes-min をつなぐと、次のものが要ります。数は、上の strace(1280x800)で確かめた値です。
+
+- 共有メモリー:クライアントごとに pool の memfd が 1 つ。タスクバー 256,000 → 512,000 バイト(`ftruncate` 2 回)、壁紙 1,920,000 → 4,096,000 バイト(`ftruncate` 2 回)、zeyes-min 614,400 バイト(1 回)。コンポジタは memfd を作りません(キーボードが無いので keymap も無い)。zeikos の 5d3b9f39 の `kernel/src/shm.rs` の上限(1 つ 4096 ページ = 16 MiB、全体で 16,384 ページ = 64 MiB、16 個まで)に収まります。`docs/zeikos-requirements.md` の memfd の行(2 つまで、8 ページ)は 10/21 の値で、古くなっています。
+- fd:コンポジタは、`--no-ime-socket` でクライアント 0 のとき 13 本(ZeikOS の上で /dev/fb0 を含む)、クライアント 1 つにつき 2 本(接続のソケットと pool の memfd)増えるので、3 つで 19 本です(上限 32)。
+- 壁紙は、同梱の壁紙のファイルを `open`・`fstat`・`read` で読みます(1,729,376 バイト)。
+- zeyes-min は、ふだんのソケット(`/tmp/seinas/s.sock`)へつなぎます。壁紙とタスクバーは、シェルの部品のためのソケットです。
 
 ### 止め方
 
-前面のコンポジタを、ZeikOS の手段(Ctrl+C)で止めます。タスクバーは、接続が切れて `the connection to the compositor was lost` で終わります。終わるときのクリーンアップ(ソケットのファイルとロックファイルを消す、など)はしていません(下の「今の制限」)。
+前面のコンポジタを、ZeikOS の手段(Ctrl+C)で止めます。左の 3 つは、接続が切れて `the connection to the compositor was lost` で終わります。終わるときのクリーンアップ(ソケットのファイルとロックファイルを消す、など)はしていません(下の「今の制限」)。
 
-コンポジタだけを起動するときは、今までどおり `seinas-standalone --socket /tmp/seinas/s.sock`(v0.2.0 の形)でも動きます。
+コンポジタだけを起動するときは、今までどおり `seinas-standalone --socket /tmp/seinas/s.sock`(v0.2.0 の形)でも動きます。v0.3.0 の形(`seinas-taskbar | seinas-standalone …`)も、そのまま動きます。
 
 ## 公開するもの
 

@@ -104,13 +104,13 @@ mode = fill
 ### 配り方
 
 - 画像は、実行ファイルに埋め込みません(1.7 MB ほど大きくなるため)。
-- release では、壁紙の実行ファイル(`seinas-wallpaper`)を release に入れるときに、別のアセット `seinas-wallpapers-<タグ>.tar.gz`(PNG の 2 枚、`LICENSE`、`README.md`)にして一緒に入れます。置く先は `<データの置き場>/seinas/wallpapers`(例:`/usr/share/seinas/wallpapers`)です。今の release(v0.3.0。seinas-standalone とタスクバー)には、壁紙が入っていないので、release のスクリプトはまだ変えていません。
+- release では、壁紙の実行ファイル(`seinas-wallpaper`)と一緒に、別のアセット `seinas-wallpapers-<タグ>.tar.gz`(PNG の 2 枚、`LICENSE`、`README.md`)にして入れます(v0.4.0 から。`tools/release-standalone.sh`)。置く先は `<データの置き場>/seinas/wallpapers`(例:`/usr/share/seinas/wallpapers`)です。
 
 ### ZeikOS の上で
 
-- 2 枚とも 4 MiB より小さい(1,729,376 と 474,583 バイト)ので、今の ZeikOS の ext2 でも読めます。
-- ただし、壁紙は出力の大きさの共有メモリー(1280x800 で 4,096,000 バイト)を使い、今の ZeikOS の memfd は 32 KiB まで(下の「ZeikOS の上で動かすときの前提」)なので、画像にかかわらず、ZeikOS の上ではまだ壁紙を出せません。
-- 縮めた画像(たとえば、ZeikOS の画面にそのまま合う 1280x800)は、今は作りません。作るのは、壁紙を ZeikOS に載せると決めたときです(読み込みのメモリーと縮める処理が減る)。
+- 2 枚とも 4 MiB より小さい(1,729,376 と 474,583 バイト)ので、今の ZeikOS の ext2 でも読めます。`/usr/share/seinas/wallpapers/` に置けば、環境変数なしで見つかります(`docs/standalone.md` の「ZeikOS の上で起動する」)。
+- 壁紙は出力の大きさの共有メモリー(1280x800 で 4,096,000 バイト)を使います。今の ZeikOS の memfd(1 つ 16 MiB まで。zeikos の 5d3b9f39 の `kernel/src/shm.rs`)に収まります。
+- 縮めた画像(たとえば、ZeikOS の画面にそのまま合う 1280x800)は、今は作りません(読み込みのメモリーと縮める処理が減るので、要るときに決める)。
 
 ## 画像
 
@@ -149,7 +149,7 @@ mode = fill
 zeyes-min と同じもの(`docs/zeikos-requirements.md`)に加えて、次のものが要ります。
 
 - 設定と画像のファイルを読むこと(open・fstat・read)。画像が 4 MiB を越えると、ext2 の 2 段目の間接ブロックが要ります。
-- 出力の大きさの共有メモリー(800x600 で 1,920,000 バイト。ZeikOS の memfd は、今は 32 KiB まで)。
+- 出力の大きさの共有メモリー(800x600 で 1,920,000 バイト、1280x800 で 4,096,000 バイト。ZeikOS の memfd は、1 つ 16 MiB まで)。
 - 環境変数 `WAYLAND_DISPLAY`(シェルの部品のソケット)と `XDG_RUNTIME_DIR`、設定の置き場の `XDG_CONFIG_HOME` か `HOME`。
 
 ## テスト
