@@ -8,7 +8,8 @@ use std::path::Path;
 use seinas_golden::{Image, Runner, Tolerance};
 use seinas_icons::IconCache;
 use seinas_taskbar::{
-    list_height, paint, paint_list, Clock, Entry, Pointer, Target, HEIGHT, ICON_SIZE, LIST_WIDTH,
+    list_height, menu_height, paint, paint_list, paint_menu, Clock, Entry, Pointer, Target, HEIGHT,
+    ICON_SIZE, LIST_WIDTH, MENU_WIDTH,
 };
 use seinas_text::{FontFiles, TextPainter};
 
@@ -182,6 +183,53 @@ fn main() {
                 name,
                 Tolerance::EXACT,
                 Image::from_bgrx(LIST_WIDTH as usize, height as usize, &pixels),
+            );
+        });
+    }
+
+    // F9・F10: トーチのメニュー。アイコンのあるもの・無いもの(既定のアイコン)、日本語の名前、長い名前、選んでいる行。
+    // F10 は、起こせなかったときの理由の行つき(行の所は 2 行分の高さに縮めて、スクロールした所)。
+    let menu_apps = [
+        entry("seinas.test.files", false, false),
+        entry("seinas.test.terminal", false, false),
+        entry("seinas.test.missing", false, false),
+    ];
+    let menu_icons = icons(&menu_apps);
+    let names = [
+        "ファイル",
+        "端末",
+        "とても長い名前のアプリ(メニューの幅に収まらないので、切れる)",
+    ];
+    let items: Vec<(&str, &seinas_icons::Icon)> = names
+        .iter()
+        .zip(&menu_apps)
+        .map(|(name, entry)| (*name, menu_icons.get(&entry.app_id)))
+        .collect();
+    let menus = [
+        (
+            "f9-torch-menu",
+            menu_height(items.len(), false),
+            Some(1),
+            0,
+            None,
+        ),
+        (
+            "f10-torch-menu-message",
+            menu_height(2, true),
+            Some(2),
+            40,
+            Some("起動できませんでした: /no/such/program: No such file or directory (os error 2)"),
+        ),
+    ];
+    for (name, height, selected, scroll, message) in menus {
+        run.with_fonts(name, |run, fonts: &Path| {
+            let painter =
+                painter.get_or_insert_with(|| TextPainter::load(&FontFiles::in_dir(fonts)).0);
+            let pixels = paint_menu(painter, height, &items, selected, scroll, message);
+            run.image(
+                name,
+                Tolerance::EXACT,
+                Image::from_bgrx(MENU_WIDTH as usize, height as usize, &pixels),
             );
         });
     }

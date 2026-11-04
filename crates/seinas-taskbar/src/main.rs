@@ -22,7 +22,9 @@
 //! 決まりの説明は `docs/taskbar.md` にある。
 
 use std::{
+    collections::{HashMap, HashSet},
     error::Error,
+    ffi::OsString,
     fmt::Display,
     io,
     os::fd::{AsRawFd, RawFd},
@@ -34,6 +36,7 @@ use std::{
 
 use seinas_connect::{connect, CONNECT_TIMEOUT};
 use seinas_icons::{Found, Icon, IconCache};
+use seinas_taskbar::launch::{app_display, CommandLauncher, Launcher};
 use seinas_taskbar::{
     action_for, choose_offset, clock_for, format_utc_offset, layout, list_height, list_max_scroll,
     list_move, list_row_at, list_scroll_to, paint, paint_list, read_config, until_next_minute,
@@ -87,6 +90,8 @@ use wayland_protocols_wlr::foreign_toplevel::v1::client::{
     zwlr_foreign_toplevel_handle_v1::{self, ZwlrForeignToplevelHandleV1},
     zwlr_foreign_toplevel_manager_v1::{self, ZwlrForeignToplevelManagerV1},
 };
+
+mod torch_menu;
 
 /// 左のボタンの番号(Linux の入力の決まり)。
 const LEFT_BUTTON: u32 = 0x110;
@@ -164,6 +169,11 @@ struct Taskbar {
     xdg_shell: XdgShell,
     keyboard: Option<wl_keyboard::WlKeyboard>,
     list: Option<HiddenList>,
+    /// トーチのメニュー(`torch_menu.rs`)と、アプリを起こすもの、読んだアプリのアイコン、出した理由の行。
+    menu: Option<torch_menu::Menu>,
+    launcher: Box<dyn Launcher>,
+    app_icons: torch_menu::IconTable,
+    menu_notes: HashSet<String>,
 }
 
 impl Taskbar {
@@ -218,6 +228,7 @@ impl Taskbar {
     /// 隠れたタスクの一覧を開く。`serial` は「…」を押したときのもの(ポップアップの grab に使う)。選ぶ行は、前面の
     /// ウィンドウが隠れていればその行、無ければ先頭。
     fn open_list(&mut self, serial: u32) {
+        self.close_menu();
         let hidden = self.hidden();
         if hidden.is_empty() {
             return;
@@ -452,9 +463,10 @@ impl Taskbar {
         }
         let (width, stride) = (self.width, self.width * 4);
         let entries = self.entries();
-        // 一覧を開いている間は、「…」を押しているときの地にする。
+        // 一覧・メニューを開いている間は、「…」・トーチを押しているときの地にする。
         let pointer = Pointer {
             list_open: self.list.is_some(),
+            menu_open: self.menu.is_some(),
             ..self.hot
         };
         let pixels = paint(
@@ -592,6 +604,17 @@ impl CompositorHandler for Taskbar {
             }
             return;
         }
+        if let Some(menu) = self
+            .menu
+            .as_mut()
+            .filter(|menu| menu.popup.wl_surface() == surface)
+        {
+            menu.frame_pending = false;
+            if menu.dirty {
+                self.draw_menu();
+            }
+            return;
+        }
         self.frame_pending = false;
         if self.dirty {
             self.draw();
@@ -641,8 +664,9 @@ impl LayerShellHandler for Taskbar {
         if width != self.width {
             self.width = width;
             self.dirty = true;
-            // 並べ方が変わるので、一覧は閉じる。
+            // 並べ方が変わるので、一覧とメニューは閉じる。
             self.close_list();
+            self.close_menu();
         }
         if !self.configured {
             self.configured = true;
@@ -708,6 +732,38 @@ impl PointerHandler for Taskbar {
     ) {
         use PointerEventKind::*;
         for event in events {
+            if self
+                .menu
+                .as_ref()
+                .is_some_and(|menu| menu.popup.wl_surface() == &event.surface)
+            {
+                let row = self.menu_row_at(event.position.1);
+                match event.kind {
+                    Enter { .. } | Motion { .. } => {
+                        if row.is_some() {
+                            self.select_menu_row(row);
+                        }
+                    }
+                    Press {
+                        button: LEFT_BUTTON,
+                        ..
+                    } => {
+                        if let Some(row) = row {
+                            self.start_app(row);
+                        }
+                    }
+                    Axis { vertical, .. } if vertical.absolute != 0.0 || vertical.discrete != 0 => {
+                        let step = if vertical.discrete != 0 {
+                            vertical.discrete * torch_menu::WHEEL_STEP
+                        } else {
+                            vertical.absolute.round() as i32
+                        };
+                        self.scroll_menu(step);
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if let Some(list) = self
                 .list
                 .as_ref()
@@ -780,10 +836,9 @@ impl PointerHandler for Taskbar {
             ) = (&event.kind, pointer.hot)
             {
                 match target {
-                    // メニューはまだ無い。
-                    Target::Torch => {
-                        eprintln!("seinas-taskbar: the torch was pressed (no menu yet)")
-                    }
+                    // 開いていれば閉じる(隠れたタスクの一覧と同じ)。
+                    Target::Torch if self.menu.is_some() => self.close_menu(),
+                    Target::Torch => self.open_menu(*serial),
                     Target::Task(index) => self.press(index),
                     // 開いていれば閉じる(開いている間の押下は、ポップアップの grab で、ふつうはコンポジタが閉じる)。
                     Target::More if self.list.is_some() => self.close_list(),
@@ -930,6 +985,8 @@ struct Options {
     round_trip_timeout: Duration,
     /// 時計を止める時刻(`--fixed-time`。UNIX 時刻)。
     fixed_time: Option<Duration>,
+    /// トーチのメニューから起こすアプリがつなぐソケット(`--app-display`)。Noneなら、`WAYLAND_DISPLAY` から求める。
+    app_display: Option<OsString>,
 }
 
 fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, String> {
@@ -940,6 +997,7 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
     let mut connect_timeout = CONNECT_TIMEOUT;
     let mut round_trip_timeout = ROUND_TRIP_TIMEOUT;
     let mut fixed_time = None;
+    let mut app_display = None;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         let mut value = || args.next().cloned().ok_or(format!("{arg} needs a value"));
@@ -957,6 +1015,7 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
                     .map_err(|_| format!("invalid --fixed-time value: {text}"))?;
                 fixed_time = Some(Duration::from_secs(seconds));
             }
+            "--app-display" => app_display = Some(OsString::from(value()?)),
             other => return Err(format!("unknown argument: {other}")),
         }
     }
@@ -970,6 +1029,7 @@ fn parse_options(args: &[String], fonts_env: Option<String>) -> Result<Options, 
         connect_timeout,
         round_trip_timeout,
         fixed_time,
+        app_display,
     })
 }
 
@@ -1130,6 +1190,20 @@ fn run() -> Result<(), Box<dyn Error>> {
     let (globals, event_queue) = registry_queue_init::<Taskbar>(&conn)
         .map_err(|e| failed_during(&conn, "the registry round trip", e))?;
     let qh = event_queue.handle();
+    // トーチのメニューから起こすアプリがつなぐソケット。指定が無ければ、シェルの部品のためのソケットの名前から求める。
+    let app_display = options
+        .app_display
+        .clone()
+        .or_else(|| std::env::var_os("WAYLAND_DISPLAY").and_then(|shell| app_display(&shell)));
+    match &app_display {
+        Some(display) => eprintln!(
+            "seinas-taskbar: applications from the torch menu connect to {}",
+            display.to_string_lossy()
+        ),
+        None => eprintln!(
+            "seinas-taskbar: the socket for applications is not known; the torch menu cannot start them (use --app-display)"
+        ),
+    }
     let mut event_loop: EventLoop<Taskbar> = EventLoop::try_new()?;
     WaylandSource::new(conn.clone(), event_queue)
         .insert(event_loop.handle())
@@ -1189,6 +1263,10 @@ fn run() -> Result<(), Box<dyn Error>> {
         xdg_shell,
         keyboard: None,
         list: None,
+        menu: None,
+        launcher: Box::new(CommandLauncher::new(app_display)),
+        app_icons: HashMap::new(),
+        menu_notes: HashSet::new(),
     };
     // 時計は、分が変わった少し後に起きて再描画する。時刻が取れないときは、60 秒ごとに読み直す。時刻を止めて
     // いるときは、起きない。
@@ -1213,6 +1291,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         event_loop
             .dispatch(None, &mut state)
             .map_err(|e| format!("the connection to the compositor was lost: {e}"))?;
+        // トーチのメニューから起こした子のうち、終わったものを片付ける。
+        state.launcher.reap();
     }
     Ok(())
 }
@@ -1244,6 +1324,10 @@ impl PopupHandler for Taskbar {
         popup: &Popup,
         config: PopupConfigure,
     ) {
+        if self.menu.as_ref().is_some_and(|menu| &menu.popup == popup) {
+            self.configure_menu(config.height);
+            return;
+        }
         let Some(list) = self.list.as_mut().filter(|list| &list.popup == popup) else {
             return;
         };
@@ -1268,6 +1352,9 @@ impl PopupHandler for Taskbar {
     fn done(&mut self, _: &Connection, _: &QueueHandle<Self>, popup: &Popup) {
         if self.list.as_ref().is_some_and(|list| &list.popup == popup) {
             self.close_list();
+        }
+        if self.menu.as_ref().is_some_and(|menu| &menu.popup == popup) {
+            self.close_menu();
         }
     }
 }
@@ -1305,7 +1392,11 @@ impl Dispatch2<wl_keyboard::WlKeyboard, Taskbar> for KeyboardData {
             ..
         } = event
         {
-            state.list_key(key);
+            if state.menu.is_some() {
+                state.menu_key(key);
+            } else {
+                state.list_key(key);
+            }
         }
     }
 }

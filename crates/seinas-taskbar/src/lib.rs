@@ -3,6 +3,9 @@
 //! バイナリ(`src/main.rs`)が、layer-shell と foreign-toplevel のクライアントとして動き、ここの関数で
 //! 描いて、ポインターの位置からトーチかタスクを選ぶ。決まりの説明は `docs/taskbar.md` と `docs/ui-spec.md` にある。
 
+pub mod apps;
+pub mod launch;
+
 use std::{path::Path, time::Duration};
 
 use seinas_icons::{fill_circle, fill_rect, fill_rounded_rect, Icon, IconCache};
@@ -15,7 +18,9 @@ pub use seinas_theme::taskbar::{
     HIGHLIGHT_SIZE, HOT, ICON_SIZE, LEFT_MARGIN, LIST_ACTIVE_MARK, LIST_ACTIVE_MARK_WIDTH,
     LIST_BACKGROUND, LIST_BORDER, LIST_GAP, LIST_ICON_LEFT, LIST_MINIMIZED_TEXT, LIST_PADDING,
     LIST_ROW_HEIGHT, LIST_SELECTED, LIST_TEXT, LIST_TEXT_GAP, LIST_TEXT_RIGHT, LIST_TEXT_SIZE,
-    LIST_WIDTH, MARK_GAP, MARK_HEIGHT, MIN_PITCH, MORE_DOT, MORE_DOT_DIAMETER, MORE_DOT_GAP, PITCH,
+    LIST_WIDTH, MARK_GAP, MARK_HEIGHT, MENU_BACKGROUND, MENU_BORDER, MENU_GAP, MENU_MAX_HEIGHT,
+    MENU_MESSAGE_TEXT, MENU_PADDING, MENU_ROW_HEIGHT, MENU_SELECTED, MENU_TEXT, MENU_TEXT_GAP,
+    MENU_TEXT_SIZE, MENU_WIDTH, MIN_PITCH, MORE_DOT, MORE_DOT_DIAMETER, MORE_DOT_GAP, PITCH,
     PRESSED, RIGHT_MARGIN, TEXT, TEXT_SIZE, TOP_LINE,
 };
 
@@ -188,13 +193,14 @@ impl Clock {
     }
 }
 
-/// ポインターの状態(乗っているものと、押しているもの)と、隠れたタスクの一覧を開いているか(開いている間は、
-/// 「…」を押しているときと同じ地にする)。
+/// ポインターの状態(乗っているものと、押しているもの)と、隠れたタスクの一覧・トーチのメニューを開いているか
+/// (開いている間は、「…」・トーチを押しているときと同じ地にする)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Pointer {
     pub hot: Option<Target>,
     pub pressed: Option<Target>,
     pub list_open: bool,
+    pub menu_open: bool,
 }
 
 /// タスクバーの絵を作る。幅は `width`、高さは [`HEIGHT`]。ピクセルの並びは B, G, R, X。
@@ -213,12 +219,15 @@ pub fn paint(
     let mut pixels = bgrx(BACKGROUND).repeat((width * HEIGHT) as usize);
     fill_rect(&mut pixels, width, (0, 0, width, 1), TOP_LINE);
     let layout = layout(width, entries.len());
-    // 乗っている・押しているものの地。一覧を開いている間の「…」は、押しているときと同じ地。
-    let open = pointer.list_open.then_some(Target::More);
+    // 乗っている・押しているものの地。一覧を開いている間の「…」と、メニューを開いている間のトーチは、押している
+    // ときと同じ地。
+    let list_open = pointer.list_open.then_some(Target::More);
+    let menu_open = pointer.menu_open.then_some(Target::Torch);
     for (target, color) in [
         (pointer.hot, HOT),
         (pointer.pressed, PRESSED),
-        (open, PRESSED),
+        (list_open, PRESSED),
+        (menu_open, PRESSED),
     ] {
         if let Some(index) = target.and_then(|t| layout.index(t)) {
             fill_rounded_rect(
@@ -294,40 +303,98 @@ fn paint_more(pixels: &mut [u8], width: i32, layout: &Layout, hidden: &[Entry]) 
     }
 }
 
+/// 縦に行を並べ、スクロールするポップアップ(隠れたタスクの一覧、トーチのメニュー)の、上下の空きと行の高さ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rows {
+    pub padding: i32,
+    pub row_height: i32,
+}
+
+/// 隠れたタスクの一覧の行。
+pub const LIST_ROWS: Rows = Rows {
+    padding: LIST_PADDING,
+    row_height: LIST_ROW_HEIGHT,
+};
+
+impl Rows {
+    /// 全部の行を出せる高さ(行が `rows` のとき)。
+    pub fn height(self, rows: usize) -> i32 {
+        rows as i32 * self.row_height + 2 * self.padding
+    }
+
+    /// 高さが `height` で、行が `rows` のときの、スクロールの最大(ピクセル)。全部が見えるなら 0。
+    pub fn max_scroll(self, rows: usize, height: i32) -> i32 {
+        (rows as i32 * self.row_height - (height - 2 * self.padding)).max(0)
+    }
+
+    /// 高さ `y` にある行(スクロールが `scroll` のとき)。上下の空きの上と、行の無い所はNone。
+    pub fn row_at(self, y: f64, rows: usize, height: i32, scroll: i32) -> Option<usize> {
+        if y < self.padding as f64 || y >= (height - self.padding) as f64 {
+            return None;
+        }
+        let row = ((y - self.padding as f64 + scroll as f64) / self.row_height as f64) as usize;
+        (row < rows).then_some(row)
+    }
+
+    /// 行 `row` が見えるスクロール(今のスクロール `scroll` から、いちばん少なく動かす)。
+    pub fn scroll_to(self, row: usize, rows: usize, height: i32, scroll: i32) -> i32 {
+        let visible = height - 2 * self.padding;
+        let top = row as i32 * self.row_height;
+        let scroll = if top < scroll {
+            top
+        } else if top + self.row_height > scroll + visible {
+            top + self.row_height - visible
+        } else {
+            scroll
+        };
+        scroll.clamp(0, self.max_scroll(rows, height))
+    }
+
+    /// キー `key` で、選んでいる行 `selected` を動かした後の行(行が `rows`、高さが `height` のとき)。選んでいる
+    /// 行が無ければ、下へは先頭、上へは末尾から。行が無ければNone。
+    pub fn move_selection(
+        self,
+        selected: Option<usize>,
+        rows: usize,
+        height: i32,
+        key: ListKey,
+    ) -> Option<usize> {
+        let last = rows.checked_sub(1)?;
+        let page = (((height - 2 * self.padding) / self.row_height).max(1)) as usize;
+        Some(match (key, selected) {
+            (ListKey::Home, _) => 0,
+            (ListKey::End, _) => last,
+            (ListKey::Down, None) | (ListKey::PageDown, None) => 0,
+            (ListKey::Up, None) | (ListKey::PageUp, None) => last,
+            (ListKey::Down, Some(row)) => (row + 1).min(last),
+            (ListKey::Up, Some(row)) => row.saturating_sub(1),
+            (ListKey::PageDown, Some(row)) => (row + page).min(last),
+            (ListKey::PageUp, Some(row)) => row.saturating_sub(page),
+        })
+    }
+}
+
 /// 隠れたタスクの一覧の、全部の行を出せる高さ(行が `rows` のとき)。
 pub fn list_height(rows: usize) -> i32 {
-    rows as i32 * LIST_ROW_HEIGHT + 2 * LIST_PADDING
+    LIST_ROWS.height(rows)
 }
 
 /// 高さが `height` の一覧で、行が `rows` のときの、スクロールの最大(ピクセル)。全部が見えるなら 0。
 pub fn list_max_scroll(rows: usize, height: i32) -> i32 {
-    (rows as i32 * LIST_ROW_HEIGHT - (height - 2 * LIST_PADDING)).max(0)
+    LIST_ROWS.max_scroll(rows, height)
 }
 
 /// 一覧の中の高さ `y` にある行(スクロールが `scroll` のとき)。上下の空きの上と、行の無い所はNone。
 pub fn list_row_at(y: f64, rows: usize, height: i32, scroll: i32) -> Option<usize> {
-    if y < LIST_PADDING as f64 || y >= (height - LIST_PADDING) as f64 {
-        return None;
-    }
-    let row = ((y - LIST_PADDING as f64 + scroll as f64) / LIST_ROW_HEIGHT as f64) as usize;
-    (row < rows).then_some(row)
+    LIST_ROWS.row_at(y, rows, height, scroll)
 }
 
 /// 行 `row` が見えるスクロール(今のスクロール `scroll` から、いちばん少なく動かす)。
 pub fn list_scroll_to(row: usize, rows: usize, height: i32, scroll: i32) -> i32 {
-    let visible = height - 2 * LIST_PADDING;
-    let top = row as i32 * LIST_ROW_HEIGHT;
-    let scroll = if top < scroll {
-        top
-    } else if top + LIST_ROW_HEIGHT > scroll + visible {
-        top + LIST_ROW_HEIGHT - visible
-    } else {
-        scroll
-    };
-    scroll.clamp(0, list_max_scroll(rows, height))
+    LIST_ROWS.scroll_to(row, rows, height, scroll)
 }
 
-/// 一覧の中で、選ぶ行を動かすキー。
+/// 一覧(とメニュー)の中で、選ぶ行を動かすキー。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ListKey {
     Up,
@@ -341,18 +408,115 @@ pub enum ListKey {
 /// キー `key` で、選んでいる行 `selected` を動かした後の行(行が `rows`、高さが `height` のとき)。選んでいる行が
 /// 無ければ、下へは先頭、上へは末尾から。行が無ければNone。
 pub fn list_move(selected: Option<usize>, rows: usize, height: i32, key: ListKey) -> Option<usize> {
-    let last = rows.checked_sub(1)?;
-    let page = (((height - 2 * LIST_PADDING) / LIST_ROW_HEIGHT).max(1)) as usize;
-    Some(match (key, selected) {
-        (ListKey::Home, _) => 0,
-        (ListKey::End, _) => last,
-        (ListKey::Down, None) | (ListKey::PageDown, None) => 0,
-        (ListKey::Up, None) | (ListKey::PageUp, None) => last,
-        (ListKey::Down, Some(row)) => (row + 1).min(last),
-        (ListKey::Up, Some(row)) => row.saturating_sub(1),
-        (ListKey::PageDown, Some(row)) => (row + page).min(last),
-        (ListKey::PageUp, Some(row)) => row.saturating_sub(page),
-    })
+    LIST_ROWS.move_selection(selected, rows, height, key)
+}
+
+/// トーチのメニューの行(上下の空きは、内側の余白)。
+pub const MENU_ROWS: Rows = Rows {
+    padding: MENU_PADDING,
+    row_height: MENU_ROW_HEIGHT,
+};
+
+/// トーチのメニューの高さ。行が `rows` で、`message`(起動できなかった理由か、アプリが無いこと)を出すなら、その
+/// 1 行を行の下に足す。[`MENU_MAX_HEIGHT`] を越えるなら、それに収める(行の所がスクロールする)。
+pub fn menu_height(rows: usize, message: bool) -> i32 {
+    (MENU_ROWS.height(rows) + menu_message_height(message)).min(MENU_MAX_HEIGHT)
+}
+
+/// メニューの、理由の行の高さ(出さなければ 0)。
+fn menu_message_height(message: bool) -> i32 {
+    if message {
+        MENU_ROW_HEIGHT
+    } else {
+        0
+    }
+}
+
+/// 高さ `height` のメニューの、行の所の高さ(理由の行を除いたもの。[`MENU_ROWS`] の計算に渡す)。
+pub fn menu_rows_height(height: i32, message: bool) -> i32 {
+    height - menu_message_height(message)
+}
+
+/// トーチのメニューの絵を作る。幅は [`MENU_WIDTH`]、高さは `height`。ピクセルの並びは B, G, R, X。
+///
+/// 行は `items`(名前とアイコン)の順。`selected` の行の地は、選んでいる色。`scroll` だけ、行を上へずらして出す。
+/// `message` があれば、行の下に 1 行、補助の文字の色で出す(起動できなかった理由、アプリが無いこと)。
+pub fn paint_menu(
+    painter: &mut TextPainter,
+    height: i32,
+    items: &[(&str, &Icon)],
+    selected: Option<usize>,
+    scroll: i32,
+    message: Option<&str>,
+) -> Vec<u8> {
+    let width = MENU_WIDTH;
+    let height = height.max(2 * MENU_PADDING + 1);
+    let mut pixels = bgrx(MENU_BACKGROUND).repeat((width * height) as usize);
+    let rows_height = menu_rows_height(height, message.is_some());
+    // 行は、全部の行の高さの別の絵に描いてから、見える所だけをコピーする。
+    let all = (items.len() as i32 * MENU_ROW_HEIGHT).max(1);
+    let mut rows = bgrx(MENU_BACKGROUND).repeat((width * all) as usize);
+    let text_left = MENU_PADDING + ICON_SIZE + MENU_TEXT_GAP;
+    for (row, (name, icon)) in items.iter().enumerate() {
+        let top = row as i32 * MENU_ROW_HEIGHT;
+        if selected == Some(row) {
+            fill_rect(
+                &mut rows,
+                width,
+                (1, top, width - 2, MENU_ROW_HEIGHT),
+                MENU_SELECTED,
+            );
+        }
+        icon.draw_onto(
+            &mut rows,
+            width,
+            MENU_PADDING,
+            top + (MENU_ROW_HEIGHT - ICON_SIZE) / 2,
+        );
+        painter.draw_line(
+            &mut Canvas::new(&mut rows, width as usize, all as usize),
+            name,
+            Line {
+                size: MENU_TEXT_SIZE,
+                color: MENU_TEXT,
+                x: text_left,
+                top,
+                height: MENU_ROW_HEIGHT,
+                max_width: width - text_left - MENU_PADDING,
+            },
+        );
+    }
+    let visible = rows_height - 2 * MENU_PADDING;
+    let scroll = scroll.clamp(0, MENU_ROWS.max_scroll(items.len(), rows_height));
+    let stride = (width * 4) as usize;
+    for y in 0..visible.min(all - scroll).max(0) {
+        let from = ((scroll + y) as usize) * stride;
+        let to = ((MENU_PADDING + y) as usize) * stride;
+        pixels[to..to + stride].copy_from_slice(&rows[from..from + stride]);
+    }
+    if let Some(message) = message {
+        painter.draw_line(
+            &mut Canvas::new(&mut pixels, width as usize, height as usize),
+            message,
+            Line {
+                size: MENU_TEXT_SIZE,
+                color: MENU_MESSAGE_TEXT,
+                x: MENU_PADDING,
+                top: rows_height - MENU_PADDING,
+                height: MENU_ROW_HEIGHT,
+                max_width: width - 2 * MENU_PADDING,
+            },
+        );
+    }
+    for rect in [
+        (0, 0, width, 1),
+        (0, height - 1, width, 1),
+        (0, 0, 1, height),
+        (width - 1, 0, 1, height),
+    ] {
+        fill_rect(&mut pixels, width, rect, MENU_BORDER);
+    }
+    pixels
 }
 
 /// 隠れたタスクの一覧の絵を作る。幅は [`LIST_WIDTH`]、高さは `height`。ピクセルの並びは B, G, R, X。

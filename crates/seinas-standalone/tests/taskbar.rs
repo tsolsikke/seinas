@@ -441,16 +441,17 @@ fn the_taskbar_shows_app_icons_a_fixed_clock_and_logs_the_torch() {
         shot.pixel(center(2, 1), TOP + 8 + 14) == folder
             && shot.pixel(center(2, 2), TOP + 8 + 14) == body
     });
-    // トーチを押すと、ログに 1 行出る(メニューはまだ無い)。ポインターが乗った地と、押した地が付く。
+    // トーチを押すと、メニューを開く(下の hidden_… と torch_menu_… のテスト)。ポインターが乗った地と、押した地が付く。
     seinas.pointer(&format!("motion {} {}", center(2, 0), TOP + 3));
     seinas.pointer("press");
-    wait_for_taskbar_log(&seinas, "the torch was pressed (no menu yet)");
+    wait_for_taskbar_log(&seinas, "opened the torch menu of ");
     seinas.wait_for_screen("the pressed torch", |shot| {
         shot.pixel(center(2, 0) - 16, TOP + 4) == seinas_theme::taskbar::PRESSED
     });
     seinas.pointer("release");
-    seinas.wait_for_screen("the hot torch", |shot| {
-        shot.pixel(center(2, 0) - 16, TOP + 4) == seinas_theme::taskbar::HOT
+    // 離した後も、メニューを開いている間は、押しているときの地のまま。
+    seinas.wait_for_screen("the torch with the menu open", |shot| {
+        shot.pixel(center(2, 0) - 16, TOP + 4) == seinas_theme::taskbar::PRESSED
     });
 }
 
@@ -611,4 +612,159 @@ fn press_task_small(seinas: &mut Compositor, index: usize) {
     ));
     seinas.pointer("press");
     seinas.pointer("release");
+}
+
+/// トーチのメニューに出す `.desktop` を、作業用の置き場 `dir` の下の `share/applications/` に作り、その `share` を返す。
+/// 起こせるもの(テスト用のクライアントのウィンドウ)、その場で失敗するもの(無いプログラム)、一覧から外すもの
+/// (引用していないシェルの記号)の 3 つ。名前の順は、Broken → Launched。
+fn menu_apps(dir: &std::path::Path) -> std::path::PathBuf {
+    let share = dir.join("share");
+    let applications = share.join("applications");
+    fs::create_dir_all(&applications).expect("create applications");
+    let client = common::workspace_bin("seinas-test-clients", "test-client");
+    let write = |name: &str, text: String| {
+        fs::write(applications.join(name), text).expect("write a .desktop file");
+    };
+    write(
+        "launched.desktop",
+        format!(
+            "[Desktop Entry]\nType=Application\nName=Launched\nExec=\"{}\" window --title Launched\n",
+            client.display()
+        ),
+    );
+    write(
+        "broken.desktop",
+        "[Desktop Entry]\nType=Application\nName=Broken\nExec=/no/such/program\n".to_owned(),
+    );
+    write(
+        "shell.desktop",
+        "[Desktop Entry]\nType=Application\nName=Shell\nExec=a | b\n".to_owned(),
+    );
+    share
+}
+
+/// タスクバーを、トーチのメニューのアプリの置き場 `share` で起こす。
+fn start_taskbar_with_apps(seinas: &Compositor, share: &std::path::Path) -> common::Running {
+    let dir = seinas.config_dir();
+    let log = fs::File::create(dir.join("taskbar.log")).expect("create the taskbar log");
+    common::Running(
+        common::child_command(common::workspace_bin("seinas-taskbar", "seinas-taskbar"))
+            .args(["--utc-offset", "+00:00", "--fonts"])
+            .arg(common::font_dir())
+            .env("WAYLAND_DISPLAY", seinas.shell_socket())
+            .env_remove("SEINAS_FONTS")
+            .env_remove("TZ")
+            .env_remove("LANG")
+            .env_remove("LC_ALL")
+            .env_remove("LC_MESSAGES")
+            .env("XDG_CONFIG_HOME", dir)
+            .env("XDG_DATA_HOME", dir.join("no-data"))
+            .env("XDG_DATA_DIRS", share)
+            .env("HOME", dir)
+            .stderr(log)
+            .spawn()
+            .expect("start seinas-taskbar"),
+    )
+}
+
+/// トーチ(タスクが 1 つのとき)を押して離す。
+fn press_torch(seinas: &mut Compositor) {
+    seinas.pointer(&format!("motion {} {}", center(1, 0), TOP + TASKBAR / 2));
+    seinas.pointer("press");
+    seinas.pointer("release");
+}
+
+#[test]
+fn torch_menu_starts_an_app_and_closes() {
+    let mut seinas = Compositor::start_with_input("to");
+    let share = menu_apps(seinas.config_dir());
+    let _taskbar = start_taskbar_with_apps(&seinas, &share);
+    let window = seinas.connect_test_client(&["window", "--keyboard", "--title", "before"]);
+    window.wait_for_line("window: drawn");
+    window.wait_for_line("window: keyboard enter");
+    // 一覧から外したもの(引用していない |)は、理由を 1 行出す。アプリは 2 つ。
+    open_torch_menu(&mut seinas, 1);
+    wait_for_taskbar_log(&seinas, "opened the torch menu of 2 applications");
+    assert!(
+        seinas
+            .taskbar_log()
+            .contains("shell.desktop is not used: the character '|' needs quoting"),
+        "{}",
+        seinas.taskbar_log()
+    );
+    // 開いている間は、キーボードのフォーカスがメニューへ移る(ポップアップの grab)。
+    window.wait_for_line("window: keyboard leave");
+    // 先頭の Broken は、その場で失敗する。閉じずに、理由を出す。
+    seinas.pointer("key 28 press");
+    seinas.pointer("key 28 release");
+    wait_for_taskbar_log(
+        &seinas,
+        "cannot start Broken (broken.desktop): /no/such/program: ",
+    );
+    assert!(!seinas.taskbar_log().contains("closed the torch menu"));
+    // 下の Launched を Enter で起こすと、閉じて、テスト用のクライアントのウィンドウが出る。
+    seinas.pointer("key 108 press");
+    seinas.pointer("key 108 release");
+    seinas.pointer("key 28 press");
+    seinas.pointer("key 28 release");
+    wait_for_taskbar_log(&seinas, "started Launched (launched.desktop) as pid ");
+    wait_for_taskbar_log(&seinas, "closed the torch menu");
+    wait_for("the launched window", || {
+        (seinas.log().matches("new toplevel").count() >= 2).then_some(())
+    });
+}
+
+/// トーチのメニューを開き、コンポジタがポップアップの grab を受けるまで待つ(`count` 回目)。
+fn open_torch_menu(seinas: &mut Compositor, count: usize) {
+    press_torch(seinas);
+    wait_for("the grab of the torch menu", || {
+        (seinas.log().matches("a popup took a grab").count() >= count).then_some(())
+    });
+}
+
+/// タスクバーのログに `line` が `count` 回出るまで待つ。
+fn wait_for_taskbar_count(seinas: &Compositor, line: &str, count: usize) {
+    wait_for(line, || {
+        (seinas.taskbar_log().matches(line).count() >= count).then_some(())
+    });
+}
+
+#[test]
+fn torch_menu_closes_with_esc_or_a_press_outside_and_gives_the_focus_back() {
+    let mut seinas = Compositor::start_with_input("tp");
+    let share = menu_apps(seinas.config_dir());
+    let _taskbar = start_taskbar_with_apps(&seinas, &share);
+    let window = seinas.connect_test_client(&["window", "--keyboard", "--pointer"]);
+    window.wait_for_line("window: drawn");
+    window.wait_for_line("window: keyboard enter");
+    // 開いている間は、キーボードのフォーカスがメニューへ移り、トーチは押しているときの地(光る範囲の左の端の近く)。
+    open_torch_menu(&mut seinas, 1);
+    window.wait_for_line("window: keyboard leave");
+    seinas.wait_for_screen("the torch while the menu is open", |shot| {
+        shot.pixel(center(1, 0) - 16, TOP + 4) == seinas_theme::taskbar::PRESSED
+    });
+    // Esc で閉じると、開く前のウィンドウへキーボードのフォーカスが戻る。
+    seinas.pointer("key 1 press");
+    seinas.pointer("key 1 release");
+    wait_for_taskbar_count(&seinas, "closed the torch menu", 1);
+    window.wait_for_line("window: keyboard enter");
+    // 外(ウィンドウの上)を押すと閉じる(コンポジタが閉じる)。その押下は、ウィンドウへ渡らない。
+    open_torch_menu(&mut seinas, 2);
+    window.wait_for_line("window: keyboard leave");
+    seinas.pointer("motion 100 100");
+    seinas.pointer("press");
+    seinas.pointer("release");
+    wait_for_taskbar_count(&seinas, "closed the torch menu", 2);
+    window.wait_for_line("window: keyboard enter");
+    let lines = window.lines_within(std::time::Duration::from_millis(300));
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.starts_with("window: pointer button")),
+        "{lines:?}"
+    );
+    // トーチをもう一度押しても閉じる。
+    open_torch_menu(&mut seinas, 3);
+    press_torch(&mut seinas);
+    wait_for_taskbar_count(&seinas, "closed the torch menu", 3);
 }

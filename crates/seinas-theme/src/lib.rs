@@ -131,6 +131,24 @@ pub mod taskbar {
     /// 前面のウィンドウの行の印(行の左の端の、縦の線。幅 [`LIST_ACTIVE_MARK_WIDTH`]、高さはアイコンと同じ)。
     pub const LIST_ACTIVE_MARK: Rgb = color::ACCENT;
     pub const LIST_ACTIVE_MARK_WIDTH: i32 = 3;
+
+    /// トーチのメニュー(トーチを押すと、その上に出すポップアップ)。幅、高さの上限(中身に合わせ、これを越えたら
+    /// スクロール)、内側の余白(上下と左右)、行の高さ。タスクバーとの間は [`MENU_GAP`]。
+    pub const MENU_WIDTH: i32 = 360;
+    pub const MENU_MAX_HEIGHT: i32 = 480;
+    pub const MENU_PADDING: i32 = 12;
+    pub const MENU_ROW_HEIGHT: i32 = 40;
+    pub const MENU_GAP: i32 = 8;
+    /// 行の中の、アイコン(大きさは [`ICON_SIZE`])からアプリの名前までの空き。名前の文字の大きさと色。
+    pub const MENU_TEXT_GAP: i32 = 10;
+    pub const MENU_TEXT_SIZE: f32 = 15.0;
+    pub const MENU_TEXT: Rgb = color::TEXT;
+    /// 起動できなかった理由と、アプリが無いことを出す行の文字の色(補助の文字の色)。
+    pub const MENU_MESSAGE_TEXT: Rgb = color::SUBTLE_TEXT;
+    /// メニューの地と外の枠(1 ピクセル)、選んでいる行の地。隠れたタスクの一覧と同じ。
+    pub const MENU_BACKGROUND: Rgb = BACKGROUND;
+    pub const MENU_BORDER: Rgb = color::SEPARATOR;
+    pub const MENU_SELECTED: Rgb = HOT;
 }
 
 /// ウィンドウのタイトルバー(コンポジタの飾り)。
