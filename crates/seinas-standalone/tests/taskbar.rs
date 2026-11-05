@@ -747,7 +747,11 @@ fn torch_menu_closes_with_esc_or_a_press_outside_and_gives_the_focus_back() {
     seinas.pointer("key 1 press");
     seinas.pointer("key 1 release");
     wait_for_taskbar_count(&seinas, "closed the torch menu", 1);
-    window.wait_for_line("window: keyboard enter");
+    // Esc を離す前に閉じると、`window: keyboard enter keys 1` の形で戻る。
+    while !window
+        .next_line("the focus back")
+        .starts_with("window: keyboard enter")
+    {}
     // 外(ウィンドウの上)を押すと閉じる(コンポジタが閉じる)。その押下は、ウィンドウへ渡らない。
     open_torch_menu(&mut seinas, 2);
     window.wait_for_line("window: keyboard leave");
