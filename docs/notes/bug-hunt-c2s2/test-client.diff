@@ -1,0 +1,58 @@
+diff --git a/crates/seinas-test-clients/src/layer.rs b/crates/seinas-test-clients/src/layer.rs
+index dbda110..b1b7e44 100644
+--- a/crates/seinas-test-clients/src/layer.rs
++++ b/crates/seinas-test-clients/src/layer.rs
+@@ -141,6 +141,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
+     });
+     loop {
+         for command in commands.try_iter() {
++            if command == "unmap" {
++                wire.send(&crate::message(crate::wire::SURFACE, 1, &[0u8; 12]))?;
++                wire.commit()?;
++                println!("layer: unmapped");
++                let _ = std::io::stdout().flush();
++            }
+             if let Some(rest) = command.strip_prefix("popup ") {
+                 match crate::window::parse_popup(rest) {
+                     Ok(spec) => {
+diff --git a/crates/seinas-test-clients/src/window.rs b/crates/seinas-test-clients/src/window.rs
+index b65ec9f..93ad963 100644
+--- a/crates/seinas-test-clients/src/window.rs
++++ b/crates/seinas-test-clients/src/window.rs
+@@ -452,6 +452,12 @@ pub fn run(args: &[String]) -> Result<bool, String> {
+             {
+                 wire.close_popup(n)?;
+             }
++            if let Some(rest) = command.strip_prefix("geometry ") {
++                let n: Vec<i32> = rest.split_whitespace().filter_map(|n| n.parse().ok()).collect();
++                let body: Vec<u8> = n.iter().flat_map(|v| v.to_le_bytes()).collect();
++                wire.send(&crate::message(crate::wire::XDG_SURFACE, 3, &body))?;
++                wire.commit()?;
++            }
+             if let Some(text) = command.strip_prefix("copy ") {
+                 wire.copy(text)?;
+             }
+diff --git a/crates/seinas-test-clients/src/wire.rs b/crates/seinas-test-clients/src/wire.rs
+index 09cd31e..4909915 100644
+--- a/crates/seinas-test-clients/src/wire.rs
++++ b/crates/seinas-test-clients/src/wire.rs
+@@ -470,6 +470,8 @@ impl Wire {
+             &[xdg_surface.to_le_bytes(), surface.to_le_bytes()].concat(),
+         ))?;
+         let positioner = self.positioner(spec, spec.anchor_x, spec.anchor_y)?;
++        // 調べ用:color=030201 なら、自分自身を親にする。
++        let parent = if spec.pixel == [1, 2, 3, 0xff] { xdg_surface } else { parent };
+         let popup = self.new_id();
+         // xdg_surface.get_popup(新しい番号、親の xdg_surface、positioner)
+         self.send(&message(
+@@ -631,7 +633,9 @@ impl Wire {
+                 1 => {
+                     self.popups[index].done = true;
+                     self.say(&format!("popup {n} done"));
+-                    self.close_popup(n)?;
++                    if std::env::var_os("HUNT_KEEP_POPUP").is_none() {
++                        self.close_popup(n)?;
++                    }
+                 }
+                 // xdg_popup.repositioned(token)
+                 2 => self.say(&format!("popup {n} repositioned {}", int(0))),
